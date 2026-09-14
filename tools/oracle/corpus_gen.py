@@ -65,6 +65,10 @@ def main():
          "uniform int x; int main() : COLOR0 { return x << 3; }", "integer", type="int", op="shl-imm")
     emit(root, manifest, "fp-s32-uniform-shr", "sce_fp_psp2",
          "uniform int x; int main() : COLOR0 { return x >> 3; }", "integer", type="int", op="asr-imm")
+    emit(root, manifest, "fp-s32-input-pass", "sce_fp_psp2",
+         "int main(int a : TEXCOORD0) : COLOR0 { return a; }", "integer", type="int", op="input-pass")
+    emit(root, manifest, "fp-f32-to-s32", "sce_fp_psp2",
+         "int main(float a : TEXCOORD0) : COLOR0 { return (int)a; }", "integer", type="int", op="f32-to-s32")
     emit(root, manifest, "fp-if", "sce_fp_psp2",
          "float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1):COLOR0 { if (a.x > b.x) return a; return b; }", "control")
     emit(root, manifest, "fp-ternary", "sce_fp_psp2",

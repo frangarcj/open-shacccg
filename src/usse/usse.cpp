@@ -460,6 +460,22 @@ bool decode_v16nmad_dot_splat_f32_semantic(uint64_t word, V16NmadDotSplatF32Sema
     return true;
 }
 
+bool encode_v16nmad_f32_to_s32_semantic(const V16NmadF32ToS32Semantic &i, uint64_t *word) {
+    if (!word) return false;
+    if (i.phase==0) *word=0x10a40084a0042000ULL;
+    else if (i.phase==1) *word=0x10a400a620041000ULL;
+    else return false;
+    return true;
+}
+
+bool decode_v16nmad_f32_to_s32_semantic(uint64_t word, V16NmadF32ToS32Semantic *i) {
+    if (!i) return false;
+    if (word==0x10a40084a0042000ULL) i->phase=0;
+    else if (word==0x10a400a620041000ULL) i->phase=1;
+    else return false;
+    return true;
+}
+
 bool encode_vmad_semantic(const VmadSemantic &i, uint64_t *word) {
     if (!word || i.dst.num>=64 || i.src1.num>=64 || i.gpi0>=4 || i.gpi1>=4 || i.write_mask>=16 || i.repeat_count>=4) return false;
     VmadFields f{};

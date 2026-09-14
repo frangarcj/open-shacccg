@@ -1,0 +1,1 @@
+int main(float a : TEXCOORD0) : COLOR0 { return (int)a; }

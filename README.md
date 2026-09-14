@@ -40,6 +40,9 @@ Implemented now:
   AND-immediate, left shift and arithmetic right shift: Typed S32 reaches the existing VBW
   semantic path, then the observed scalar S16->F16 VPCK writes COLOR0; all six integer probes
   match Sony outside GUIDs
+- oracle-exact scalar F32->S32 fragment conversion for both interpolated `int` passthrough
+  and explicit `(int)float`: a validated F32->F16 VPCK staging word plus two fixed V16NMAD
+  conversion phases produces the same four-word Sony primary program
 - oracle-exact fragment profiles for `wzyx` and the constant `float4(1,0,0,1)`,
   including swizzled VPCK, literal-table placement and the primary/interface overlap convention
 - oracle-exact standalone vertex profiles for float4 position passthrough,

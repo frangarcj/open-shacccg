@@ -688,6 +688,22 @@
     "op": "asr-imm"
   },
   {
+    "name": "fp-s32-input-pass",
+    "file": "fp-s32-input-pass.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "integer",
+    "type": "int",
+    "op": "input-pass"
+  },
+  {
+    "name": "fp-f32-to-s32",
+    "file": "fp-f32-to-s32.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "integer",
+    "type": "int",
+    "op": "f32-to-s32"
+  },
+  {
     "name": "fp-if",
     "file": "fp-if.cg",
     "profile": "sce_fp_psp2",

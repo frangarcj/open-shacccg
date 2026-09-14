@@ -752,6 +752,7 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             const uint8_t components=program.instructions()[i].subop();
             words=(components>=1 && components<=4) ? static_cast<uint32_t>(components+2) : 1;
         } else if (program.instructions()[i].opcode()==MachineOpcode::DotSplatF32) words=3;
+        else if (program.instructions()[i].opcode()==MachineOpcode::F32ToS32Color) words=3;
         word_positions[i + 1] = word_positions[i] + words;
     }
     for (uint32_t position : program.labels()) {
@@ -1016,6 +1017,33 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             usse::V16NmadDivF32Semantic combine{components};
             if (!staged || !builder.instruction(combine)) {
                 out.error="failed to encode F32 division stage/combine";
+                return false;
+            }
+            break;
+        }
+        case MachineOpcode::F32ToS32Color: {
+            usse::RegisterRef dst{},src{};
+            if (guard!=usse::Predicate::Always || instruction.subop()!=0 ||
+                !resolve_register_value(instruction.dst,MachineType::S32,out.value_registers,&dst) ||
+                !resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&src) ||
+                dst.bank!=usse::RegisterBank::PrimaryAttribute || dst.num!=0 ||
+                src.bank!=usse::RegisterBank::PrimaryAttribute || src.num!=0 ||
+                (instruction.src0.physical_component()!=0xff && instruction.src0.physical_component()!=0)) {
+                out.error="F32->S32 COLOR profile requires PA0.x input and PA0 output";
+                return false;
+            }
+            usse::VpckSemantic stage{};
+            stage.dst={usse::RegisterBank::PrimaryAttribute,0};
+            stage.src1={usse::RegisterBank::PrimaryAttribute,0};
+            stage.src2={usse::RegisterBank::Immediate,0};
+            stage.src_format=usse::PackFormat::F32;
+            stage.dst_format=usse::PackFormat::F16;
+            stage.dest_mask=1;
+            stage.no_schedule=false;
+            if (!builder.instruction(stage) ||
+                !builder.instruction(usse::V16NmadF32ToS32Semantic{0}) ||
+                !builder.instruction(usse::V16NmadF32ToS32Semantic{1})) {
+                out.error="failed to encode oracle F32->S32 COLOR sequence";
                 return false;
             }
             break;

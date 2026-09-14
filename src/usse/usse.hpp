@@ -126,6 +126,11 @@ struct V16NmadDivF32Semantic { uint8_t components = 4; };
 // Fixed final reductions for the oracle dot-splat float2/float3 profiles.
 struct V16NmadDotSplatF32Semantic { uint8_t components = 2; };
 
+// Two fixed V16NMAD phases used by Sony after scalar F32 staging when the
+// fragment result is converted to signed integer COLOR. Kept opaque until a
+// broader V16NMAD field layout is independently anchored.
+struct V16NmadF32ToS32Semantic { uint8_t phase = 0; };
+
 enum class RepeatMode : uint8_t { External=0, Internal=1, Both=2, Slmsi=3 };
 
 // VMAD is a three-input FMA where two inputs are GPI/FP-internal registers.
@@ -513,6 +518,8 @@ bool encode_v16nmad_div_f32_semantic(const V16NmadDivF32Semantic &, uint64_t *wo
 bool decode_v16nmad_div_f32_semantic(uint64_t word, V16NmadDivF32Semantic *instruction);
 bool encode_v16nmad_dot_splat_f32_semantic(const V16NmadDotSplatF32Semantic &, uint64_t *word);
 bool decode_v16nmad_dot_splat_f32_semantic(uint64_t word, V16NmadDotSplatF32Semantic *instruction);
+bool encode_v16nmad_f32_to_s32_semantic(const V16NmadF32ToS32Semantic &, uint64_t *word);
+bool decode_v16nmad_f32_to_s32_semantic(uint64_t word, V16NmadF32ToS32Semantic *instruction);
 bool encode_vmad_semantic(const VmadSemantic &instruction, uint64_t *word);
 bool decode_vmad_semantic(uint64_t word, VmadSemantic *instruction);
 bool encode_vtst_semantic(const VtstSemantic &instruction, uint64_t *word);
@@ -537,6 +544,7 @@ inline bool encode_semantic(const VcompRcpF32Semantic &i, uint64_t *word) { retu
 inline bool encode_semantic(const VcompRcpScalarF32Semantic &i, uint64_t *word) { return encode_vcomp_rcp_scalar_f32_semantic(i, word); }
 inline bool encode_semantic(const V16NmadDivF32Semantic &i, uint64_t *word) { return encode_v16nmad_div_f32_semantic(i, word); }
 inline bool encode_semantic(const V16NmadDotSplatF32Semantic &i, uint64_t *word) { return encode_v16nmad_dot_splat_f32_semantic(i, word); }
+inline bool encode_semantic(const V16NmadF32ToS32Semantic &i, uint64_t *word) { return encode_v16nmad_f32_to_s32_semantic(i, word); }
 inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return encode_vmad_semantic(i, word); }
 inline bool encode_semantic(const VtstSemantic &i, uint64_t *word) { return encode_vtst_semantic(i, word); }
 inline bool encode_semantic(const VtstF32Semantic &i, uint64_t *word) { return encode_vtst_f32_semantic(i, word); }

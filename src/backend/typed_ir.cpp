@@ -679,6 +679,9 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             value_defined[instruction.dst.id()] = true;
             break;
         }
+        case TypedOpcode::FloatToS32:
+            error="typed F32->S32 conversion requires compile_typed_shader oracle profile";
+            return false;
         case TypedOpcode::Bitwise: {
             const bool integer=(instruction.dst.type()==TypedType::U32 || instruction.dst.type()==TypedType::S32) &&
                 instruction.src0.type()==instruction.dst.type() && instruction.src1.type()==instruction.dst.type();
@@ -1034,10 +1037,33 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     const TypedValue root = store->src0;
 
     if (root.type()==TypedType::S32) {
+        const bool s32_output=store->aux<resources.size() &&
+            resources[store->aux].kind==TypedResourceKind::Output &&
+            resources[store->aux].index==0 && resources[store->aux].type==TypedType::S32;
+        if (s32_output && uniforms.empty() && samplers.empty() && inputs.size()==1 && inputs[0]->index==0) {
+            bool conversion_profile=false;
+            if (const auto *resource=resource_for_value(root)) {
+                conversion_profile=resource->kind==TypedResourceKind::Input && resource->type==TypedType::S32;
+            } else if (const auto *def=definition(root); def && def->opcode()==TypedOpcode::FloatToS32) {
+                const auto *source=resource_for_value(def->src0);
+                conversion_profile=source && source->kind==TypedResourceKind::Input &&
+                    source->type==TypedType::F32 && source->index==0;
+            }
+            if (conversion_profile) {
+                MachineProgram primary;
+                if (!primary.emit<MachineOpcode::Phase>() ||
+                    !primary.emit<MachineOpcode::F32ToS32Color>(0,
+                        primary.physical(machine_fragment_output(0),MachineType::S32),
+                        primary.physical(machine_primary(0),MachineType::F32,0))) {
+                    out.error="failed to build oracle F32->S32 fragment Machine profile";
+                    return false;
+                }
+                return compile_fragment_f32_to_s32_machine(primary,0,0,out);
+            }
+        }
         if (!inputs.empty() || !fragment_uniforms.empty() || !fragment_samplers.empty() ||
             fragment_s32_uniforms.empty() || fragment_s32_uniforms.size()>2 ||
-            store->aux>=resources.size() || resources[store->aux].kind!=TypedResourceKind::Output ||
-            resources[store->aux].index!=0 || resources[store->aux].type!=TypedType::S32) {
+            !s32_output) {
             out.error="typed scalar S32 output requires Location 0, one/two S32 uniforms and no other resources";
             return false;
         }

@@ -9,6 +9,7 @@ VSC_MACHINE_OP(PackValue, "pack-value", ValueDef, ValueUse,     None,         0x
 VSC_MACHINE_OP(Vector,  "vector",  ValueDef,     ValueUse,     ValueUse,     0x0f)
 VSC_MACHINE_OP(DivF32,   "div-f32",   ValueDef,  ValueUse,     ValueUse,     0x0f)
 VSC_MACHINE_OP(DotSplatF32, "dot-splat-f32", ValueDef, ValueUse, ValueUse,   0x0f)
+VSC_MACHINE_OP(F32ToS32Color, "f32-to-s32-color", ValueDef, ValueUse, None,  0x0f)
 VSC_MACHINE_OP(Vmad,    "vmad",    ValueDef,     ValueUse,     ValuePairUse, 0x0f)
 VSC_MACHINE_OP(VmadUniformMat4, "vmad-uniform-mat4", ValueDef, ValueUse, None, 0x0f)
 VSC_MACHINE_OP(DependentSample, "dependent-sample", ValueDef, ValueUse, None, 0x0f)

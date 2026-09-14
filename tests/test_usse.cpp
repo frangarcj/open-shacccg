@@ -378,6 +378,15 @@ int test_usse() {
             !decode_v16nmad_dot_splat_f32_semantic(word,&decoded) || decoded.components!=components)
             failures += fail("oracle narrow dot V16NMAD reduction mismatch");
     }
+    const uint64_t f32_to_s32_words[]={0x10a40084a0042000ULL,0x10a400a620041000ULL};
+    for (uint8_t phase=0;phase<2;++phase) {
+        V16NmadF32ToS32Semantic convert{phase};
+        uint64_t word=0;
+        V16NmadF32ToS32Semantic decoded{};
+        if (!encode_v16nmad_f32_to_s32_semantic(convert,&word) || word!=f32_to_s32_words[phase] ||
+            !decode_v16nmad_f32_to_s32_semantic(word,&decoded) || decoded.phase!=phase)
+            failures += fail("oracle F32->S32 V16NMAD phase mismatch");
+    }
 
     // Semantic VMAD: reconstruct the complete four-instruction matrix path.
     const uint64_t matrix_words[] = {

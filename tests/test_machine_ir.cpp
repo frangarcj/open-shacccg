@@ -205,6 +205,24 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        if (!program.emit<MachineOpcode::F32ToS32Color>(0,
+                program.physical(machine_fragment_output(0),MachineType::S32),
+                program.physical(machine_primary(0),MachineType::F32,0))) {
+            failures += fail("could not construct oracle F32->S32 COLOR Machine profile");
+        } else {
+            MachineCompileResult result;
+            const uint64_t expected[]={
+                0x40810d46a0000000ULL,0x10a40084a0042000ULL,0x10a400a620041000ULL,
+            };
+            if (!compile_machine_program(program,result) || result.words.size()!=3)
+                failures += fail("oracle F32->S32 COLOR Machine profile did not compile");
+            else for (size_t i=0;i<3;++i)
+                if (result.words[i]!=expected[i]) failures += fail("oracle F32->S32 COLOR Machine word mismatch");
+        }
+    }
+
+    {
+        MachineProgram program;
         const auto counter=program.make_value<MachineType::S32>();
         if (!program.emit<MachineOpcode::LoopCounterInit>(0,counter) ||
             !program.emit<MachineOpcode::LoopIncrement>(1,counter)) {

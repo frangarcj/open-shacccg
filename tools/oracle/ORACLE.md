@@ -163,5 +163,8 @@ These probes also establish a second fragment-secondary layout case. Secondary c
 still begins at `interface+20`; one qword fits within the 32-byte interface, while a
 two-qword stream ends four bytes beyond it and primary code resumes at the next
 8-byte boundary. The canonical writer tests cover both forms. Attribute integer
-conversion, int<->float conversion and vector/bitcast cases are deliberately separate
-oracle milestones.
+conversion is a separate pair of probes: `int` attribute passthrough and explicit
+`(int)float` compile to the same primary stream
+`PHAS, 0x40810d46a0000000, 0x10a40084a0042000, 0x10a400a620041000`.
+Open reproduces both exactly outside GUIDs. S32->F32 and vector/bitcast cases remain
+separate oracle milestones.

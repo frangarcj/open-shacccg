@@ -574,6 +574,21 @@ int test_cg_frontend() {
             }
         }
     }
+    {
+        const uint64_t words[]={
+            0xfa44070000000000ULL,0x40810d46a0000000ULL,
+            0x10a40084a0042000ULL,0x10a400a620041000ULL,
+        };
+        const char *probes[]={"fp-s32-input-pass","fp-f32-to-s32"};
+        for (const char *probe:probes) {
+            const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/"+probe+".cg");
+            if (source.empty() || !compile_oracle_fragment_profile(source,probe,
+                    224,0x00081005,1,0,0,words,4)) {
+                std::fprintf(stderr,"test_cg_frontend: F32->S32 input/conversion probe failed: %s\n",probe);
+                ++failures;
+            }
+        }
+    }
 #endif
     return failures;
 #endif

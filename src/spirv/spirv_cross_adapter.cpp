@@ -754,6 +754,23 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     error = "failed to emit Typed IR float conversion"; return false;
                 }
                 values[args[1]] = dst;
+            } else if (op == spv::OpConvertFToS) {
+                if (count!=4 || typed_type(compiler.get_type(args[0]))!=backend::TypedType::S32) {
+                    error="float-to-signed conversion is outside the validated scalar S32 subset";
+                    return false;
+                }
+                const auto source=values.find(args[2]);
+                if (source==values.end() || source->second.type()!=backend::TypedType::F32) {
+                    error="F32->S32 conversion source is unresolved or non-F32";
+                    return false;
+                }
+                const auto dst=program.make_value<backend::TypedType::S32>();
+                if (dst.kind()==backend::TypedValueKind::None ||
+                    !program.emit<backend::TypedOpcode::FloatToS32>(0,dst,source->second)) {
+                    error="failed to emit Typed F32->S32 conversion";
+                    return false;
+                }
+                values[args[1]]=dst;
             } else {
                 usse::BitwiseOp bitwise{};
                 usse::CompareOp compare{};

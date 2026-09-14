@@ -642,6 +642,52 @@ bool compile_fragment_s32_machine(const MachineProgram &primary, const MachinePr
     return true;
 }
 
+bool compile_fragment_f32_to_s32_machine(const MachineProgram &primary,
+                                         uint32_t binary_guid, uint32_t source_guid,
+                                         IrCompileResult &out) {
+    out={};
+    MachineCompileResult compiled;
+    if (!compile_words(primary,compiled,out,"F32->S32 fragment Machine IR lowering failed")) return false;
+    if (compiled.words.size()!=4) {
+        out.error="F32->S32 fragment profile requires the four-word oracle stream";
+        return false;
+    }
+
+    uint8_t interface_block[32]{};
+    interface_block[10]=1;
+    interface_block[11]=4;
+    interface_block[12]=1;
+    interface_block[16]=4;
+    interface_block[20]=0x0f;
+    interface_block[23]=0x0e;
+
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Fragment;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00081004;
+    image.primary_register_count=1;
+    image.secondary_register_count=0;
+    image.temp_register_count=1;
+    image.primary_phase_count=1;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=compiled.words.data();
+    image.primary_instruction_count=compiled.words.size();
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected F32->S32 fragment profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear();
+        out.error="GXP writer failed for F32->S32 fragment profile";
+        return false;
+    }
+    return true;
+}
+
 bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
                                          const std::vector<IrUniformVec4> &uniforms,
                                          uint8_t float_input_count,
