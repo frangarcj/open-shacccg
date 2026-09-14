@@ -96,8 +96,9 @@ bool valid_desc(const ProgramImage &image) {
         return false;
     if (image.fragment_interface_extension && image.type != ProgramType::Fragment)
         return false;
-    if (image.fragment_additional_float4_inputs > 2 ||
-        (image.fragment_additional_float4_inputs &&
+    if (image.fragment_additional_inputs > 2 || image.fragment_input_components < 1 ||
+        image.fragment_input_components > 4 ||
+        (image.fragment_additional_inputs &&
          (image.type != ProgramType::Fragment || image.secondary_instruction_count != 0 ||
           image.fragment_interface_extension || image.fragment_primary_overlaps_interface)))
         return false;
@@ -178,7 +179,7 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
         // multiple float4 inputs first append one 16-byte record per extra
         // input, then keep the same 8-byte anchor.
         if (image.type == ProgramType::Fragment && image.secondary_instruction_count == 0) {
-            if (!add_size(cursor, static_cast<size_t>(image.fragment_additional_float4_inputs) * 16u)) return false;
+            if (!add_size(cursor, static_cast<size_t>(image.fragment_additional_inputs) * 16u)) return false;
             if (!add_size(cursor, sizeof(uint64_t))) return false;
         } else if (image.type == ProgramType::Vertex && image.vertex_primary_padding_word) {
             if (!add_size(cursor, sizeof(uint32_t))) return false;
@@ -277,13 +278,17 @@ bool write_program(const ProgramImage &image, uint8_t *output, size_t capacity,
     if (image.fragment_interface_extension)
         std::memcpy(output + l.interface_off + kInterfaceSize,
                     image.fragment_interface_extension, 8);
-    for (uint8_t i=0;i<image.fragment_additional_float4_inputs;++i) {
+    const uint8_t component_code=image.fragment_input_components==1 ? 0x00 :
+        (image.fragment_input_components==2 ? 0x40 : 0xc0);
+    const uint8_t component_tail=image.fragment_input_components==1 ? 0x00 :
+        (image.fragment_input_components==2 ? 0x10 : 0x30);
+    for (uint8_t i=0;i<image.fragment_additional_inputs;++i) {
         const size_t off=l.interface_off+kInterfaceSize+static_cast<size_t>(i)*16u;
         output[off+4]=0x0f;
         output[off+5]=static_cast<uint8_t>((i+1u)*0x10u);
-        output[off+6]=0xc0;
+        output[off+6]=component_code;
         output[off+7]=0x0e;
-        output[off+12]=0x30;
+        output[off+12]=component_tail;
     }
     if (image.secondary_instruction_count)
         std::memcpy(output + l.secondary_off, image.secondary_instructions,

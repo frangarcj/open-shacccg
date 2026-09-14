@@ -286,8 +286,8 @@ new arithmetic family was needed: Cg probes declare three parameters even when
 only one or two survive into the optimized expression graph. Typed arithmetic
 previously counted all reflected inputs and therefore rejected every ALU probe.
 The lowering now walks dependencies from the stored output and derives the
-contiguous reachable float4 locations only. Standalone no-uniform arithmetic
-profiles use the oracle-observed SDK 1.6.5 metadata for one/two/three float4
+contiguous reachable homogeneous F32 vector locations only. Standalone no-uniform
+arithmetic profiles use the oracle-observed SDK 1.6.5 metadata for one/two/three
 inputs, while the existing uniform-arithmetic profile is preserved.
 
 As a result, the `float4`/`half4` slice first improved from 0/22 to 18/22 without
@@ -328,6 +328,22 @@ so it intentionally uses the validated F32 profile until a frontend route that
 preserves half precision is available; Sony's half profile remains separately
 observable in the oracle corpus.
 
+## Narrow F32 vector arithmetic
+
+The same Typed/Machine path now carries F32x2 and F32x3 without widening the
+16-byte Machine instruction. V32NMAD uses destination masks `0x3`/`0x7`; F32x2
+values occupy one physical F32 register, while F32x3 values occupy the validated
+two-register span. Input Location stride follows the oracle layout: float2 uses
+one PA register per location, float3 uses two. Output VPCK uses matching `xy` or
+`xyz` masks.
+
+The GXP interface writer also generalizes the additional-input descriptors:
+float2 uses component signature `0x40`/tail `0x10`, while float3 shares the
+`0xc0`/`0x30` signature observed for float4. Differential probes confirm 27/33
+cases across `float2`, `float3` and `half2`; add/sub/mul/min/max/saturate/abs/neg/mad
+all compile in Sony and Open. Only narrow dot/div remain intentionally fail-closed.
+Together with the 22/22 vector4 slice, Open now compiles 49/77 ALU corpus cases.
+
 Backend fallback diagnostics now retain the SPIRV-Cross Typed-path failure when
 the dependency-free parser also rejects a shader, so future oracle sweeps expose
 the actual higher-level coverage gap instead of only the final fallback error.
@@ -341,7 +357,7 @@ not byte identity.
 2. **Complete structured control flow.** BR forward/backward offsets, six F32 VTST compares, direct COLOR0 two-way phi merge, output `OpSelect` and positive-step dynamic loops are validated; the control corpus is 12/12. Next generalize remaining phi consumers and derive decrement/other loop-update profiles from oracle probes.
 3. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
 4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
-5. **Common missing ALU families.** Prioritize VCOMP, VMAD2 and VDUAL based on real traces, then remaining instruction families by corpus frequency.
+5. **Common missing ALU families.** VCOMP now covers oracle-exact F32x4 division. Next extend width-aware dot/div and then prioritize VMAD2/VDUAL based on real traces.
 6. **Resource/reflection generalization.** Derive register counts, parameter types, containers, uniform buffers, literals and dependent samplers from IR instead of current sample-shaped layouts.
 7. **Hardware gate.** Treat a capability as complete only after host regressions plus real-Vita `sceGxmProgramCheck`/render validation where possible.
 

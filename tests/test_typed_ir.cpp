@@ -515,8 +515,29 @@ int test_typed_ir() {
         const auto dst = program.make_value<TypedType::F32x2>();
         program.emit<TypedOpcode::FloatBinary>(static_cast<uint8_t>(TypedFloatOp::Add), dst, lhs, rhs);
         MachineCompileResult result;
-        if (compile_typed_program(program, result))
-            failures += fail("typed float2 arithmetic escaped the validated float4 Machine IR subset");
+        usse::V32NmadSemantic add{};
+        if (!compile_typed_program(program, result) || result.words.size()!=1 ||
+            !usse::decode_v32nmad_semantic(result.words[0], &add) ||
+            add.op!=usse::VectorOp::Add || add.dest_mask!=0x3 ||
+            add.src1.bank!=usse::RegisterBank::PrimaryAttribute ||
+            add.src2.bank!=usse::RegisterBank::SecondaryAttribute)
+            failures += fail("typed float2 arithmetic did not lower to masked V32NMAD");
+    }
+
+    {
+        TypedProgram program;
+        const auto lhs = program.input<TypedType::F32x3>(0);
+        const auto rhs = program.input<TypedType::F32x3>(1);
+        const auto dst = program.make_value<TypedType::F32x3>();
+        program.emit<TypedOpcode::FloatBinary>(static_cast<uint8_t>(TypedFloatOp::Mul), dst, lhs, rhs);
+        MachineCompileResult result;
+        usse::V32NmadSemantic mul{};
+        if (!compile_typed_program(program, result) || result.words.size()!=1 ||
+            !usse::decode_v32nmad_semantic(result.words[0], &mul) ||
+            mul.op!=usse::VectorOp::Mul || mul.dest_mask!=0x7 ||
+            mul.src1.bank!=usse::RegisterBank::PrimaryAttribute || mul.src1.num!=0 ||
+            mul.src2.bank!=usse::RegisterBank::PrimaryAttribute || mul.src2.num!=2)
+            failures += fail("typed float3 arithmetic did not lower to masked V32NMAD");
     }
 
     {

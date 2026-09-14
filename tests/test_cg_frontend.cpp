@@ -414,6 +414,20 @@ int test_cg_frontend() {
         }
     }
     {
+        const char *narrow_types[]={"float2","float3","half2"};
+        const char *narrow_ops[]={"add","sub","mul","min","max","sat","abs","neg","mad"};
+        for (const char *type:narrow_types) {
+            for (const char *op:narrow_ops) {
+                const std::string probe=std::string("fp-")+op+"-"+type;
+                const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/"+probe+".cg");
+                if (source.empty() || !compile_fragment_gxp(source,probe.c_str())) {
+                    std::fprintf(stderr,"test_cg_frontend: narrow ALU probe failed: %s\n",probe.c_str());
+                    ++failures;
+                }
+            }
+        }
+    }
+    {
         const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-div-float4.cg");
         const uint64_t words[]={
             0xfa44070000000000ULL,0xf800094000000000ULL,

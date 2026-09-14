@@ -576,15 +576,16 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
 
 bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
                                          const std::vector<IrUniformVec4> &uniforms,
-                                         uint8_t float4_input_count,
+                                         uint8_t float_input_count,
+                                         uint8_t float_components,
                                          uint32_t binary_guid, uint32_t source_guid,
                                          IrCompileResult &out) {
     out = {};
-    if (float4_input_count < 1 || float4_input_count > 3) {
-        out.error="fragment arithmetic profile currently covers one to three float4 inputs";
+    if (float_input_count < 1 || float_input_count > 3 || float_components < 1 || float_components > 4) {
+        out.error="fragment arithmetic profile currently covers one to three F32 inputs of width 1..4";
         return false;
     }
-    if (!uniforms.empty() && float4_input_count!=1) {
+    if (!uniforms.empty() && (float_input_count!=1 || float_components!=4)) {
         out.error="uniform arithmetic profile currently requires one float4 input";
         return false;
     }
@@ -592,12 +593,14 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
     std::vector<gxp::ParameterContainerDesc> containers;
     std::vector<gxp::ParameterDesc> parameters;
 
-    interface_block[10]=1; interface_block[11]=4; interface_block[12]=float4_input_count; interface_block[16]=4;
+    const uint8_t component_code=float_components==1 ? 0x00 : (float_components==2 ? 0x40 : 0xc0);
+    const uint8_t component_tail=float_components==1 ? 0x00 : (float_components==2 ? 0x10 : 0x30);
+    interface_block[10]=1; interface_block[11]=4; interface_block[12]=float_input_count; interface_block[16]=4;
     interface_block[20]=0x0f;
     if (uniforms.empty()) {
-        interface_block[22]=0xc0;
-        interface_block[23]=float4_input_count==1 ? 0x0e : 0x0c;
-        interface_block[28]=0x30;
+        interface_block[22]=component_code;
+        interface_block[23]=float_input_count==1 ? 0x0e : 0x0c;
+        interface_block[28]=component_tail;
     } else {
         interface_block[21]=0xa0; interface_block[22]=0xd0; interface_block[23]=0x0e;
         interface_block[28]=0xb0;
@@ -621,9 +624,11 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
     image.interface_block_size=sizeof(interface_block);
     if (uniforms.empty()) {
         image.sdk_version=0x0165;
-        image.program_flags=float4_input_count==1 ? 0x00081001 : 0x00081005;
-        image.fragment_additional_float4_inputs=static_cast<uint8_t>(float4_input_count-1);
-        image.primary_register_count=static_cast<uint16_t>(float4_input_count*4u);
+        image.program_flags=float_input_count==1 ? 0x00081001 : 0x00081005;
+        image.fragment_additional_inputs=static_cast<uint8_t>(float_input_count-1);
+        image.fragment_input_components=float_components;
+        const uint8_t primary_per_input=float_components<=2 ? float_components : 4;
+        image.primary_register_count=static_cast<uint16_t>(float_input_count*primary_per_input);
         image.secondary_register_count=0;
         image.data_buffer_count=0;
         image.compiler_version_raw=0x0002df30;

@@ -48,9 +48,10 @@ MachineType machine_type(TypedType type) {
     case TypedType::U32: return MachineType::U32;
     case TypedType::U16: return MachineType::U16;
     case TypedType::S32: return MachineType::S32;
-    case TypedType::F32x4: return MachineType::F32;
     case TypedType::F32x2:
     case TypedType::F32x3:
+    case TypedType::F32x4:
+        return MachineType::F32;
     case TypedType::F16x2:
     case TypedType::F16x3:
     case TypedType::F16x4:
@@ -360,8 +361,11 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             const auto bank = instruction.opcode() == TypedOpcode::Input ?
                 usse::RegisterBank::PrimaryAttribute : usse::RegisterBank::SecondaryAttribute;
             uint16_t physical_index = instruction.aux;
-            if (instruction.opcode() == TypedOpcode::Input && instruction.dst.type() == TypedType::F32x4) {
-                physical_index = static_cast<uint16_t>(instruction.aux * 2u);
+            if (instruction.opcode() == TypedOpcode::Input) {
+                if (instruction.dst.type()==TypedType::F32x2)
+                    physical_index=instruction.aux;
+                else if (instruction.dst.type()==TypedType::F32x3 || instruction.dst.type()==TypedType::F32x4)
+                    physical_index = static_cast<uint16_t>(instruction.aux * 2u);
             }
             if (instruction.opcode() == TypedOpcode::Uniform && instruction.dst.type() == TypedType::F32x4) {
                 if ((instruction.aux & 3u) != 0) { error = "float4 uniform word offset is not vec4 aligned"; return false; }
@@ -492,18 +496,22 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 error="typed F32x4 division requires the shader-level oracle profile";
                 return false;
             }
-            const bool vector4 = instruction.dst.type() == TypedType::F32x4 &&
-                instruction.src0.type() == TypedType::F32x4 && instruction.src1.type() == TypedType::F32x4;
+            const uint8_t components=typed_component_count(instruction.dst.type());
+            const bool vector = typed_is_float(instruction.dst.type()) && components>=2 && components<=4 &&
+                instruction.src0.type()==instruction.dst.type() && instruction.src1.type()==instruction.dst.type() &&
+                (instruction.dst.type()==TypedType::F32x2 || instruction.dst.type()==TypedType::F32x3 ||
+                 instruction.dst.type()==TypedType::F32x4);
             const bool dot = float_op == TypedFloatOp::Dot && instruction.dst.type() == TypedType::F32 &&
                 instruction.src0.type() == TypedType::F32x4 && instruction.src1.type() == TypedType::F32x4;
-            if ((!vector4 && !dot) || float_op > TypedFloatOp::Dot) {
-                error = "typed float binary currently supports F32x4 arithmetic and float4 dot";
+            if ((!vector && !dot) || float_op > TypedFloatOp::Dot) {
+                error = "typed float binary currently supports F32x2/x3/x4 arithmetic and float4 dot";
                 return false;
             }
 
             auto src0 = lower_value(typed, instruction.src0, values, literals, machine);
             auto src1 = lower_value(typed, instruction.src1, values, literals, machine);
-            const auto dst = machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp, 2);
+            const uint8_t width=dot ? 2 : static_cast<uint8_t>(components>2 ? 2 : 1);
+            const auto dst = machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp, width);
             if (dst.kind() == MachineOperandKind::None || src0.kind() == MachineOperandKind::None ||
                 src1.kind() == MachineOperandKind::None) {
                 error = "failed to create machine operands for typed float operation";
@@ -528,7 +536,8 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 return false;
             }
             if (!machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(machine_op),
-                    machine_vector_config(dot ? 0x1 : 0xF, MachineVectorSwizzle::Identity, src0_negative),
+                    machine_vector_config(dot ? 0x1 : static_cast<uint8_t>((1u<<components)-1u),
+                        MachineVectorSwizzle::Identity, src0_negative),
                     dst, src0, src1)) {
                 error = "failed to lower typed float operation to Machine IR";
                 return false;
@@ -540,32 +549,39 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         }
         case TypedOpcode::FloatUnary: {
             const auto unary_op = static_cast<TypedFloatUnaryOp>(instruction.subop());
-            if (instruction.dst.type() != TypedType::F32x4 || instruction.src0.type() != TypedType::F32x4 ||
+            const uint8_t components=typed_component_count(instruction.dst.type());
+            const bool supported_type=(instruction.dst.type()==TypedType::F32x2 ||
+                                       instruction.dst.type()==TypedType::F32x3 ||
+                                       instruction.dst.type()==TypedType::F32x4) &&
+                                      instruction.src0.type()==instruction.dst.type();
+            if (!supported_type ||
                 unary_op > TypedFloatUnaryOp::Saturate) {
-                error = "typed float unary currently supports F32x4 negate/absolute/saturate";
+                error = "typed float unary currently supports F32x2/x3/x4 negate/absolute/saturate";
                 return false;
             }
             const auto src = lower_value(typed, instruction.src0, values, literals, machine);
             const auto zero = machine.physical(machine_immediate(0), MachineType::F32);
+            const uint8_t width=static_cast<uint8_t>(components>2 ? 2 : 1);
+            const uint8_t mask=static_cast<uint8_t>((1u<<components)-1u);
             MachineOperand dst{};
             if (unary_op==TypedFloatUnaryOp::Saturate) {
-                const auto clamped_low=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
-                dst=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+                const auto clamped_low=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,width);
+                dst=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,width);
                 const auto one=machine.physical(machine_special(1),MachineType::F32);
                 if (src.kind()==MachineOperandKind::None || clamped_low.kind()==MachineOperandKind::None ||
                     dst.kind()==MachineOperandKind::None ||
                     !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Max),
-                        machine_vector_config(0xF),clamped_low,src,zero) ||
+                        machine_vector_config(mask),clamped_low,src,zero) ||
                     !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Min),
-                        machine_vector_config(0xF,MachineVectorSwizzle::Source2YYYY),dst,clamped_low,one)) {
+                        machine_vector_config(mask,MachineVectorSwizzle::Source2YYYY),dst,clamped_low,one)) {
                     error="failed to lower typed saturate to validated max/min Machine IR";
                     return false;
                 }
             } else {
-                dst = machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp, 2);
+                dst = machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp, width);
                 if (dst.kind() == MachineOperandKind::None || src.kind() == MachineOperandKind::None ||
                     !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Add),
-                        machine_vector_config(0xF, MachineVectorSwizzle::Identity,
+                        machine_vector_config(mask, MachineVectorSwizzle::Identity,
                             unary_op == TypedFloatUnaryOp::Neg, unary_op == TypedFloatUnaryOp::Abs),
                         dst, src, zero)) {
                     error = "failed to lower typed float unary operation to Machine IR";
@@ -1038,7 +1054,7 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             out.error="failed to build oracle F32x4 division Machine profile";
             return false;
         }
-        return compile_fragment_arithmetic_machine(primary,{},input_count,0,0,out);
+        return compile_fragment_arithmetic_machine(primary,{},input_count,4,0,0,out);
     }
     if (root_def->opcode()==TypedOpcode::FloatSwizzle &&
         root_def->subop()==static_cast<uint8_t>(TypedFloatSwizzleOp::Wzyx) &&
@@ -1090,8 +1106,11 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     collect_inputs(root);
     std::sort(used_input_locations.begin(),used_input_locations.end());
     used_input_locations.erase(std::unique(used_input_locations.begin(),used_input_locations.end()),used_input_locations.end());
-    if (used_input_locations.empty() || used_input_locations.size()>3) {
-        out.error="typed generic arithmetic path requires one to three reachable float4 inputs";
+    const TypedType arithmetic_type=root.type();
+    const uint8_t arithmetic_components=typed_component_count(arithmetic_type);
+    if ((arithmetic_type!=TypedType::F32x2 && arithmetic_type!=TypedType::F32x3 && arithmetic_type!=TypedType::F32x4) ||
+        used_input_locations.empty() || used_input_locations.size()>3) {
+        out.error="typed generic arithmetic path requires one to three reachable F32 vector inputs (width 2..4)";
         return false;
     }
     for (size_t i=0;i<used_input_locations.size();++i) {
@@ -1102,8 +1121,8 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         const auto found=std::find_if(inputs.begin(),inputs.end(),[&](const TypedResource *resource) {
             return resource->index==i;
         });
-        if (found==inputs.end() || (*found)->type!=TypedType::F32x4) {
-            out.error="typed generic arithmetic reachable input is not float4";
+        if (found==inputs.end() || (*found)->type!=arithmetic_type) {
+            out.error="typed generic arithmetic reachable input type does not match output vector width";
             return false;
         }
     }
@@ -1114,8 +1133,8 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         }
     }
     if (store->aux >= resources.size() || resources[store->aux].kind != TypedResourceKind::Output ||
-        resources[store->aux].index != 0 || resources[store->aux].type != TypedType::F32x4) {
-        out.error = "typed generic arithmetic output must be float4 Location 0";
+        resources[store->aux].index != 0 || resources[store->aux].type != arithmetic_type) {
+        out.error = "typed generic arithmetic output must match the F32 vector result at Location 0";
         return false;
     }
 
@@ -1133,21 +1152,32 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         out.error = machine_error;
         return false;
     }
-    if (stored_resource != store->aux || stored_type != TypedType::F32x4 ||
+    if (stored_resource != store->aux || stored_type != arithmetic_type ||
         stored_value.kind() == MachineOperandKind::None) {
-        out.error = "typed arithmetic Machine IR did not produce the expected float4 output";
+        out.error = "typed arithmetic Machine IR did not produce the expected vector output";
         return false;
     }
-    if (!primary.emit_config<MachineOpcode::Pack>(
+    const uint8_t output_mask=static_cast<uint8_t>((1u<<arithmetic_components)-1u);
+    bool packed=false;
+    if (arithmetic_components<=2) {
+        packed=primary.emit_config<MachineOpcode::Pack>(
             machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F16),
-            machine_pack_config(0xF,true,false),
-            primary.physical(machine_fragment_output(0),MachineType::F16), stored_value,
-            primary.physical(machine_immediate(0),MachineType::F32))) {
+            machine_pack_config(output_mask,true,false),
+            primary.physical(machine_fragment_output(0),MachineType::F16),stored_value,
+            primary.physical(machine_immediate(0),MachineType::F32));
+    } else {
+        packed=primary.emit_config<MachineOpcode::PackValue>(
+            machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F16),
+            machine_pack_config(output_mask,true,false),
+            primary.physical(machine_fragment_output(0),MachineType::F16),stored_value);
+    }
+    if (!packed) {
         out.error = "failed to append typed arithmetic output pack";
         return false;
     }
     return compile_fragment_arithmetic_machine(primary,fragment_uniforms,
-                                               static_cast<uint8_t>(used_input_locations.size()),0,0,out);
+                                               static_cast<uint8_t>(used_input_locations.size()),
+                                               arithmetic_components,0,0,out);
 }
 
 } // namespace vsc::backend

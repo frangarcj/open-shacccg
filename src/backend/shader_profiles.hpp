@@ -74,7 +74,8 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
                                       IrCompileResult &out);
 bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
                                          const std::vector<IrUniformVec4> &uniforms,
-                                         uint8_t float4_input_count,
+                                         uint8_t float_input_count,
+                                         uint8_t float_components,
                                          uint32_t binary_guid, uint32_t source_guid,
                                          IrCompileResult &out);
 bool compile_fragment_control_machine(const MachineProgram &primary,

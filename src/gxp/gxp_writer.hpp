@@ -76,10 +76,11 @@ struct ProgramImage {
     size_t fragment_interface_extension_size = 0;
 
     // SDK 1.6.5 no-secondary fragment programs place one 16-byte descriptor
-    // after the main 32-byte interface for each additional float4 input beyond
+    // after the main 32-byte interface for each additional input beyond
     // Location 0, followed by the usual 8-byte secondary anchor slot. Current
-    // oracle coverage anchors up to Locations 1 and 2.
-    uint8_t fragment_additional_float4_inputs = 0;
+    // oracle coverage anchors homogeneous F32 widths and up to Locations 1/2.
+    uint8_t fragment_additional_inputs = 0;
+    uint8_t fragment_input_components = 4;
 
     // Oracle-observed constant-fragment layout: the first primary qword starts
     // at interface+0x18 and therefore occupies the final 8 bytes of the

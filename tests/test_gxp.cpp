@@ -324,7 +324,7 @@ int test_gxp_writer() {
 
     {
         // SDK 1.6.5 fragment arithmetic/control profiles append one 16-byte
-        // descriptor per additional float4 input, then retain the normal
+        // descriptor per additional homogeneous F32 input, then retain the normal
         // 8-byte no-secondary anchor before primary code.
         ProgramImage multi{};
         multi.type=ProgramType::Fragment;
@@ -332,7 +332,8 @@ int test_gxp_writer() {
         multi.interface_block_size=sizeof(interface_block);
         multi.primary_instructions=primary;
         multi.primary_instruction_count=2;
-        multi.fragment_additional_float4_inputs=2;
+        multi.fragment_additional_inputs=2;
+        multi.fragment_input_components=4;
         const size_t multi_need=required_size(multi);
         std::vector<uint8_t> multi_bytes(multi_need);
         if (!multi_need || !write_program(multi,multi_bytes.data(),multi_bytes.size())) {
@@ -351,6 +352,35 @@ int test_gxp_writer() {
             if (primary_off!=0xe0 ||
                 std::memcmp(multi_bytes.data()+0xb8,expected_extra,sizeof(expected_extra))!=0)
                 failures += fail("fragment additional-input descriptors do not match oracle layout");
+        }
+    }
+
+    {
+        struct NarrowCase { uint8_t components; uint8_t code; uint8_t tail; };
+        const NarrowCase cases[]={{2,0x40,0x10},{3,0xc0,0x30}};
+        for (const auto &c:cases) {
+            ProgramImage narrow{};
+            narrow.type=ProgramType::Fragment;
+            narrow.interface_block=interface_block;
+            narrow.interface_block_size=sizeof(interface_block);
+            narrow.primary_instructions=primary;
+            narrow.primary_instruction_count=2;
+            narrow.fragment_additional_inputs=1;
+            narrow.fragment_input_components=c.components;
+            const size_t need=required_size(narrow);
+            std::vector<uint8_t> bytes(need);
+            if (!need || !write_program(narrow,bytes.data(),bytes.size())) {
+                failures += fail("narrow fragment additional-input layout was rejected");
+                continue;
+            }
+            uint32_t rel=0;
+            std::memcpy(&rel,bytes.data()+0x40,sizeof(rel));
+            const size_t primary_off=0x40u+rel;
+            const uint8_t expected[16]={
+                0,0,0,0,0x0f,0x10,c.code,0x0e,0,0,0,0,c.tail,0,0,0,
+            };
+            if (primary_off!=0xd0 || std::memcmp(bytes.data()+0xb8,expected,sizeof(expected))!=0)
+                failures += fail("narrow fragment descriptor does not match oracle width encoding");
         }
     }
 

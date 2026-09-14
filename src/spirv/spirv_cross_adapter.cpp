@@ -219,7 +219,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
         std::unordered_map<uint32_t, uint16_t> matrix_values;
         std::unordered_map<uint32_t, ExtractInfo> extracts;
         std::unordered_map<uint32_t, uint32_t> constants;
-        std::unordered_map<uint32_t, std::array<uint32_t,4>> float4_constants;
+        std::unordered_map<uint32_t, std::array<uint32_t,4>> float_vector_constants;
         std::unordered_set<uint32_t> float_ones;
         std::unordered_set<uint32_t> glsl450_imports;
         std::unordered_map<uint32_t, uint16_t> outputs;
@@ -358,16 +358,23 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 if (constant_type.basetype == spirv_cross::SPIRType::Float && constant_type.width == 32 &&
                     constant_type.vecsize == 1 && args[2] == 0x3f800000u)
                     float_ones.insert(args[1]);
-            } else if (op==spv::OpConstantComposite && count==7 &&
-                       typed_type(compiler.get_type(args[0]))==backend::TypedType::F32x4) {
+            } else if (op==spv::OpConstantComposite) {
+                const auto constant_type=typed_type(compiler.get_type(args[0]));
+                const uint8_t components=backend::typed_component_count(constant_type);
+                const bool supported=constant_type==backend::TypedType::F32x2 ||
+                    constant_type==backend::TypedType::F32x3 || constant_type==backend::TypedType::F32x4;
+                if (!supported || count!=static_cast<uint16_t>(components+3u)) {
+                    offset += count;
+                    continue;
+                }
                 std::array<uint32_t,4> bits{};
                 bool resolved=true;
-                for (uint8_t lane=0;lane<4;++lane) {
+                for (uint8_t lane=0;lane<components;++lane) {
                     auto scalar=constants.find(args[2+lane]);
                     if (scalar==constants.end()) { resolved=false; break; }
                     bits[lane]=scalar->second;
                 }
-                if (resolved) float4_constants[args[1]]=bits;
+                if (resolved) float_vector_constants[args[1]]=bits;
             }
             offset += count;
         }
@@ -647,9 +654,12 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 }
                 const auto result_type = typed_type(compiler.get_type(args[0]));
                 const uint32_t ext = args[3];
+                const uint8_t result_components=backend::typed_component_count(result_type);
+                const bool result_vector=result_type==backend::TypedType::F32x2 ||
+                    result_type==backend::TypedType::F32x3 || result_type==backend::TypedType::F32x4;
                 if (ext == GLSLstd450FAbs) {
-                    if (count != 6 || result_type != backend::TypedType::F32x4) {
-                        error = "GLSL.std.450 FAbs is outside the validated float4 subset";
+                    if (count != 6 || !result_vector) {
+                        error = "GLSL.std.450 FAbs is outside the validated F32 vector subset";
                         return false;
                     }
                     const auto source = values.find(args[4]);
@@ -664,8 +674,8 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     }
                     values[args[1]] = dst;
                 } else if (ext == GLSLstd450FMin || ext == GLSLstd450FMax) {
-                    if (count != 7 || result_type != backend::TypedType::F32x4) {
-                        error = "GLSL.std.450 min/max is outside the validated float4 subset";
+                    if (count != 7 || !result_vector) {
+                        error = "GLSL.std.450 min/max is outside the validated F32 vector subset";
                         return false;
                     }
                     const auto lhs = values.find(args[4]);
@@ -684,20 +694,21 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     }
                     values[args[1]] = dst;
                 } else if (ext == GLSLstd450FClamp) {
-                    if (count != 8 || result_type != backend::TypedType::F32x4) {
-                        error="GLSL.std.450 FClamp is outside the validated float4 subset";
+                    if (count != 8 || !result_vector) {
+                        error="GLSL.std.450 FClamp is outside the validated F32 vector subset";
                         return false;
                     }
                     const auto source=values.find(args[4]);
-                    const std::array<uint32_t,4> zero_bits={{0,0,0,0}};
-                    const std::array<uint32_t,4> one_bits={{0x3f800000u,0x3f800000u,0x3f800000u,0x3f800000u}};
-                    auto constant_bits=[&](uint32_t id, const std::array<uint32_t,4> &expected) {
-                        const auto it=float4_constants.find(id);
-                        return it!=float4_constants.end() && it->second==expected;
+                    auto constant_bits=[&](uint32_t id, uint32_t expected) {
+                        const auto it=float_vector_constants.find(id);
+                        if (it==float_vector_constants.end()) return false;
+                        for (uint8_t lane=0;lane<result_components;++lane)
+                            if (it->second[lane]!=expected) return false;
+                        return true;
                     };
                     if (source==values.end() || source->second.type()!=result_type ||
-                        !constant_bits(args[5],zero_bits) || !constant_bits(args[6],one_bits)) {
-                        error="FClamp bounds are not the validated float4 zero/one constants";
+                        !constant_bits(args[5],0u) || !constant_bits(args[6],0x3f800000u)) {
+                        error="FClamp bounds are not the validated F32-vector zero/one constants";
                         return false;
                     }
                     const auto dst=program.make_value(result_type);
@@ -988,8 +999,10 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         const auto output = outputs.find(args[0]);
                         auto value = values.find(args[1]);
                         if (value==values.end()) {
-                            const auto constant=float4_constants.find(args[1]);
-                            if (constant!=float4_constants.end()) {
+                            const auto constant=float_vector_constants.find(args[1]);
+                            if (constant!=float_vector_constants.end() && output!=outputs.end() &&
+                                output->second<typed.resources().size() &&
+                                typed.resources()[output->second].type==backend::TypedType::F32x4) {
                                 const auto literal=program.literal_f32x4(constant->second);
                                 if (literal.kind()==backend::TypedValueKind::None) {
                                     error="failed to materialize fragment float4 output constant";

@@ -130,7 +130,9 @@ entries. This observable layout is covered by the canonical writer tests; Sony
 GXP files themselves remain temporary/local-only.
 
 Multi-input fragment ALU/control probes anchor the interface extension layout as
-well: each float4 input beyond Location 0 adds one 16-byte descriptor immediately
-after the main 32-byte interface, then Sony keeps the normal 8-byte no-secondary
-anchor before primary code. Two-input and three-input probes independently
-confirm the Location-1 (`0x10`) and Location-2 (`0x20`) records.
+well: each homogeneous F32 vector input beyond Location 0 adds one 16-byte
+descriptor immediately after the main 32-byte interface, then Sony keeps the
+normal 8-byte no-secondary anchor before primary code. Two-input and three-input
+probes independently confirm the Location-1 (`0x10`) and Location-2 (`0x20`)
+records. The width signature is `0x40`/`0x10` for float2 and `0xc0`/`0x30` for
+float3/float4.
