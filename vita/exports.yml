@@ -1,0 +1,19 @@
+SceShaccCg:
+  attributes: 0
+  version:
+    major: 1
+    minor: 1
+  main:
+    start: module_start
+    stop: module_stop
+  libraries:
+    SceShaccCg:
+      syscall: false
+      functions:
+        - sceShaccCgCompileProgram
+        - sceShaccCgDestroyCompileOutput
+        - sceShaccCgGetVersionString
+        - sceShaccCgInitializeCallbackList
+        - sceShaccCgInitializeCompileOptions
+        - sceShaccCgReleaseCompiler
+        - sceShaccCgSetDefaultAllocator

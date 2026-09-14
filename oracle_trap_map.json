@@ -1,0 +1,229 @@
+{
+  "traps": [
+    {
+      "trap": 1,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 302709900,
+      "function_name": null,
+      "stub_va": 2164278084,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 2,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 350870487,
+      "function_name": "sceClibMemcpy",
+      "stub_va": 2164278100,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 3,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 609122002,
+      "function_name": "sceKernelDeleteLwMutex",
+      "stub_va": 2164278116,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 4,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 791437382,
+      "function_name": "sceClibAbort",
+      "stub_va": 2164278132,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 5,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 1189592699,
+      "function_name": null,
+      "stub_va": 2164278148,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 6,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 1587787470,
+      "function_name": "sceClibVprintf",
+      "stub_va": 2164278164,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 7,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 1631614647,
+      "function_name": "sceClibStrchr",
+      "stub_va": 2164278180,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 8,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 1663664343,
+      "function_name": "sceClibMemset",
+      "stub_va": 2164278196,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 9,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 1712136045,
+      "function_name": "sceClibStrncmp",
+      "stub_va": 2164278212,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 10,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 1892401877,
+      "function_name": "sceClibStrlcat",
+      "stub_va": 2164278228,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 11,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 1936151496,
+      "function_name": "sceClibMemmove",
+      "stub_va": 2164278244,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 12,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 2630008799,
+      "function_name": "sceClibMemcmp",
+      "stub_va": 2164278260,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 13,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 2734378397,
+      "function_name": "sceClibStrcmp",
+      "stub_va": 2164278276,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 14,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 2891538024,
+      "function_name": "sceClibStrnlen",
+      "stub_va": 2164278292,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 15,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 2970665251,
+      "function_name": null,
+      "stub_va": 2164278308,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 16,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 3041659876,
+      "function_name": "sceClibStrncasecmp",
+      "stub_va": 2164278324,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 17,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 3294156298,
+      "function_name": "sceClibStrncpy",
+      "stub_va": 2164278340,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 18,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 3664693487,
+      "function_name": "sceKernelCreateLwMutex",
+      "stub_va": 2164278356,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 19,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 4196842594,
+      "function_name": "sceClibPrintf",
+      "stub_va": 2164278372,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 20,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "function_nid": 4201374823,
+      "function_name": "sceClibVsnprintf",
+      "stub_va": 2164278388,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 21,
+      "library": "SceRtcUser",
+      "library_nid": 1728369606,
+      "function_nid": 310559798,
+      "function_name": "sceRtcConvertUtcToLocalTime",
+      "stub_va": 2164278404,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 22,
+      "library": "SceRtcUser",
+      "library_nid": 1728369606,
+      "function_nid": 603427444,
+      "function_name": "sceRtcGetCurrentTick",
+      "stub_va": 2164278420,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 23,
+      "library": "SceRtcUser",
+      "library_nid": 1728369606,
+      "function_nid": 976433025,
+      "function_name": "sceRtcSetTime_t",
+      "stub_va": 2164278436,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 24,
+      "library": "SceRtcUser",
+      "library_nid": 1728369606,
+      "function_nid": 3448370276,
+      "function_name": "sceRtcSetTick",
+      "stub_va": 2164278452,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    },
+    {
+      "trap": 25,
+      "library": "SceRtcUser",
+      "library_nid": 1728369606,
+      "function_nid": 4071766242,
+      "function_name": "sceRtcGetTick",
+      "stub_va": 2164278468,
+      "original_stub_hex": "0000e0e31eff2fe10000a0e100000000"
+    }
+  ]
+}

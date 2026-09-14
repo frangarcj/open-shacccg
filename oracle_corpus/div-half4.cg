@@ -1,0 +1,1 @@
+half4 main(half4 a : TEXCOORD0, half4 b : TEXCOORD1, half4 c : TEXCOORD2) : COLOR0 { return a / b; }

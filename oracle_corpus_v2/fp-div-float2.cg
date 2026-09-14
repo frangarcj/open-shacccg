@@ -1,0 +1,1 @@
+float2 main(float2 a : TEXCOORD0, float2 b : TEXCOORD1, float2 c : TEXCOORD2) : COLOR0 { return a / b; }

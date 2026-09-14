@@ -1,0 +1,45 @@
+module SceShaccCg nid=0xA6B6F15D type=6 module_info=+0x2E5840
+exports +0x2E589C..+0x2E58DC; imports +0x2E58DC..+0x2E5944
+
+Exports:
+  SceShaccCg nid=0xA05BBEBB funcs=7
+    0x3B58AFA0 -> 0x81267CE9
+    0x66814F35 -> 0x81267D9D
+    0x6F01D573 -> 0x81267F25
+    0x7F430CCD -> 0x81267F71
+    0x95F57A23 -> 0x81267F5D
+    0xA8C2C1C8 -> 0x81267D25
+    0xAA82EF0C -> 0x81267E85
+  <NONAME> nid=0x00000000 funcs=3
+    0x935CD196 -> 0x81000F5D
+    0x79F8E492 -> 0x81000F69
+    0x913482A9 -> 0x81000F75
+
+Imports:
+  SceLibKernel nid=0xCAE9ACE6 funcs=20 vars=0
+    F 0x120AFC8C <unresolved> stub=0x81004344
+    F 0x14E9DBD7 sceClibMemcpy stub=0x81004354
+    F 0x244E76D2 sceKernelDeleteLwMutex stub=0x81004364
+    F 0x2F2C6046 sceClibAbort stub=0x81004374
+    F 0x46E7BE7B <unresolved> stub=0x81004384
+    F 0x5EA3B6CE sceClibVprintf stub=0x81004394
+    F 0x614076B7 sceClibStrchr stub=0x810043A4
+    F 0x632980D7 sceClibMemset stub=0x810043B4
+    F 0x660D1F6D sceClibStrncmp stub=0x810043C4
+    F 0x70CBC2D5 sceClibStrlcat stub=0x810043D4
+    F 0x736753C8 sceClibMemmove stub=0x810043E4
+    F 0x9CC2BFDF sceClibMemcmp stub=0x810043F4
+    F 0xA2FB4D9D sceClibStrcmp stub=0x81004404
+    F 0xAC595E68 sceClibStrnlen stub=0x81004414
+    F 0xB110C123 sceKernelGetProcessTimeWide stub=0x81004424
+    F 0xB54C0BE4 sceClibStrncasecmp stub=0x81004434
+    F 0xC458D60A sceClibStrncpy stub=0x81004444
+    F 0xDA6EC8EF sceKernelCreateLwMutex stub=0x81004454
+    F 0xFA26BC62 sceClibPrintf stub=0x81004464
+    F 0xFA6BE467 sceClibVsnprintf stub=0x81004474
+  SceRtcUser nid=0x6704D3C6 funcs=5 vars=0
+    F 0x1282C436 sceRtcConvertUtcToLocalTime stub=0x81004484
+    F 0x23F79274 sceRtcGetCurrentTick stub=0x81004494
+    F 0x3A332F81 sceRtcSetTime_t stub=0x810044A4
+    F 0xCD89F464 sceRtcSetTick stub=0x810044B4
+    F 0xF2B238E2 sceRtcGetTick stub=0x810044C4

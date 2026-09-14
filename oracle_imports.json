@@ -1,0 +1,188 @@
+{
+  "elf_type": 65028,
+  "machine": 40,
+  "flags": 83886080,
+  "text_vaddr": 2164260864,
+  "module_info_offset": 3037248,
+  "module": {
+    "name": "SceShaccCg",
+    "type": 6,
+    "attribute": 0,
+    "version": 257,
+    "nid": 2797007197,
+    "gp": 0,
+    "exports_top": 3037340,
+    "exports_bottom": 3037404,
+    "imports_top": 3037404,
+    "imports_bottom": 3037508,
+    "start": 3933,
+    "stop": 3945
+  },
+  "exports": [
+    {
+      "offset": 3037340,
+      "size": 32,
+      "library": "SceShaccCg",
+      "library_nid": 2690367163,
+      "attribute": 1,
+      "version_raw": "0100",
+      "num_functions": 7,
+      "num_vars": 0,
+      "num_tls_vars": 0,
+      "function_nids": [
+        995667872,
+        1719750453,
+        1862391155,
+        2135100621,
+        2515892771,
+        2831335880,
+        2860707596
+      ],
+      "function_entries": [
+        2166783209,
+        2166783389,
+        2166783781,
+        2166783857,
+        2166783837,
+        2166783269,
+        2166783621
+      ]
+    },
+    {
+      "offset": 3037372,
+      "size": 32,
+      "library": null,
+      "library_nid": 0,
+      "attribute": 32768,
+      "version_raw": "0000",
+      "num_functions": 3,
+      "num_vars": 1,
+      "num_tls_vars": 0,
+      "function_nids": [
+        2472333718,
+        2046354578,
+        2436137641
+      ],
+      "function_entries": [
+        2164264797,
+        2164264809,
+        2164264821
+      ]
+    }
+  ],
+  "imports": [
+    {
+      "offset": 3037404,
+      "size": 52,
+      "library": "SceLibKernel",
+      "library_nid": 3404311782,
+      "attribute": 0,
+      "version": 5,
+      "num_functions": 20,
+      "num_vars": 0,
+      "num_tls_vars": 0,
+      "function_nids": [
+        302709900,
+        350870487,
+        609122002,
+        791437382,
+        1189592699,
+        1587787470,
+        1631614647,
+        1663664343,
+        1712136045,
+        1892401877,
+        1936151496,
+        2630008799,
+        2734378397,
+        2891538024,
+        2970665251,
+        3041659876,
+        3294156298,
+        3664693487,
+        4196842594,
+        4201374823
+      ],
+      "function_names": [
+        null,
+        "sceClibMemcpy",
+        "sceKernelDeleteLwMutex",
+        "sceClibAbort",
+        null,
+        "sceClibVprintf",
+        "sceClibStrchr",
+        "sceClibMemset",
+        "sceClibStrncmp",
+        "sceClibStrlcat",
+        "sceClibMemmove",
+        "sceClibMemcmp",
+        "sceClibStrcmp",
+        "sceClibStrnlen",
+        "sceKernelGetProcessTimeWide",
+        "sceClibStrncasecmp",
+        "sceClibStrncpy",
+        "sceKernelCreateLwMutex",
+        "sceClibPrintf",
+        "sceClibVsnprintf"
+      ],
+      "function_entries": [
+        2164278084,
+        2164278100,
+        2164278116,
+        2164278132,
+        2164278148,
+        2164278164,
+        2164278180,
+        2164278196,
+        2164278212,
+        2164278228,
+        2164278244,
+        2164278260,
+        2164278276,
+        2164278292,
+        2164278308,
+        2164278324,
+        2164278340,
+        2164278356,
+        2164278372,
+        2164278388
+      ],
+      "variable_nids": [],
+      "variable_entries": []
+    },
+    {
+      "offset": 3037456,
+      "size": 52,
+      "library": "SceRtcUser",
+      "library_nid": 1728369606,
+      "attribute": 0,
+      "version": 1,
+      "num_functions": 5,
+      "num_vars": 0,
+      "num_tls_vars": 0,
+      "function_nids": [
+        310559798,
+        603427444,
+        976433025,
+        3448370276,
+        4071766242
+      ],
+      "function_names": [
+        "sceRtcConvertUtcToLocalTime",
+        "sceRtcGetCurrentTick",
+        "sceRtcSetTime_t",
+        "sceRtcSetTick",
+        "sceRtcGetTick"
+      ],
+      "function_entries": [
+        2164278404,
+        2164278420,
+        2164278436,
+        2164278452,
+        2164278468
+      ],
+      "variable_nids": [],
+      "variable_entries": []
+    }
+  ]
+}

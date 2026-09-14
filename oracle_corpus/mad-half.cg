@@ -1,0 +1,1 @@
+half main(half a : TEXCOORD0, half b : TEXCOORD1, half c : TEXCOORD2) : COLOR0 { return a * b + c; }

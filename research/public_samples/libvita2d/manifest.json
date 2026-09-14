@@ -1,0 +1,70 @@
+{
+  "origin": "https://github.com/xerpi/libvita2d",
+  "license": "MIT; see LICENSE.libvita2d",
+  "purpose": "known-good public Vita GXP regression corpus",
+  "samples": [
+    {
+      "name": "clear_f",
+      "source": "clear_f.cg",
+      "gxp": "clear_f.gxp",
+      "stage": "fragment",
+      "bytes": 244,
+      "logical_size": 244,
+      "sha256": "b9d5693c598b0f23b4114941a7055d642fbf46a68488a6edc7b4313b58983966"
+    },
+    {
+      "name": "clear_v",
+      "source": "clear_v.cg",
+      "gxp": "clear_v.gxp",
+      "stage": "vertex",
+      "bytes": 268,
+      "logical_size": 266,
+      "sha256": "2cc9beadc234fdd962cb84fb246fa305af2d7817e754fe8ac2e001c37c95f764"
+    },
+    {
+      "name": "color_f",
+      "source": "color_f.cg",
+      "gxp": "color_f.gxp",
+      "stage": "fragment",
+      "bytes": 216,
+      "logical_size": 216,
+      "sha256": "925d1eff277a4bf2eb0694d316973907c5f5f8cfc5bb3364e3706cb921203f88"
+    },
+    {
+      "name": "color_v",
+      "source": "color_v.cg",
+      "gxp": "color_v.gxp",
+      "stage": "vertex",
+      "bytes": 344,
+      "logical_size": 341,
+      "sha256": "f2c5b2798ac43df4fb761020aac7064300b44ec7727d54e23b1b11f819652b46"
+    },
+    {
+      "name": "texture_f",
+      "source": "texture_f.cg",
+      "gxp": "texture_f.gxp",
+      "stage": "fragment",
+      "bytes": 228,
+      "logical_size": 228,
+      "sha256": "fdb49c863e7fcfba08a54467695d14285159bae9fd219f83cc37524b5932aaed"
+    },
+    {
+      "name": "texture_tint_f",
+      "source": "texture_tint_f.cg",
+      "gxp": "texture_tint_f.gxp",
+      "stage": "fragment",
+      "bytes": 296,
+      "logical_size": 295,
+      "sha256": "4946041f1af3c0192f46b86a247d38271747b73db355c0ee32df42b43ba60685"
+    },
+    {
+      "name": "texture_v",
+      "source": "texture_v.cg",
+      "gxp": "texture_v.gxp",
+      "stage": "vertex",
+      "bytes": 344,
+      "logical_size": 344,
+      "sha256": "ce748efe5db5316c3f3787c1b3b6c45b3898894a60fc7f1bddaade3b9e3b5194"
+    }
+  ]
+}

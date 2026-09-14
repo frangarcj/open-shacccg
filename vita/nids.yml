@@ -1,0 +1,15 @@
+# Reference NIDs from VitaSDK firmware 3.60 database.
+module:
+  name: SceShaccCg
+  nid: 0xB3B90A35
+library:
+  name: SceShaccCg
+  nid: 0xA05BBEBB
+functions:
+  sceShaccCgCompileProgram: 0x66814F35
+  sceShaccCgDestroyCompileOutput: 0xAA82EF0C
+  sceShaccCgGetVersionString: 0x7F430CCD
+  sceShaccCgInitializeCallbackList: 0xA8C2C1C8
+  sceShaccCgInitializeCompileOptions: 0x3B58AFA0
+  sceShaccCgReleaseCompiler: 0x95F57A23
+  sceShaccCgSetDefaultAllocator: 0x6F01D573

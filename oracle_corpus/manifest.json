@@ -1,0 +1,492 @@
+[
+  {
+    "name": "add-float",
+    "file": "add-float.cg",
+    "type": "float",
+    "op": "add",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sub-float",
+    "file": "sub-float.cg",
+    "type": "float",
+    "op": "sub",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mul-float",
+    "file": "mul-float.cg",
+    "type": "float",
+    "op": "mul",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "div-float",
+    "file": "div-float.cg",
+    "type": "float",
+    "op": "div",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "min-float",
+    "file": "min-float.cg",
+    "type": "float",
+    "op": "min",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "max-float",
+    "file": "max-float.cg",
+    "type": "float",
+    "op": "max",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "dot-float",
+    "file": "dot-float.cg",
+    "type": "float",
+    "op": "dot",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mad-float",
+    "file": "mad-float.cg",
+    "type": "float",
+    "op": "mad",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sat-float",
+    "file": "sat-float.cg",
+    "type": "float",
+    "op": "sat",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "swiz-float",
+    "file": "swiz-float.cg",
+    "type": "float",
+    "op": "swiz",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "add-float2",
+    "file": "add-float2.cg",
+    "type": "float2",
+    "op": "add",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sub-float2",
+    "file": "sub-float2.cg",
+    "type": "float2",
+    "op": "sub",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mul-float2",
+    "file": "mul-float2.cg",
+    "type": "float2",
+    "op": "mul",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "div-float2",
+    "file": "div-float2.cg",
+    "type": "float2",
+    "op": "div",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "min-float2",
+    "file": "min-float2.cg",
+    "type": "float2",
+    "op": "min",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "max-float2",
+    "file": "max-float2.cg",
+    "type": "float2",
+    "op": "max",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "dot-float2",
+    "file": "dot-float2.cg",
+    "type": "float2",
+    "op": "dot",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mad-float2",
+    "file": "mad-float2.cg",
+    "type": "float2",
+    "op": "mad",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sat-float2",
+    "file": "sat-float2.cg",
+    "type": "float2",
+    "op": "sat",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "swiz-float2",
+    "file": "swiz-float2.cg",
+    "type": "float2",
+    "op": "swiz",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "add-float3",
+    "file": "add-float3.cg",
+    "type": "float3",
+    "op": "add",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sub-float3",
+    "file": "sub-float3.cg",
+    "type": "float3",
+    "op": "sub",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mul-float3",
+    "file": "mul-float3.cg",
+    "type": "float3",
+    "op": "mul",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "div-float3",
+    "file": "div-float3.cg",
+    "type": "float3",
+    "op": "div",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "min-float3",
+    "file": "min-float3.cg",
+    "type": "float3",
+    "op": "min",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "max-float3",
+    "file": "max-float3.cg",
+    "type": "float3",
+    "op": "max",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "dot-float3",
+    "file": "dot-float3.cg",
+    "type": "float3",
+    "op": "dot",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mad-float3",
+    "file": "mad-float3.cg",
+    "type": "float3",
+    "op": "mad",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sat-float3",
+    "file": "sat-float3.cg",
+    "type": "float3",
+    "op": "sat",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "swiz-float3",
+    "file": "swiz-float3.cg",
+    "type": "float3",
+    "op": "swiz",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "add-float4",
+    "file": "add-float4.cg",
+    "type": "float4",
+    "op": "add",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sub-float4",
+    "file": "sub-float4.cg",
+    "type": "float4",
+    "op": "sub",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mul-float4",
+    "file": "mul-float4.cg",
+    "type": "float4",
+    "op": "mul",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "div-float4",
+    "file": "div-float4.cg",
+    "type": "float4",
+    "op": "div",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "min-float4",
+    "file": "min-float4.cg",
+    "type": "float4",
+    "op": "min",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "max-float4",
+    "file": "max-float4.cg",
+    "type": "float4",
+    "op": "max",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "dot-float4",
+    "file": "dot-float4.cg",
+    "type": "float4",
+    "op": "dot",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mad-float4",
+    "file": "mad-float4.cg",
+    "type": "float4",
+    "op": "mad",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sat-float4",
+    "file": "sat-float4.cg",
+    "type": "float4",
+    "op": "sat",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "swiz-float4",
+    "file": "swiz-float4.cg",
+    "type": "float4",
+    "op": "swiz",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "add-half",
+    "file": "add-half.cg",
+    "type": "half",
+    "op": "add",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sub-half",
+    "file": "sub-half.cg",
+    "type": "half",
+    "op": "sub",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mul-half",
+    "file": "mul-half.cg",
+    "type": "half",
+    "op": "mul",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "div-half",
+    "file": "div-half.cg",
+    "type": "half",
+    "op": "div",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "min-half",
+    "file": "min-half.cg",
+    "type": "half",
+    "op": "min",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "max-half",
+    "file": "max-half.cg",
+    "type": "half",
+    "op": "max",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "dot-half",
+    "file": "dot-half.cg",
+    "type": "half",
+    "op": "dot",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mad-half",
+    "file": "mad-half.cg",
+    "type": "half",
+    "op": "mad",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sat-half",
+    "file": "sat-half.cg",
+    "type": "half",
+    "op": "sat",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "swiz-half",
+    "file": "swiz-half.cg",
+    "type": "half",
+    "op": "swiz",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "add-half2",
+    "file": "add-half2.cg",
+    "type": "half2",
+    "op": "add",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sub-half2",
+    "file": "sub-half2.cg",
+    "type": "half2",
+    "op": "sub",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mul-half2",
+    "file": "mul-half2.cg",
+    "type": "half2",
+    "op": "mul",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "div-half2",
+    "file": "div-half2.cg",
+    "type": "half2",
+    "op": "div",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "min-half2",
+    "file": "min-half2.cg",
+    "type": "half2",
+    "op": "min",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "max-half2",
+    "file": "max-half2.cg",
+    "type": "half2",
+    "op": "max",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "dot-half2",
+    "file": "dot-half2.cg",
+    "type": "half2",
+    "op": "dot",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mad-half2",
+    "file": "mad-half2.cg",
+    "type": "half2",
+    "op": "mad",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sat-half2",
+    "file": "sat-half2.cg",
+    "type": "half2",
+    "op": "sat",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "swiz-half2",
+    "file": "swiz-half2.cg",
+    "type": "half2",
+    "op": "swiz",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "add-half4",
+    "file": "add-half4.cg",
+    "type": "half4",
+    "op": "add",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sub-half4",
+    "file": "sub-half4.cg",
+    "type": "half4",
+    "op": "sub",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mul-half4",
+    "file": "mul-half4.cg",
+    "type": "half4",
+    "op": "mul",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "div-half4",
+    "file": "div-half4.cg",
+    "type": "half4",
+    "op": "div",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "min-half4",
+    "file": "min-half4.cg",
+    "type": "half4",
+    "op": "min",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "max-half4",
+    "file": "max-half4.cg",
+    "type": "half4",
+    "op": "max",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "dot-half4",
+    "file": "dot-half4.cg",
+    "type": "half4",
+    "op": "dot",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "mad-half4",
+    "file": "mad-half4.cg",
+    "type": "half4",
+    "op": "mad",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "sat-half4",
+    "file": "sat-half4.cg",
+    "type": "half4",
+    "op": "sat",
+    "profile": "sce_fp_psp2"
+  },
+  {
+    "name": "swiz-half4",
+    "file": "swiz-half4.cg",
+    "type": "half4",
+    "op": "swiz",
+    "profile": "sce_fp_psp2"
+  }
+]

@@ -1,0 +1,19 @@
+# CMake build trees
+/build/
+/build-*/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+
+# Local coverage / profiling artifacts
+*.gcda
+*.gcno
+*.profraw
+*.profdata

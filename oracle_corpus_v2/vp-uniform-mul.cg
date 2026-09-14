@@ -1,0 +1,1 @@
+uniform float4x4 mvp; float4 main(float4 p:POSITION) : POSITION { return mul(mvp, p); }

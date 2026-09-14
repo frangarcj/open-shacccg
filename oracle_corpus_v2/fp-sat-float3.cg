@@ -1,0 +1,1 @@
+float3 main(float3 a : TEXCOORD0, float3 b : TEXCOORD1, float3 c : TEXCOORD2) : COLOR0 { return saturate(a); }

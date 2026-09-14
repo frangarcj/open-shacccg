@@ -1,0 +1,1 @@
+struct O { float4 p:POSITION; float2 uv:TEXCOORD0; }; O main(float4 p:POSITION,float2 uv:TEXCOORD0) { O o; o.p=p; o.uv=uv; return o; }

@@ -1,0 +1,30 @@
+{
+  "elf_type": 65028,
+  "machine": 40,
+  "entry": 3037248,
+  "flags": 83886080,
+  "segments": [
+    {
+      "index": 0,
+      "file": "load0_v81000000.bin",
+      "file_offset": 192,
+      "vaddr": 2164260864,
+      "paddr": 0,
+      "filesz": 3428320,
+      "memsz": 3428320,
+      "flags": 221249543,
+      "align": 16
+    },
+    {
+      "index": 1,
+      "file": "load1_v81345000.bin",
+      "file_offset": 3428512,
+      "vaddr": 2167689216,
+      "paddr": 0,
+      "filesz": 408,
+      "memsz": 808,
+      "flags": 135266310,
+      "align": 16
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+half2 main(half2 a : TEXCOORD0, half2 b : TEXCOORD1, half2 c : TEXCOORD2) : COLOR0 { return -a; }

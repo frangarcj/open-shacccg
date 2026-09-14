@@ -1,0 +1,24 @@
+type=0xfe04 machine=40 entry=0x002e5840 flags=0x05000000
+phoff=52 phnum=4 phentsize=32 sections=0
+PH0: type=0x1 off=0xc0 vaddr=0x81000000 filesz=0x344fe0 memsz=0x344fe0 flags=0xd300007 align=0x10
+PH1: type=0x1 off=0x3450a0 vaddr=0x81345000 filesz=0x198 memsz=0x328 flags=0x8100006 align=0x10
+PH2: type=0x60000000 off=0x345240 vaddr=0x00000000 filesz=0x4cd28 memsz=0x0 flags=0x0 align=0x10
+PH3: type=0x60000000 off=0x391f70 vaddr=0x00000000 filesz=0x3fc memsz=0x0 flags=0x10000 align=0x10
+SceShaccCg
+SceShaccCg
+SceShaccMutex
+sce_fp_psp2
+sce_vp_psp2
+USSEv2
+Failed to alloc space for USSE code
+Failed to alloc space for SA-update USSE code
+!(psState->uCompilerFlags & UF_GLSL)
+(psState->uCompilerFlags & UF_CONSTEXPLICTADDRESSMODE) != 0
+Error generating subroutine USSE code
+Error generating main USSE code
+Error generating SA-update USSE code
+(psState->uCompilerFlags & UF_CONSTEXPLICTADDRESSMODE) == 0
+(psState->uCompilerFlags & UF_CONSTEXPLICTADDRESSMODE) != 0
+(psState->uCompilerFlags & UF_NONONDEPENDENTSAMPLES) == 0
+PSP2 Cg Compiler (dll version)
+cgCompilerVersion
