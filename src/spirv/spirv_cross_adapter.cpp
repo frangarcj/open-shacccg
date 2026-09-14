@@ -735,18 +735,41 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                             if (it->second[lane]!=expected) return false;
                         return true;
                     };
-                    if (source==values.end() || source->second.type()!=result_type ||
-                        !constant_bits(args[5],0u) || !constant_bits(args[6],0x3f800000u)) {
-                        error="FClamp bounds are not the validated F32 zero/one constants";
+                    if (source==values.end() || source->second.type()!=result_type || !constant_bits(args[5],0u)) {
+                        error="FClamp source/lower bound is outside the validated F32 subset";
                         return false;
                     }
-                    const auto dst=program.make_value(result_type);
-                    if (!program.emit<backend::TypedOpcode::FloatUnary>(
-                            static_cast<uint8_t>(backend::TypedFloatUnaryOp::Saturate),dst,source->second)) {
-                        error="failed to emit Typed IR saturate";
+                    if (constant_bits(args[6],0x3f800000u)) {
+                        const auto dst=program.make_value(result_type);
+                        if (!program.emit<backend::TypedOpcode::FloatUnary>(
+                                static_cast<uint8_t>(backend::TypedFloatUnaryOp::Saturate),dst,source->second)) {
+                            error="failed to emit Typed IR saturate";
+                            return false;
+                        }
+                        values[args[1]]=dst;
+                    } else if (result_scalar) {
+                        const auto upper=values.find(args[6]);
+                        if (upper==values.end() || upper->second.type()!=backend::TypedType::F32) {
+                            error="scalar FClamp upper bound is unresolved or non-F32";
+                            return false;
+                        }
+                        const auto zero=program.literal_f32(0);
+                        const auto low=program.make_value<backend::TypedType::F32>();
+                        const auto dst=program.make_value<backend::TypedType::F32>();
+                        if (zero.kind()==backend::TypedValueKind::None || low.kind()==backend::TypedValueKind::None ||
+                            dst.kind()==backend::TypedValueKind::None ||
+                            !program.emit<backend::TypedOpcode::FloatBinary>(
+                                static_cast<uint8_t>(backend::TypedFloatOp::Max),low,source->second,zero) ||
+                            !program.emit<backend::TypedOpcode::FloatBinary>(
+                                static_cast<uint8_t>(backend::TypedFloatOp::Min),dst,low,upper->second)) {
+                            error="failed to lower scalar FClamp to Typed min/max";
+                            return false;
+                        }
+                        values[args[1]]=dst;
+                    } else {
+                        error="FClamp bounds are outside the validated vector zero/one subset";
                         return false;
                     }
-                    values[args[1]]=dst;
                 } else {
                     error = "GLSL.std.450 instruction is not in the validated Typed IR subset";
                     return false;
@@ -947,11 +970,21 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     values[args[1]] = dst;
                 } else if (op == spv::OpFMul || op == spv::OpFAdd || op == spv::OpFSub || op == spv::OpFDiv) {
                     if (count != 5) { error = "invalid floating binary instruction"; return false; }
-                    const auto lhs = values.find(args[2]);
-                    const auto rhs = values.find(args[3]);
                     const auto result_type = typed_type(compiler.get_type(args[0]));
-                    if (lhs == values.end() || rhs == values.end() || result_type == backend::TypedType::Invalid ||
-                        lhs->second.type() != result_type || rhs->second.type() != result_type || !backend::typed_is_float(result_type)) {
+                    auto resolve_float=[&](uint32_t id, backend::TypedValue &value) -> bool {
+                        if (auto it=values.find(id); it!=values.end() && it->second.type()==result_type) {
+                            value=it->second;
+                            return true;
+                        }
+                        if (result_type!=backend::TypedType::F32) return false;
+                        const auto constant=constants.find(id);
+                        if (constant==constants.end()) return false;
+                        value=program.literal_f32(constant->second);
+                        return value.kind()!=backend::TypedValueKind::None;
+                    };
+                    backend::TypedValue lhs{},rhs{};
+                    if (result_type == backend::TypedType::Invalid || !backend::typed_is_float(result_type) ||
+                        !resolve_float(args[2],lhs) || !resolve_float(args[3],rhs)) {
                         error = "floating binary operands are unresolved or mismatched"; return false;
                     }
                     backend::TypedFloatOp float_op = backend::TypedFloatOp::Mul;
@@ -960,7 +993,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     else if (op == spv::OpFDiv) float_op = backend::TypedFloatOp::Div;
                     const auto dst = program.make_value(result_type);
                     if (!program.emit<backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(float_op), dst,
-                                                                         lhs->second, rhs->second)) {
+                                                                         lhs, rhs)) {
                         error = "failed to emit Typed IR float binary operation"; return false;
                     }
                     values[args[1]] = dst;

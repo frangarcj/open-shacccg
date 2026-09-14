@@ -83,7 +83,7 @@ bool valid_value_use(const TypedProgram &program, const TypedValue &value,
     if (!is_value(value) || value.type() == TypedType::Invalid) return false;
     if (value.kind() == TypedValueKind::Literal)
         return value.id() < program.literals().size() &&
-            (value.type() == TypedType::U32 || value.type() == TypedType::S32);
+            (value.type() == TypedType::U32 || value.type() == TypedType::S32 || value.type()==TypedType::F32);
     return value.id() < defined.size() && defined[value.id()] && types[value.id()] == value.type();
 }
 
@@ -99,6 +99,8 @@ MachineOperand lower_value(const TypedProgram &typed, const TypedValue &value,
             literals[value.id()] = machine.literal_u32(typed.literals()[value.id()]);
         else if (value.type()==TypedType::S32)
             literals[value.id()] = machine.literal_s32(static_cast<int32_t>(typed.literals()[value.id()]));
+        else if (value.type()==TypedType::F32 && typed.literals()[value.id()]==0)
+            literals[value.id()] = machine.physical(machine_immediate(0),MachineType::F32);
     }
     return literals[value.id()];
 }
@@ -187,6 +189,12 @@ TypedValue TypedProgram::literal_s32(int32_t value) {
     if (literals_.size() > kPayloadMask) return {};
     literals_.push_back(static_cast<uint32_t>(value));
     return TypedValue::literal(static_cast<uint32_t>(literals_.size() - 1), TypedType::S32);
+}
+
+TypedValue TypedProgram::literal_f32(uint32_t bits) {
+    if (literals_.size() > kPayloadMask) return {};
+    literals_.push_back(bits);
+    return TypedValue::literal(static_cast<uint32_t>(literals_.size() - 1), TypedType::F32);
 }
 
 TypedValue TypedProgram::literal_f32x4(const std::array<uint32_t,4> &bits) {

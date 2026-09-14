@@ -135,6 +135,7 @@ public:
     TypedValue make_predicate(bool inverted = false);
     TypedValue literal_u32(uint32_t value);
     TypedValue literal_s32(int32_t value);
+    TypedValue literal_f32(uint32_t bits);
     TypedValue literal_f32x4(const std::array<uint32_t,4> &bits);
     TypedValue sampler(uint16_t binding);
 

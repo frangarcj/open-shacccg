@@ -523,6 +523,25 @@ int test_typed_ir() {
 
     {
         TypedProgram program;
+        const auto source=program.input<TypedType::F32>(0);
+        const auto upper=program.uniform<TypedType::F32>(0);
+        const auto zero=program.literal_f32(0);
+        const auto low=program.make_value<TypedType::F32>();
+        const auto clamped=program.make_value<TypedType::F32>();
+        program.emit<TypedOpcode::FloatBinary>(static_cast<uint8_t>(TypedFloatOp::Max),low,source,zero);
+        program.emit<TypedOpcode::FloatBinary>(static_cast<uint8_t>(TypedFloatOp::Min),clamped,low,upper);
+        MachineCompileResult result;
+        usse::V32NmadSemantic max_op{},min_op{};
+        if (!compile_typed_program(program,result) || result.words.size()!=2 ||
+            !usse::decode_v32nmad_semantic(result.words[0],&max_op) || max_op.op!=usse::VectorOp::Max ||
+            max_op.src2.bank!=usse::RegisterBank::Immediate ||
+            !usse::decode_v32nmad_semantic(result.words[1],&min_op) || min_op.op!=usse::VectorOp::Min ||
+            min_op.src2.bank!=usse::RegisterBank::SecondaryAttribute)
+            failures += fail("typed scalar dynamic clamp did not lower to MAX(x,0)/MIN(x,upper)");
+    }
+
+    {
+        TypedProgram program;
         const auto source = program.input<TypedType::F32x4>(0);
         const auto dst = program.make_value<TypedType::F16x4>();
         program.emit<TypedOpcode::FloatConvert>(
