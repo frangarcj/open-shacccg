@@ -19,7 +19,8 @@ public:
     template <typename Semantic>
     bool instruction(const Semantic &instruction) {
         uint64_t word = 0;
-        return append(usse::encode_semantic(instruction, &word), word);
+        const bool ok = usse::encode_semantic(instruction, &word);
+        return append(ok, word);
     }
 
     const std::vector<uint64_t> &words() const { return words_; }
