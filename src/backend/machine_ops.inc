@@ -7,6 +7,7 @@ VSC_MACHINE_OP(PackValue, "pack-value", ValueDef, ValueUse,     None,         0x
 VSC_MACHINE_OP(Vector,  "vector",  ValueDef,     ValueUse,     ValueUse,     0x0f)
 VSC_MACHINE_OP(Vmad,    "vmad",    ValueDef,     ValueUse,     ValuePairUse, 0x0f)
 VSC_MACHINE_OP(DependentSample, "dependent-sample", ValueDef, ValueUse, None, 0x0f)
+VSC_MACHINE_OP(Branch,  "branch",   None,         LabelUse,     None,         0x01)
 VSC_MACHINE_OP(Compare, "compare", PredicateDef, ValueUse,     ValueUse,     0x0f)
 VSC_MACHINE_OP(Kill,    "kill",    None,         PredicateUse, None,         0x03)
 VSC_MACHINE_OP(Bitwise, "bitwise", ValueDef,     ValueUse,     ValueUse,     0x0f)

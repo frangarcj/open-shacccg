@@ -54,6 +54,58 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        const auto target = program.make_label();
+        if (target.kind()==MachineOperandKind::None ||
+            !program.branch(target, MachineOperand::physical_predicate(0))) {
+            failures += fail("could not construct forward P0 machine branch");
+        } else {
+            for (int i=0;i<11;i++)
+                if (!program.emit<MachineOpcode::Nop>()) failures += fail("could not append branch padding NOP");
+            if (!program.bind_label(target)) failures += fail("could not bind forward branch label");
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=12 ||
+                result.words[0]!=0xf90000400000000cULL)
+                failures += fail("machine forward P0 branch did not reproduce oracle word");
+        }
+    }
+
+    {
+        MachineProgram program;
+        const auto head = program.make_label();
+        if (head.kind()==MachineOperandKind::None || !program.bind_label(head)) {
+            failures += fail("could not bind backward branch label");
+        } else {
+            for (int i=0;i<6;i++)
+                if (!program.emit<MachineOpcode::Nop>()) failures += fail("could not append backward branch padding NOP");
+            if (!program.branch(head)) failures += fail("could not construct backward machine branch");
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=7 ||
+                result.words[6]!=0xf8000040000ffffaULL)
+                failures += fail("machine backward branch did not reproduce oracle word");
+        }
+    }
+
+    {
+        MachineProgram program;
+        const auto target=program.make_label();
+        program.branch(target,MachineOperand::physical_predicate(1));
+        program.bind_label(target);
+        MachineCompileResult result;
+        if (compile_machine_program(program,result))
+            failures += fail("machine branch accepted unvalidated P1 predicate");
+    }
+
+    {
+        MachineProgram program;
+        const auto target=program.make_label();
+        program.branch(target);
+        MachineCompileResult result;
+        if (compile_machine_program(program,result))
+            failures += fail("machine branch accepted unbound label");
+    }
+
+    {
+        MachineProgram program;
         const auto narrow = program.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,1);
         const auto packed = program.make_value<MachineType::F16>(MachineRegisterClass::FloatTemp,1);
         if (!program.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),

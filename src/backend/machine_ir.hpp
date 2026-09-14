@@ -81,6 +81,7 @@ enum class MachineOperandKind : uint8_t {
     PhysicalPredicate,
     Literal,
     VirtualPair,
+    Label,
 };
 
 // Compact operand handle. Values, predicates and literals share one encoding so
@@ -94,6 +95,7 @@ struct MachineOperand {
     static MachineOperand physical_predicate(uint8_t num, bool inverted = false);
     static MachineOperand literal(uint32_t id, MachineType type);
     static MachineOperand virtual_pair(uint16_t first, uint16_t second, MachineType type);
+    static MachineOperand label(uint32_t id);
 
     MachineOperandKind kind() const;
     MachineType type() const;
@@ -194,6 +196,9 @@ public:
 
     MachineOperand literal_u32(uint32_t value);
     MachineOperand pair(MachineOperand first, MachineOperand second) const;
+    MachineOperand make_label();
+    bool bind_label(MachineOperand label);
+    bool branch(MachineOperand target, MachineOperand guard = {});
 
     bool append(MachineOpcode opcode, uint8_t subop = 0,
                 MachineOperand dst = {}, MachineOperand src0 = {}, MachineOperand src1 = {},
@@ -218,6 +223,7 @@ public:
 
     const std::vector<MachineInstruction> &instructions() const { return instructions_; }
     const std::vector<uint32_t> &literals() const { return literals_; }
+    const std::vector<uint32_t> &labels() const { return labels_; }
     const std::vector<MachineValueDesc> &value_descs() const { return value_descs_; }
     uint32_t value_count() const { return static_cast<uint32_t>(value_descs_.size()); }
     uint16_t predicate_count() const { return next_predicate_; }
@@ -225,6 +231,7 @@ public:
 private:
     std::vector<MachineInstruction> instructions_;
     std::vector<uint32_t> literals_;
+    std::vector<uint32_t> labels_;
     std::vector<MachineValueDesc> value_descs_;
     uint16_t next_predicate_ = 0;
 };

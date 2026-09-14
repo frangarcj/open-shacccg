@@ -170,6 +170,13 @@ struct KillSemantic {
     Predicate predicate = Predicate::Always;
 };
 
+// Evidence-backed control BR form captured from the original SceShaccCg 1.6.5
+// compiler. Offsets are signed instruction deltas relative to the BR itself.
+struct BranchSemantic {
+    Predicate predicate = Predicate::Always;
+    int32_t offset = 0;
+};
+
 struct VmovFields {
     uint8_t pred = 0;
     bool skip_invalid = false;
@@ -341,6 +348,11 @@ struct KillFields {
     uint32_t dontcare_payload = 0;
 };
 
+struct BranchFields {
+    uint8_t pred = 0;
+    uint32_t offset = 0; // raw signed-20-bit two's-complement payload
+};
+
 struct Instruction {
     Opcode opcode = Opcode::End;
     uint16_t dst = 0;
@@ -380,6 +392,8 @@ bool decode_vbw(uint64_t word, VbwFields *fields);
 bool encode_vbw(const VbwFields &fields, uint64_t *word);
 bool decode_kill(uint64_t word, KillFields *fields);
 bool encode_kill(const KillFields &fields, uint64_t *word);
+bool decode_branch(uint64_t word, BranchFields *fields);
+bool encode_branch(const BranchFields &fields, uint64_t *word);
 
 // Context-sensitive bank conversion helpers. These expose semantics without
 // changing the raw codecs above.
@@ -405,6 +419,8 @@ bool encode_vbw_semantic(const VbwSemantic &instruction, uint64_t *word);
 bool decode_vbw_semantic(uint64_t word, VbwSemantic *instruction);
 bool encode_kill_semantic(const KillSemantic &instruction, uint64_t *word);
 bool decode_kill_semantic(uint64_t word, KillSemantic *instruction);
+bool encode_branch_semantic(const BranchSemantic &instruction, uint64_t *word);
+bool decode_branch_semantic(uint64_t word, BranchSemantic *instruction);
 
 inline bool encode_semantic(const VmovSemantic &i, uint64_t *word) { return encode_vmov_semantic(i, word); }
 inline bool encode_semantic(const VpckSemantic &i, uint64_t *word) { return encode_vpck_semantic(i, word); }
@@ -413,6 +429,7 @@ inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return enco
 inline bool encode_semantic(const VtstSemantic &i, uint64_t *word) { return encode_vtst_semantic(i, word); }
 inline bool encode_semantic(const VbwSemantic &i, uint64_t *word) { return encode_vbw_semantic(i, word); }
 inline bool encode_semantic(const KillSemantic &i, uint64_t *word) { return encode_kill_semantic(i, word); }
+inline bool encode_semantic(const BranchSemantic &i, uint64_t *word) { return encode_branch_semantic(i, word); }
 
 // Strict convenience encoder: unsupported semantic instructions fail rather
 // than emitting guessed code.

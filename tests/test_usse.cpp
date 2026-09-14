@@ -40,6 +40,9 @@ int test_usse() {
         failures += fail("EMIT control form not recognized");
     if (classify_control(0xf9300406f0000408ULL) != ControlClass::Kill)
         failures += fail("KILL control form not recognized");
+    if (classify_control(0xf90000400000000cULL) != ControlClass::Branch ||
+        classify_control(0xf8000040000ffffaULL) != ControlClass::Branch)
+        failures += fail("oracle BR control forms not recognized");
 
     // Raw VMOV codec: preserve every field of a known-good public instruction.
     VmovFields vm{};
@@ -163,6 +166,27 @@ int test_usse() {
         if (kill.short_predicate!=2)
             failures += fail("KILL short predicate mismatch");
     }
+
+    // Branch words captured from the original SceShaccCg 1.6.5 oracle.
+    // The loop back-edge establishes signed offset direction independently of
+    // the two forward if/else edges.
+    const uint64_t branch_words[] = {
+        0xf90000400000000cULL, // P0, +12
+        0xf80000400000000bULL, // always, +11
+        0xfd00004000000006ULL, // !P0, +6
+        0xf8000040000ffffaULL, // always, -6
+    };
+    for (uint64_t known : branch_words) {
+        BranchFields br{};
+        uint64_t roundtrip=0;
+        if (!decode_branch(known,&br) || !encode_branch(br,&roundtrip) || roundtrip!=known)
+            failures += fail("BR raw field roundtrip mismatch");
+    }
+    BranchFields br{};
+    if (!decode_branch(branch_words[0],&br) || br.pred!=1 || br.offset!=12)
+        failures += fail("BR raw forward fields mismatch");
+    if (!decode_branch(branch_words[3],&br) || br.pred!=0 || br.offset!=0xffffa)
+        failures += fail("BR raw backward fields mismatch");
 
     // Semantic bank mapping is intentionally context-sensitive.
     uint8_t bank_sel = 0; bool bank_ext = false;
@@ -345,6 +369,28 @@ int test_usse() {
     kill.predicate=Predicate::P2;
     if (encode_kill_semantic(kill,&kill_word))
         failures += fail("KILL accepted predicate unavailable in short form");
+
+    BranchSemantic branch{};
+    uint64_t branch_word=0;
+    branch.predicate=Predicate::P0; branch.offset=12;
+    if (!encode_branch_semantic(branch,&branch_word) || branch_word!=branch_words[0])
+        failures += fail("semantic forward P0 BR mismatch");
+    branch.predicate=Predicate::NotP0; branch.offset=6;
+    if (!encode_branch_semantic(branch,&branch_word) || branch_word!=branch_words[2])
+        failures += fail("semantic forward !P0 BR mismatch");
+    branch.predicate=Predicate::Always; branch.offset=-6;
+    if (!encode_branch_semantic(branch,&branch_word) || branch_word!=branch_words[3])
+        failures += fail("semantic backward BR mismatch");
+    BranchSemantic branch_dec{};
+    if (!decode_branch_semantic(branch_words[3],&branch_dec) ||
+        branch_dec.predicate!=Predicate::Always || branch_dec.offset!=-6)
+        failures += fail("semantic backward BR decode mismatch");
+    branch.offset=1<<19;
+    if (encode_branch_semantic(branch,&branch_word))
+        failures += fail("BR accepted positive offset outside signed-20 range");
+    branch.offset=0; branch.predicate=Predicate::P1;
+    if (encode_branch_semantic(branch,&branch_word))
+        failures += fail("BR accepted predicate not yet validated by oracle");
 
     // End-to-end instruction-stream regression: construct texture_v entirely
     // through semantic builders + fixed control encoders, then compare against

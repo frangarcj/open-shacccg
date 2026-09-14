@@ -26,6 +26,7 @@ enum class OperandRole : uint8_t {
     ValueUse,
     ValueDef,
     ValuePairUse,
+    LabelUse,
     PredicateUse,
     PredicateDef,
 };
@@ -59,6 +60,7 @@ uint8_t allowed_predicates(const OpcodeDesc &desc, const MachineOperand &operand
 }
 
 uint8_t allowed_guard_predicates(const MachineInstruction &instruction) {
+    if (instruction.opcode() == MachineOpcode::Branch) return 0x01;
     if (!instruction.guard_inverted()) return 0x0f;
     return 0x03;
 }
@@ -383,6 +385,10 @@ MachineOperand MachineOperand::virtual_pair(uint16_t first, uint16_t second, Mac
                         static_cast<uint32_t>(first) | (static_cast<uint32_t>(second) << 12), false);
 }
 
+MachineOperand MachineOperand::label(uint32_t id) {
+    return pack_operand(MachineOperandKind::Label, MachineType::Invalid, id, false);
+}
+
 MachineOperandKind MachineOperand::kind() const {
     return static_cast<MachineOperandKind>((bits >> kKindShift) & 0x7u);
 }
@@ -470,6 +476,25 @@ MachineOperand MachineProgram::pair(MachineOperand first, MachineOperand second)
         first.id() >= 4096 || second.id() >= 4096) return {};
     return MachineOperand::virtual_pair(static_cast<uint16_t>(first.id()),
                                         static_cast<uint16_t>(second.id()), first.type());
+}
+
+MachineOperand MachineProgram::make_label() {
+    if (labels_.size() > kPayloadMask) return {};
+    const uint32_t id = static_cast<uint32_t>(labels_.size());
+    labels_.push_back(std::numeric_limits<uint32_t>::max());
+    return MachineOperand::label(id);
+}
+
+bool MachineProgram::bind_label(MachineOperand label) {
+    if (label.kind() != MachineOperandKind::Label || label.id() >= labels_.size() ||
+        labels_[label.id()] != std::numeric_limits<uint32_t>::max()) return false;
+    labels_[label.id()] = static_cast<uint32_t>(instructions_.size());
+    return true;
+}
+
+bool MachineProgram::branch(MachineOperand target, MachineOperand guard) {
+    if (target.kind() != MachineOperandKind::Label) return false;
+    return append(MachineOpcode::Branch, 0, {}, target, {}, guard);
 }
 
 bool MachineProgram::append(MachineOpcode opcode, uint8_t subop, MachineOperand dst,
@@ -591,6 +616,11 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                     }
                     value_intervals[id].end = std::max(value_intervals[id].end, 2 * index + 1);
                 }
+            } else if (role == OperandRole::LabelUse) {
+                if (operand.kind() != MachineOperandKind::Label || operand.id() >= program.labels().size()) {
+                    out.error = std::string(desc->name) + " requires a valid machine label";
+                    return false;
+                }
             } else if (role == OperandRole::PredicateDef) {
                 if (operand.kind() != MachineOperandKind::VirtualPredicate || operand.inverted() ||
                     operand.id() >= predicate_intervals.size()) {
@@ -682,8 +712,24 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
         out.value_registers[id] = allocated_values[range_for_value[id]];
     }
 
+    // Labels are bound to Machine IR instruction positions, but BR offsets are
+    // measured in emitted USSE instructions. Account for zero-word pseudo-ops
+    // (currently DependentSample) when resolving the final signed delta.
+    std::vector<uint32_t> word_positions(program.instructions().size() + 1, 0);
+    for (uint32_t i = 0; i < program.instructions().size(); ++i) {
+        const bool emits_word = program.instructions()[i].opcode() != MachineOpcode::DependentSample;
+        word_positions[i + 1] = word_positions[i] + (emits_word ? 1u : 0u);
+    }
+    for (uint32_t position : program.labels()) {
+        if (position == std::numeric_limits<uint32_t>::max() || position > program.instructions().size()) {
+            out.error = "machine branch label is unbound or out of range";
+            return false;
+        }
+    }
+
     ProgramBuilder builder;
-    for (const auto &instruction : program.instructions()) {
+    for (uint32_t instruction_index = 0; instruction_index < program.instructions().size(); ++instruction_index) {
+        const auto &instruction = program.instructions()[instruction_index];
         usse::Predicate guard = usse::Predicate::Always;
         if (!resolve_guard(instruction, out.predicate_registers, &guard)) {
             out.error = "failed to resolve guard predicate";
@@ -877,6 +923,28 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 !resolve_register_value(instruction.src0, MachineType::F32, out.value_registers, &coord) ||
                 dst.bank != usse::RegisterBank::Temp || machine_gpi_index(coord) == 0xff) {
                 out.error = "dependent sample pseudo-op requires a TEMP F32 result and GPI coordinate";
+                return false;
+            }
+            break;
+        }
+        case MachineOpcode::Branch: {
+            if (instruction.src0.kind() != MachineOperandKind::Label ||
+                instruction.src0.id() >= program.labels().size()) {
+                out.error = "machine branch target is invalid";
+                return false;
+            }
+            const uint32_t target_machine = program.labels()[instruction.src0.id()];
+            const int64_t offset = static_cast<int64_t>(word_positions[target_machine]) -
+                static_cast<int64_t>(word_positions[instruction_index]);
+            if (offset < -(1 << 19) || offset >= (1 << 19)) {
+                out.error = "machine branch offset exceeds signed-20 USSE range";
+                return false;
+            }
+            usse::BranchSemantic branch{};
+            branch.predicate = guard;
+            branch.offset = static_cast<int32_t>(offset);
+            if (!builder.instruction(branch)) {
+                out.error = "failed to encode machine branch";
                 return false;
             }
             break;

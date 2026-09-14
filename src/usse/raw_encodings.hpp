@@ -98,6 +98,9 @@ using KillEncoding = Encoding<0xff3ff9fff0000000ULL, 0xf9300006f0000000ULL,
     VSC_FIELD(KillFields, dontcare_top, 54, 2), VSC_FIELD(KillFields, short_predicate, 41, 2),
     VSC_FIELD(KillFields, dontcare_payload, 0, 28)>;
 
+using BranchEncoding = Encoding<0xf8fffffffff00000ULL, 0xf800004000000000ULL,
+    VSC_FIELD(BranchFields, pred, 56, 3), VSC_FIELD(BranchFields, offset, 0, 20)>;
+
 #undef VSC_FIELD
 
 } // namespace vsc::usse::detail

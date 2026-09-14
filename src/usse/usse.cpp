@@ -88,6 +88,7 @@ VSC_RAW_CODEC(v32nmad, V32NmadEncoding, V32NmadFields)
 VSC_RAW_CODEC(vmad, VmadEncoding, VmadFields)
 VSC_RAW_CODEC(vtst, VtstEncoding, VtstFields)
 VSC_RAW_CODEC(kill, KillEncoding, KillFields)
+VSC_RAW_CODEC(branch, BranchEncoding, BranchFields)
 
 #undef VSC_RAW_CODEC
 
@@ -564,6 +565,34 @@ bool decode_kill_semantic(uint64_t word, KillSemantic *i) {
     KillFields f{};
     if (!decode_kill(word,&f)) return false;
     return decode_short_predicate(f.short_predicate,&i->predicate);
+}
+
+namespace {
+bool validated_branch_predicate(Predicate predicate) {
+    return predicate == Predicate::Always || predicate == Predicate::P0 ||
+        predicate == Predicate::NotP0;
+}
+} // namespace
+
+bool encode_branch_semantic(const BranchSemantic &i, uint64_t *word) {
+    if (!word || !validated_branch_predicate(i.predicate) ||
+        i.offset < -(1 << 19) || i.offset >= (1 << 19)) return false;
+    BranchFields f{};
+    f.pred = static_cast<uint8_t>(i.predicate);
+    f.offset = static_cast<uint32_t>(i.offset) & 0x000fffffu;
+    return encode_branch(f, word);
+}
+
+bool decode_branch_semantic(uint64_t word, BranchSemantic *i) {
+    if (!i) return false;
+    BranchFields f{};
+    if (!decode_branch(word, &f)) return false;
+    i->predicate = static_cast<Predicate>(f.pred);
+    if (!validated_branch_predicate(i->predicate)) return false;
+    const uint32_t raw = f.offset & 0x000fffffu;
+    i->offset = (raw & 0x00080000u) ?
+        static_cast<int32_t>(raw | 0xfff00000u) : static_cast<int32_t>(raw);
+    return true;
 }
 
 bool encode(const Instruction &instruction, uint64_t *word) {
