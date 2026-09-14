@@ -57,6 +57,25 @@ def main():
          "float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1):COLOR0 { if (a.x > b.x) return a; return b; }", "control")
     emit(root, manifest, "fp-ternary", "sce_fp_psp2",
          "float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1):COLOR0 { return a.x > b.x ? a : b; }", "control")
+    emit(root, manifest, "fp-if-big", "sce_fp_psp2", """
+float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1,float4 c:TEXCOORD2):COLOR0 {
+    float4 x;
+    if (a.x > b.x) {
+        x=a*b+c; x=x*b+c; x=x*b+c; x=x*b+c; x=x*b+c; x=x*b+c;
+    } else {
+        x=b*a-c; x=x*a-c; x=x*a-c; x=x*a-c; x=x*a-c; x=x*a-c;
+    }
+    return x;
+}
+""", "control", op="branch-forward")
+    emit(root, manifest, "fp-loop", "sce_fp_psp2", """
+uniform int n;
+float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1,float4 c:TEXCOORD2):COLOR0 {
+    float4 x=a;
+    for (int i=0; i<n; ++i) x=x*b+c;
+    return x;
+}
+""", "control", op="branch-backward")
     emit(root, manifest, "fp-texture2d", "sce_fp_psp2",
          "uniform sampler2D tex; float4 main(float2 uv:TEXCOORD0):COLOR0 { return tex2D(tex, uv); }", "texture")
 

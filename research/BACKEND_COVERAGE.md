@@ -178,10 +178,31 @@ compilation. SPIRV-Cross and the dependency-free recognizer both produce
 Machine/GXP profiles without constructing `VertexIr` or `FragmentIr`. Generic
 arithmetic likewise remains SSA-like Typed/Machine IR end to end.
 
+## Oracle-validated branch control flow
+
+The local clean-room Unicorn runner can now execute the user-supplied original
+SceShaccCg 1.6.5 module far enough to compile differential Cg shaders. Two clean
+corpus cases force control flow that the compiler cannot if-convert: a large
+`if/else` and a dynamic loop. They establish the USSE BR encoding independently
+of the public libvita2d corpus:
+
+- `0xf90000400000000c`: P0, forward +12 instructions
+- `0xf80000400000000b`: unconditional, forward +11
+- `0xfd00004000000006`: !P0, forward +6
+- `0xf8000040000ffffa`: unconditional, backward -6
+
+The offset is therefore a signed 20-bit instruction delta relative to the BR
+itself. Raw/semantic USSE codecs and compact Machine IR labels now reproduce
+these words exactly. Typed IR also owns label side tables plus conditional and
+unconditional jumps, and the SPIRV-Cross U32 control-flow adapter lowers a
+structured `SelectionMerge`/`BranchConditional` graph through those labels.
+P1/!P1 BR forms, float VTST predicates, phi values and general loops remain
+fail-closed until their oracle evidence/lowering rules are added.
+
 ## Next backend order
 
 1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, keeping the single Typed -> Machine lowering path fail-closed.
-2. **BR control flow.** Add raw and semantic BR only once branch offset/direction semantics are anchored by real words. Then lower structured `if/else`; loops come after branch back-edges are independently validated.
+2. **Complete structured control flow.** BR forward/backward offsets are now oracle-validated. Add float VTST predicate forms and phi/merge lowering, then generalize loops beyond the current label/branch substrate.
 3. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
 4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
 5. **Common missing ALU families.** Prioritize VCOMP, VMAD2 and VDUAL based on real traces, then remaining instruction families by corpus frequency.

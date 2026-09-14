@@ -603,6 +603,7 @@ bool spirv_cross_to_typed_fragment(const std::vector<uint32_t> &words,
         }
 
         std::unordered_set<uint32_t> kill_labels;
+        std::vector<uint32_t> function_labels;
         bool in_function = false;
         uint32_t current_label = 0;
         for (size_t offset = 5; offset < words.size();) {
@@ -612,15 +613,30 @@ bool spirv_cross_to_typed_fragment(const std::vector<uint32_t> &words,
             if (!count || offset + count > words.size()) { error = "malformed SPIR-V instruction stream"; return false; }
             const uint32_t *args = words.data() + offset + 1;
             if (op == spv::OpFunction && count >= 3) in_function = args[1] == function_id;
-            else if (in_function && op == spv::OpLabel && count == 2) current_label = args[0];
+            else if (in_function && op == spv::OpLabel && count == 2) {
+                current_label = args[0];
+                function_labels.push_back(current_label);
+            }
             else if (in_function && op == spv::OpKill && current_label) kill_labels.insert(current_label);
             else if (in_function && op == spv::OpFunctionEnd) { in_function = false; current_label = 0; }
             offset += count;
         }
 
-        if (kill_labels.empty()) { error = "Typed IR adapter found no fragment discard path"; return false; }
+        const bool discard_cfg = !kill_labels.empty();
+        std::unordered_map<uint32_t, uint16_t> block_labels;
+        if (!discard_cfg) {
+            for (uint32_t id : function_labels) {
+                const uint16_t label = typed.make_label();
+                if (label == std::numeric_limits<uint16_t>::max()) {
+                    error = "Typed IR control-flow label table overflow";
+                    return false;
+                }
+                block_labels[id] = label;
+            }
+        }
 
         bool emitted_discard = false;
+        bool emitted_branch = false;
         in_function = false;
         for (size_t offset = 5; offset < words.size();) {
             const uint32_t first = words[offset];
@@ -637,7 +653,15 @@ bool spirv_cross_to_typed_fragment(const std::vector<uint32_t> &words,
             if (!in_function) { offset += count; continue; }
             if (op == spv::OpFunctionEnd) break;
 
-            if (op == spv::OpLoad && count >= 4) {
+            if (op == spv::OpLabel && count == 2) {
+                if (!discard_cfg) {
+                    const auto label = block_labels.find(args[0]);
+                    if (label == block_labels.end() || !typed.bind_label(label->second)) {
+                        error = "failed to bind Typed IR control-flow label";
+                        return false;
+                    }
+                }
+            } else if (op == spv::OpLoad && count >= 4) {
                 backend::TypedValue source{};
                 if (!is_scalar_u32(compiler, args[0]) || !lookup(values, args[2], source)) {
                     error = "Typed IR adapter supports only direct scalar U32 resource loads";
@@ -670,19 +694,40 @@ bool spirv_cross_to_typed_fragment(const std::vector<uint32_t> &words,
                     values[args[1]] = dst;
                 } else if (op == spv::OpBranchConditional) {
                     if (count != 4) { error = "invalid conditional branch"; return false; }
-                    const bool true_kills = kill_labels.count(args[1]) != 0;
-                    const bool false_kills = kill_labels.count(args[2]) != 0;
-                    if (true_kills == false_kills) { error = "conditional branch is not a single discard edge"; return false; }
                     backend::TypedValue predicate{};
                     if (!lookup(values, args[0], predicate) || predicate.kind() != backend::TypedValueKind::Predicate) {
-                        error = "discard branch condition is not a Typed IR predicate"; return false;
+                        error = "branch condition is not a Typed IR predicate"; return false;
                     }
-                    if (false_kills) predicate = backend::TypedValue::predicate(predicate.id(), !predicate.inverted());
-                    if (!typed.emit<backend::TypedOpcode::Discard>(0, {}, predicate)) {
-                        error = "failed to emit Typed IR discard"; return false;
+                    if (discard_cfg) {
+                        const bool true_kills = kill_labels.count(args[1]) != 0;
+                        const bool false_kills = kill_labels.count(args[2]) != 0;
+                        if (true_kills == false_kills) { error = "conditional branch is not a single discard edge"; return false; }
+                        if (false_kills) predicate = backend::TypedValue::predicate(predicate.id(), !predicate.inverted());
+                        if (!typed.emit<backend::TypedOpcode::Discard>(0, {}, predicate)) {
+                            error = "failed to emit Typed IR discard"; return false;
+                        }
+                        emitted_discard = true;
+                    } else {
+                        const auto true_label = block_labels.find(args[1]);
+                        const auto false_label = block_labels.find(args[2]);
+                        if (true_label == block_labels.end() || false_label == block_labels.end() ||
+                            !typed.branch(true_label->second, predicate) || !typed.jump(false_label->second)) {
+                            error = "failed to emit Typed IR conditional control flow";
+                            return false;
+                        }
+                        emitted_branch = true;
                     }
-                    emitted_discard = true;
-                } else if (op != spv::OpLabel && op != spv::OpSelectionMerge && op != spv::OpBranch &&
+                } else if (op == spv::OpBranch) {
+                    if (count != 2) { error = "invalid unconditional branch"; return false; }
+                    if (!discard_cfg) {
+                        const auto target = block_labels.find(args[0]);
+                        if (target == block_labels.end() || !typed.jump(target->second)) {
+                            error = "failed to emit Typed IR jump";
+                            return false;
+                        }
+                        emitted_branch = true;
+                    }
+                } else if (op != spv::OpSelectionMerge &&
                            op != spv::OpKill && op != spv::OpReturn && op != spv::OpNop) {
                     error = "unsupported instruction in SPIRV-Cross Typed IR fragment subset";
                     return false;
@@ -691,7 +736,8 @@ bool spirv_cross_to_typed_fragment(const std::vector<uint32_t> &words,
             offset += count;
         }
 
-        if (!emitted_discard) { error = "Typed IR adapter did not emit discard"; return false; }
+        if (discard_cfg && !emitted_discard) { error = "Typed IR adapter did not emit discard"; return false; }
+        if (!discard_cfg && !emitted_branch) { error = "Typed IR adapter found no supported fragment control flow"; return false; }
         return true;
     } catch (const std::exception &e) {
         error = std::string("SPIRV-Cross Typed IR adapter: ") + e.what();

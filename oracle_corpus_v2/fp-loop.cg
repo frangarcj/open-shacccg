@@ -1,0 +1,7 @@
+
+uniform int n;
+float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1,float4 c:TEXCOORD2):COLOR0 {
+    float4 x=a;
+    for (int i=0; i<n; ++i) x=x*b+c;
+    return x;
+}

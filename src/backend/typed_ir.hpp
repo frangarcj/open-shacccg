@@ -131,6 +131,10 @@ public:
 
     TypedValue input(TypedType type, uint16_t location);
     TypedValue uniform(TypedType type, uint16_t resource_index);
+    uint16_t make_label();
+    bool bind_label(uint16_t label);
+    bool jump(uint16_t label);
+    bool branch(uint16_t label, TypedValue predicate);
 
     bool append(TypedOpcode opcode, uint8_t subop = 0,
                 TypedValue dst = {}, TypedValue src0 = {}, TypedValue src1 = {},
@@ -156,12 +160,14 @@ public:
 
     const std::vector<TypedInstruction> &instructions() const { return instructions_; }
     const std::vector<uint32_t> &literals() const { return literals_; }
+    const std::vector<uint32_t> &labels() const { return labels_; }
     uint32_t value_count() const { return next_value_; }
     uint16_t predicate_count() const { return next_predicate_; }
 
 private:
     std::vector<TypedInstruction> instructions_;
     std::vector<uint32_t> literals_;
+    std::vector<uint32_t> labels_;
     uint32_t next_value_ = 0;
     uint16_t next_predicate_ = 0;
 };

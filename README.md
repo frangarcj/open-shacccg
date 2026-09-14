@@ -26,6 +26,8 @@ Implemented now:
 - direct Typed IR -> Machine IR lowering for F32x4 multiply/add/sub/min/max, dot, negate/absolute,
   scalar/X splats and the validated F32x4 -> F16x4 VPCK conversion
 - SPIRV-Cross lowering for `GLSL.std.450` FAbs/FMin/FMax, validated X-splat shuffles and `OpFConvert`
+- oracle-validated USSE BR encoding with signed 20-bit forward/backward offsets,
+  compact Machine/Typed label tables and structured U32 conditional/unconditional branches
 - all seven public libvita2d Cg shaders now pass through the Typed Vita IR path; generated GXPs are
   byte-identical to the preserved public samples except for Sony's two 32-bit GUID fields
 - frontend -> SPIR-V and SPIR-V -> Vita IR -> USSE/GXP boundaries
@@ -35,7 +37,8 @@ Implemented now:
 - seven known-good public libvita2d shader/source pairs retained under their upstream MIT license for regression research
 - Vita `exports.yml` target skeleton and firmware NID reference manifest
 - dependency-free Vita ELF inspection, module import/export parsing, and PT_LOAD extraction tools
-- local oracle import-stub patcher and Unicorn runner that convert the module's 25 imports into ARM `SVC` traps
+- local Cortex-A9/Thumb/VFP/TLS Unicorn oracle runner for a user-supplied original SceShaccCg module,
+  with in-memory import traps and direct `CompileProgram` GXP capture
 - expanded differential shader corpus generator (ALU, constants, uniforms, control flow, texture, matrix and interface cases)
 - external oracle corpus runner protocol
 - GXP structural inspector, semantic comparator, USSE-family inspector and raw binary diff tools

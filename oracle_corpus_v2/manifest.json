@@ -652,6 +652,20 @@
     "feature": "control"
   },
   {
+    "name": "fp-if-big",
+    "file": "fp-if-big.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "control",
+    "op": "branch-forward"
+  },
+  {
+    "name": "fp-loop",
+    "file": "fp-loop.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "control",
+    "op": "branch-backward"
+  },
+  {
     "name": "fp-texture2d",
     "file": "fp-texture2d.cg",
     "profile": "sce_fp_psp2",

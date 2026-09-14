@@ -62,6 +62,40 @@ std::vector<uint32_t> make_u32_discard_spirv() {
     return m;
 }
 
+std::vector<uint32_t> make_u32_if_else_spirv() {
+    std::vector<uint32_t> m={0x07230203u,0x00010000u,0u,48u,0u};
+    spv_append(m,17,{1});             // Capability Shader
+    spv_append(m,14,{0,1});           // MemoryModel Logical GLSL450
+    spv_string(m,15,{4,20},"main",{10,11});
+    spv_append(m,16,{20,7});          // OriginUpperLeft
+    spv_append(m,71,{10,30,0});       // Location 0
+    spv_append(m,71,{11,30,1});       // Location 1
+    spv_append(m,19,{1});             // void
+    spv_append(m,20,{2});             // bool
+    spv_append(m,21,{3,32,0});        // u32
+    spv_append(m,32,{4,1,3});         // ptr Input u32
+    spv_append(m,33,{5,1});           // void()
+    spv_append(m,59,{4,10,1});
+    spv_append(m,59,{4,11,1});
+    spv_append(m,54,{1,20,0,5});
+    spv_append(m,248,{21});
+    spv_append(m,61,{3,22,10});
+    spv_append(m,61,{3,23,11});
+    spv_append(m,170,{2,24,22,23});   // IEqual
+    spv_append(m,247,{30,0});         // SelectionMerge
+    spv_append(m,250,{24,26,27});     // BranchConditional
+    spv_append(m,248,{26});
+    spv_append(m,197,{3,28,22,23});   // BitwiseOr
+    spv_append(m,249,{30});            // Branch merge
+    spv_append(m,248,{27});
+    spv_append(m,198,{3,29,22,23});   // BitwiseXor
+    spv_append(m,249,{30});            // Branch merge
+    spv_append(m,248,{30});
+    spv_append(m,253,{});
+    spv_append(m,56,{});
+    return m;
+}
+
 std::vector<uint32_t> make_float_extinst_spirv() {
     std::vector<uint32_t> m={0x07230203u,0x00010000u,0u,40u,0u};
     spv_append(m,17,{1});                         // Capability Shader
@@ -125,6 +159,41 @@ int test_typed_ir() {
     using namespace vsc;
     using namespace backend;
     int failures = 0;
+
+    {
+        TypedProgram program;
+        const auto lhs = program.input<TypedType::U32>(0);
+        const auto rhs = program.uniform<TypedType::U32>(8);
+        const auto predicate = program.make_predicate();
+        const uint16_t true_label = program.make_label();
+        const uint16_t merge_label = program.make_label();
+        const auto copied = program.make_value<TypedType::U32>();
+        const auto zero = program.literal_u32(0);
+        if (!program.emit<TypedOpcode::Compare>(static_cast<uint8_t>(usse::CompareOp::Equal), predicate, lhs, rhs) ||
+            !program.branch(true_label,predicate) || !program.jump(merge_label) ||
+            !program.bind_label(true_label) ||
+            !program.emit<TypedOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),copied,lhs,zero) ||
+            !program.bind_label(merge_label)) {
+            failures += fail("could not construct typed branch program");
+        } else {
+            MachineCompileResult result;
+            if (!compile_typed_program(program,result)) {
+                failures += fail("typed branch program did not compile");
+            } else if (result.words.size()!=4 || result.words[1]!=0xf900004000000002ULL ||
+                       result.words[2]!=0xf800004000000002ULL) {
+                failures += fail("typed branch program emitted unexpected BR words");
+            }
+        }
+    }
+
+    {
+        TypedProgram program;
+        const uint16_t label=program.make_label();
+        program.jump(label);
+        MachineCompileResult result;
+        if (compile_typed_program(program,result))
+            failures += fail("typed control flow accepted an unbound label");
+    }
 
     {
         TypedProgram program;
@@ -360,6 +429,31 @@ int test_typed_ir() {
     }
 
 #if defined(OPENSHACCG_ENABLE_SPIRV_CROSS)
+    {
+        const auto source = make_u32_if_else_spirv();
+        TypedProgram program;
+        std::string error;
+        if (!spirv_cross_to_typed_fragment(source, "main", program, error)) {
+            failures += fail("SPIRV-Cross rejected structured U32 if/else fixture");
+        } else {
+            bool conditional=false, jump=false;
+            for (const auto &instruction : program.instructions()) {
+                conditional |= instruction.opcode()==TypedOpcode::Branch;
+                jump |= instruction.opcode()==TypedOpcode::Jump;
+            }
+            MachineCompileResult result;
+            if (!conditional || !jump || !compile_typed_program(program,result)) {
+                failures += fail("SPIR-V structured if/else did not reach Machine IR branches");
+            } else {
+                size_t branches=0;
+                for (uint64_t word : result.words)
+                    if (usse::classify_control(word)==usse::ControlClass::Branch) ++branches;
+                if (branches<4)
+                    failures += fail("SPIR-V if/else emitted too few control-flow branches");
+            }
+        }
+    }
+
     {
         const auto source = make_float_extinst_spirv();
         TypedShader shader(TypedStage::Fragment);

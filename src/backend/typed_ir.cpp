@@ -194,6 +194,29 @@ TypedValue TypedProgram::sampler(uint16_t binding) {
     return dst;
 }
 
+uint16_t TypedProgram::make_label() {
+    if (labels_.size() >= std::numeric_limits<uint16_t>::max())
+        return std::numeric_limits<uint16_t>::max();
+    const uint16_t id = static_cast<uint16_t>(labels_.size());
+    labels_.push_back(std::numeric_limits<uint32_t>::max());
+    return id;
+}
+
+bool TypedProgram::bind_label(uint16_t label) {
+    if (label >= labels_.size() || labels_[label] != std::numeric_limits<uint32_t>::max()) return false;
+    labels_[label] = static_cast<uint32_t>(instructions_.size());
+    return true;
+}
+
+bool TypedProgram::jump(uint16_t label) {
+    return label < labels_.size() && emit<TypedOpcode::Jump>(0, {}, {}, {}, label);
+}
+
+bool TypedProgram::branch(uint16_t label, TypedValue predicate) {
+    return label < labels_.size() && predicate.kind() == TypedValueKind::Predicate &&
+        emit<TypedOpcode::Branch>(0, {}, predicate, {}, label);
+}
+
 bool TypedProgram::append(TypedOpcode opcode, uint8_t subop, TypedValue dst,
                           TypedValue src0, TypedValue src1, uint16_t aux) {
     if (!descriptor(opcode)) return false;
@@ -240,7 +263,34 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
     std::vector<bool> value_defined(typed.value_count(), false);
     std::vector<bool> predicate_defined(typed.predicate_count(), false);
 
-    for (const auto &instruction : typed.instructions()) {
+    std::vector<MachineOperand> machine_labels;
+    machine_labels.reserve(typed.labels().size());
+    for (uint32_t position : typed.labels()) {
+        if (position == std::numeric_limits<uint32_t>::max() || position > typed.instructions().size()) {
+            error = "typed control-flow label is unbound or out of range";
+            return false;
+        }
+        const auto label = machine.make_label();
+        if (label.kind() == MachineOperandKind::None) {
+            error = "failed to allocate machine control-flow label";
+            return false;
+        }
+        machine_labels.push_back(label);
+    }
+
+    auto bind_labels_at = [&](uint32_t position) -> bool {
+        for (uint32_t id=0; id<typed.labels().size(); ++id) {
+            if (typed.labels()[id] == position && !machine.bind_label(machine_labels[id])) {
+                error = "failed to bind machine control-flow label";
+                return false;
+            }
+        }
+        return true;
+    };
+
+    for (uint32_t instruction_index=0; instruction_index<typed.instructions().size(); ++instruction_index) {
+        if (!bind_labels_at(instruction_index)) return false;
+        const auto &instruction = typed.instructions()[instruction_index];
         const auto *desc = descriptor(instruction.opcode());
         if (!desc) { error = "unknown typed opcode"; return false; }
         const TypedValue operands[] = {instruction.dst, instruction.src0, instruction.src1};
@@ -307,6 +357,30 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             *stored_output = value;
             if (stored_type) *stored_type = instruction.src0.type();
             if (stored_resource) *stored_resource = instruction.aux;
+            break;
+        }
+        case TypedOpcode::Jump:
+            if (instruction.aux >= machine_labels.size() || !machine.branch(machine_labels[instruction.aux])) {
+                error = "failed to lower typed jump to Machine IR";
+                return false;
+            }
+            break;
+        case TypedOpcode::Branch: {
+            if (instruction.aux >= machine_labels.size() || instruction.src0.id() >= predicates.size()) {
+                error = "typed branch target or predicate is invalid";
+                return false;
+            }
+            auto predicate = predicates[instruction.src0.id()];
+            if (predicate.kind() == MachineOperandKind::None) {
+                error = "typed branch predicate was not lowered";
+                return false;
+            }
+            if (instruction.src0.inverted())
+                predicate = MachineOperand::virtual_predicate(predicate.id(), !predicate.inverted());
+            if (!machine.branch(machine_labels[instruction.aux], predicate)) {
+                error = "failed to lower typed conditional branch to Machine IR";
+                return false;
+            }
             break;
         }
         case TypedOpcode::FloatBinary: {
@@ -467,6 +541,7 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             return false;
         }
     }
+    if (!bind_labels_at(static_cast<uint32_t>(typed.instructions().size()))) return false;
     return true;
 }
 

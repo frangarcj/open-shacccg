@@ -22,10 +22,33 @@ That is small enough for an ARM CPU oracle without emulating the Vita OS.
 When Unicorn is available:
 
 ```sh
-python3 unicorn_oracle.py /private/libshacccg.elf --probe
+python3 unicorn_oracle.py /private/libshacccg.elf \
+  --imports ../../oracle_imports.json --traps ../../oracle_trap_map.json \
+  --probe version
 ```
 
-The current development container does not have Unicorn or QEMU installed, so this runner is syntax/build checked here but ARM execution must be exercised on another host.
+The runner now initializes the module's Thumb entry points, Cortex-A9 VFP state,
+synthetic TPIDRURO/TLS and the lightweight-mutex imports required by the 1.6.5
+module. With Unicorn installed it can call `CompileProgram` directly on the
+user-provided ELF and write the resulting GXP without modifying the module.
+
+For example, the clean corpus contains two control-flow cases that deliberately
+force real BR instructions (a large `if/else` and a dynamic loop):
+
+```sh
+python3 unicorn_oracle.py /private/libshacccg.elf \
+  --imports ../../oracle_imports.json --traps ../../oracle_trap_map.json \
+  --probe compile --source ../../oracle_corpus_v2/fp-if-big.cg \
+  --stage fragment --out /tmp/fp-if-big.gxp
+
+python3 unicorn_oracle.py /private/libshacccg.elf \
+  --imports ../../oracle_imports.json --traps ../../oracle_trap_map.json \
+  --probe compile --source ../../oracle_corpus_v2/fp-loop.cg \
+  --stage fragment --out /tmp/fp-loop.gxp
+```
+
+Do not commit or redistribute the resulting proprietary-compiler artifacts;
+record only independently derived instruction facts/regressions in this repo.
 
 ## Trap-patching strategy
 
