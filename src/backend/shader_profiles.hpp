@@ -36,6 +36,17 @@ struct IrUniformS32 {
     uint32_t resource_index = 0;
 };
 
+struct IrUniformFloat {
+    std::string name;
+    uint8_t components = 1;
+    uint32_t resource_index = 0;
+};
+
+struct IrLiteralF32 {
+    uint32_t resource_index = 0;
+    uint32_t value_bits = 0;
+};
+
 struct IrSampler2D {
     std::string name;
     uint32_t resource_index = 0;
@@ -67,6 +78,13 @@ bool compile_vertex_passthrough_varying(const IrAttribute &position, const IrAtt
 bool compile_vertex_uniform_matrix(const IrAttribute &position, const IrMatrix4Uniform &matrix,
                                    uint32_t binary_guid, uint32_t source_guid,
                                    IrCompileResult &out);
+bool compile_vertex_generic_machine(const MachineProgram &primary,
+                                    const std::vector<IrAttribute> &attributes,
+                                    const std::vector<IrUniformFloat> &uniforms,
+                                    const std::vector<IrLiteralF32> &literals,
+                                    IrVaryingSemantic varying_semantic,
+                                    uint32_t binary_guid, uint32_t source_guid,
+                                    IrCompileResult &out);
 bool compile_fragment_machine_profile(FragmentMachineProfile profile,
                                       const std::vector<IrUniformVec4> &uniforms,
                                       const std::vector<IrSampler2D> &samplers,

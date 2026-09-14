@@ -80,6 +80,24 @@ int test_machine_ir() {
     }
 
     {
+        MachineProgram program;
+        if (!program.emit_config<MachineOpcode::ComplexF32>(static_cast<uint8_t>(usse::ComplexOp::Reciprocal),
+                machine_complex_config(true,false),
+                program.physical(usse::RegisterBank::Temp,124,MachineType::F32),
+                program.physical(machine_primary(0),MachineType::F32,0)) ||
+            !program.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(usse::ComplexOp::Log2),
+                program.physical(machine_primary(0),MachineType::F32),
+                program.physical(machine_primary(0),MachineType::F32,0))) {
+            failures += fail("could not construct general reciprocal/Log2 Machine VCOMP probes");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=2 ||
+                result.words[0]!=0x308008008f800001ULL || result.words[1]!=0x3080040280000001ULL)
+                failures += fail("general reciprocal/Log2 Machine VCOMP words mismatch oracle");
+        }
+    }
+
+    {
         const uint64_t expected1[]={
             0x308008088f800001ULL,0x3880050081f40000ULL,0x10a4008600040f7cULL,
         };

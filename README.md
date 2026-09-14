@@ -52,6 +52,12 @@ Implemented now:
 - oracle-exact scalar `uniform int -> float` conversion. `OpConvertSToF` lowers to a compact
   nine-word secondary Machine pseudo-op built from validated VBW/I32MAD2 pieces plus two fixed
   integer-unpack VPCK phases and one fixed VMAD2 core, followed by the canonical F32->F16 COLOR pack
+- field-level scalar VCOMP lowering now covers reciprocal and `log2`, so scalar division by
+  packed float uniforms lowers through reciprocal + V32NMAD without widening Typed/Machine IR
+- the first production-shaped Geometrizer vertex integration (`POLY_VS` semantics) compiles
+  end to end: packed float uniforms, dynamic clamp, `log2`, projection math, composed POSITION
+  and COLOR passthrough all reach generic Machine/GXP lowering. Open intentionally uses a
+  longer primary-only schedule than Sony's VMAD2/secondary-optimized program for now
 - oracle-exact fragment profiles for `wzyx` and the constant `float4(1,0,0,1)`,
   including swizzled VPCK, literal-table placement and the primary/interface overlap convention
 - oracle-exact standalone vertex profiles for float4 position passthrough,

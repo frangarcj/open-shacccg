@@ -7,6 +7,7 @@ VSC_MACHINE_OP(Pack,    "pack",    ValueDef,     ValueUse,     ValueUse,     0x0
 VSC_MACHINE_OP(PackSwizzle, "pack-swizzle", ValueDef, ValueUse, ValueUse,      0x0f)
 VSC_MACHINE_OP(PackValue, "pack-value", ValueDef, ValueUse,     None,         0x0f)
 VSC_MACHINE_OP(Vector,  "vector",  ValueDef,     ValueUse,     ValueUse,     0x0f)
+VSC_MACHINE_OP(ComplexF32, "complex-f32", ValueDef, ValueUse, None,          0x0f)
 VSC_MACHINE_OP(DivF32,   "div-f32",   ValueDef,  ValueUse,     ValueUse,     0x0f)
 VSC_MACHINE_OP(DotSplatF32, "dot-splat-f32", ValueDef, ValueUse, ValueUse,   0x0f)
 VSC_MACHINE_OP(F32ToS32Color, "f32-to-s32-color", ValueDef, ValueUse, None,  0x0f)

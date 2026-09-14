@@ -49,6 +49,17 @@ using V32NmadEncoding = Encoding<0xf800000000000000ULL, 0x0800000000000000ULL,
     VSC_FIELD(V32NmadFields, src1_swizzle_0_6, 15, 7), VSC_FIELD(V32NmadFields, op2, 12, 3),
     VSC_FIELD(V32NmadFields, src1_num, 6, 6), VSC_FIELD(V32NmadFields, src2_num, 0, 6)>;
 
+using VcompEncoding = Encoding<0xf800000000000000ULL, 0x3000000000000000ULL,
+    VSC_FIELD(VcompFields, pred, 56, 3), VSC_FIELD(VcompFields, skip_invalid, 55, 1),
+    VSC_FIELD(VcompFields, dest_type, 53, 2), VSC_FIELD(VcompFields, sync_start, 52, 1),
+    VSC_FIELD(VcompFields, dest_ext, 51, 1), VSC_FIELD(VcompFields, end, 50, 1),
+    VSC_FIELD(VcompFields, src1_ext, 49, 1), VSC_FIELD(VcompFields, repeat_count, 44, 4),
+    VSC_FIELD(VcompFields, no_schedule, 43, 1), VSC_FIELD(VcompFields, op2, 41, 2),
+    VSC_FIELD(VcompFields, src_type, 39, 2), VSC_FIELD(VcompFields, src1_mod, 37, 2),
+    VSC_FIELD(VcompFields, src_component, 35, 2), VSC_FIELD(VcompFields, dest_bank, 32, 2),
+    VSC_FIELD(VcompFields, src1_bank, 30, 2), VSC_FIELD(VcompFields, dest_num, 21, 7),
+    VSC_FIELD(VcompFields, src1_num, 7, 7), VSC_FIELD(VcompFields, write_mask, 0, 4)>;
+
 using VmadEncoding = Encoding<0xf800000000000000ULL, 0x1800000000000000ULL,
     VSC_FIELD(VmadFields, pred, 56, 3), VSC_FIELD(VmadFields, skip_invalid, 55, 1),
     VSC_FIELD(VmadFields, gpi1_swizzle_ext, 54, 1), VSC_FIELD(VmadFields, control_bit_53, 53, 1),

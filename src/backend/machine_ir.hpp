@@ -171,6 +171,10 @@ constexpr uint16_t machine_vector_config(uint8_t mask,
         (no_schedule ? 0x0400 : 0);
 }
 
+constexpr uint16_t machine_complex_config(bool no_schedule = false, bool end = false) {
+    return (no_schedule ? 0x0001u : 0u) | (end ? 0x0002u : 0u);
+}
+
 constexpr uint16_t machine_vmad_config(uint8_t write_mask, bool no_schedule = false) {
     return (write_mask & 0x0f) | (no_schedule ? 0x0010 : 0);
 }

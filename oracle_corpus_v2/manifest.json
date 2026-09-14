@@ -832,5 +832,13 @@
     "file": "vp-varying.cg",
     "profile": "sce_vp_psp2",
     "feature": "interface"
+  },
+  {
+    "name": "vp-geometrizer-poly",
+    "file": "vp-geometrizer-poly.cg",
+    "profile": "sce_vp_psp2",
+    "feature": "integration",
+    "project": "geometrizer",
+    "shader": "POLY_VS"
   }
 ]

@@ -210,6 +210,21 @@ TypedValue TypedProgram::literal_f32x4(const std::array<uint32_t,4> &bits) {
     return dst;
 }
 
+TypedValue TypedProgram::compose_f32x4(const std::array<TypedValue,4> &components) {
+    if (float4_composites_.size() >= std::numeric_limits<uint16_t>::max()) return {};
+    for (const auto component:components)
+        if (!is_value(component) || component.type()!=TypedType::F32) return {};
+    const auto dst=make_value(TypedType::F32x4);
+    if (dst.kind()==TypedValueKind::None) return {};
+    const uint16_t index=static_cast<uint16_t>(float4_composites_.size());
+    float4_composites_.push_back(components);
+    if (!emit<TypedOpcode::FloatCompose>(0,dst,{},{},index)) {
+        float4_composites_.pop_back();
+        return {};
+    }
+    return dst;
+}
+
 TypedValue TypedProgram::input(TypedType type, uint16_t location) {
     auto dst = make_value(type);
     if (dst.kind() == TypedValueKind::None || !emit<TypedOpcode::Input>(0, dst, {}, {}, location)) return {};
@@ -295,7 +310,10 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                                      bool reset_machine, MachineOperand *stored_output = nullptr,
                                      TypedType *stored_type = nullptr, uint16_t *stored_resource = nullptr,
                                      bool emit_fragment_stores = false,
-                                     uint16_t fragment_output_resource = std::numeric_limits<uint16_t>::max()) {
+                                     uint16_t fragment_output_resource = std::numeric_limits<uint16_t>::max(),
+                                     const std::vector<MachineOperand> *literal_bindings = nullptr,
+                                     std::vector<MachineOperand> *lowered_values = nullptr,
+                                     bool ignore_output_stores = false) {
     if (reset_machine) machine = {};
     error.clear();
     if (stored_output) *stored_output = {};
@@ -304,6 +322,13 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
     std::vector<MachineOperand> values(typed.value_count());
     std::vector<MachineOperand> predicates(typed.predicate_count());
     std::vector<MachineOperand> literals(typed.literals().size());
+    if (literal_bindings) {
+        if (literal_bindings->size()!=literals.size()) {
+            error="typed literal binding table has the wrong size";
+            return false;
+        }
+        literals=*literal_bindings;
+    }
     std::vector<TypedType> value_types(typed.value_count(), TypedType::Invalid);
     std::vector<bool> value_defined(typed.value_count(), false);
     std::vector<bool> predicate_defined(typed.predicate_count(), false);
@@ -395,9 +420,18 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 else if (instruction.dst.type()==TypedType::F32x3 || instruction.dst.type()==TypedType::F32x4)
                     physical_index = static_cast<uint16_t>(instruction.aux * 2u);
             }
-            if (instruction.opcode() == TypedOpcode::Uniform && instruction.dst.type() == TypedType::F32x4) {
-                if ((instruction.aux & 3u) != 0) { error = "float4 uniform word offset is not vec4 aligned"; return false; }
-                physical_index = instruction.aux / 2u;
+            if (instruction.opcode() == TypedOpcode::Uniform && typed_is_float(instruction.dst.type())) {
+                if (instruction.dst.type()==TypedType::F32) {
+                    physical_index=instruction.aux/2u;
+                    physical_component=static_cast<uint8_t>(instruction.aux&1u);
+                } else {
+                    if (instruction.aux & 1u) { error="float-vector uniform word offset is not register aligned"; return false; }
+                    if (instruction.dst.type()==TypedType::F32x4 && (instruction.aux & 3u)) {
+                        error="float4 uniform word offset is not vec4 aligned";
+                        return false;
+                    }
+                    physical_index=instruction.aux/2u;
+                }
             }
             if (physical_index >= 128) { error = "resource physical index exceeds current register subset"; return false; }
             values[instruction.dst.id()] = machine.physical(bank, static_cast<uint8_t>(physical_index), type,
@@ -466,6 +500,7 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             break;
         }
         case TypedOpcode::StoreOutput: {
+            if (ignore_output_stores) break;
             if (emit_fragment_stores) {
                 if (instruction.aux != fragment_output_resource || instruction.src0.type() != TypedType::F32x4) {
                     error = "direct fragment StoreOutput is outside the validated float4 Location 0 subset";
@@ -521,10 +556,6 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         }
         case TypedOpcode::FloatBinary: {
             const auto float_op = static_cast<TypedFloatOp>(instruction.subop());
-            if (float_op==TypedFloatOp::Div) {
-                error="typed F32 division requires the shader-level oracle profile";
-                return false;
-            }
             const uint8_t components=typed_component_count(instruction.dst.type());
             const bool scalar=instruction.dst.type()==TypedType::F32 &&
                 instruction.src0.type()==TypedType::F32 && instruction.src1.type()==TypedType::F32;
@@ -534,7 +565,8 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                  instruction.dst.type()==TypedType::F32x4);
             const bool dot = float_op == TypedFloatOp::Dot && instruction.dst.type() == TypedType::F32 &&
                 instruction.src0.type() == TypedType::F32x4 && instruction.src1.type() == TypedType::F32x4;
-            if ((!scalar && !vector && !dot) || float_op > TypedFloatOp::Dot) {
+            if ((!scalar && !vector && !dot) || float_op > TypedFloatOp::Div ||
+                (float_op==TypedFloatOp::Div && !scalar)) {
                 error = "typed float binary currently supports scalar/F32-vector arithmetic and float4 dot";
                 return false;
             }
@@ -547,6 +579,22 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 src1.kind() == MachineOperandKind::None) {
                 error = "failed to create machine operands for typed float operation";
                 return false;
+            }
+
+            if (float_op==TypedFloatOp::Div) {
+                const auto reciprocal=machine.make_value<MachineType::F32>();
+                if (reciprocal.kind()==MachineOperandKind::None ||
+                    !machine.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(usse::ComplexOp::Reciprocal),
+                        reciprocal,src1) ||
+                    !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Mul),
+                        machine_vector_config(1),dst,src0,reciprocal)) {
+                    error="failed to lower scalar F32 division through reciprocal VCOMP";
+                    return false;
+                }
+                values[instruction.dst.id()]=dst;
+                value_types[instruction.dst.id()]=instruction.dst.type();
+                value_defined[instruction.dst.id()]=true;
+                break;
             }
 
             usse::VectorOp machine_op;
@@ -562,9 +610,7 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             case TypedFloatOp::Min: machine_op = usse::VectorOp::Min; break;
             case TypedFloatOp::Max: machine_op = usse::VectorOp::Max; break;
             case TypedFloatOp::Dot: machine_op = usse::VectorOp::Dot; break;
-            case TypedFloatOp::Div:
-                error="typed division escaped the dedicated shader profile";
-                return false;
+            case TypedFloatOp::Div: return false;
             }
             if (!machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(machine_op),
                     machine_vector_config(dot ? 0x1 : static_cast<uint8_t>((1u<<components)-1u),
@@ -586,9 +632,9 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                                        instruction.dst.type()==TypedType::F32x3 ||
                                        instruction.dst.type()==TypedType::F32x4) &&
                                       instruction.src0.type()==instruction.dst.type();
-            if (!supported_type ||
-                unary_op > TypedFloatUnaryOp::Saturate) {
-                error = "typed float unary currently supports scalar/F32-vector negate/absolute/saturate";
+            if (!supported_type || unary_op > TypedFloatUnaryOp::Log2 ||
+                (unary_op==TypedFloatUnaryOp::Log2 && instruction.dst.type()!=TypedType::F32)) {
+                error = "typed float unary currently supports scalar/F32-vector negate/absolute/saturate plus scalar Log2";
                 return false;
             }
             const auto src = lower_value(typed, instruction.src0, values, literals, machine);
@@ -596,7 +642,14 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             const uint8_t width=static_cast<uint8_t>(components>2 ? 2 : 1);
             const uint8_t mask=static_cast<uint8_t>((1u<<components)-1u);
             MachineOperand dst{};
-            if (unary_op==TypedFloatUnaryOp::Saturate) {
+            if (unary_op==TypedFloatUnaryOp::Log2) {
+                dst=machine.make_value<MachineType::F32>();
+                if (src.kind()==MachineOperandKind::None || dst.kind()==MachineOperandKind::None ||
+                    !machine.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(usse::ComplexOp::Log2),dst,src)) {
+                    error="failed to lower scalar Log2 to validated VCOMP";
+                    return false;
+                }
+            } else if (unary_op==TypedFloatUnaryOp::Saturate) {
                 const auto clamped_low=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,width);
                 dst=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,width);
                 const auto one=machine.physical(machine_special(1),MachineType::F32);
@@ -629,6 +682,21 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         case TypedOpcode::FloatConstant:
             error="high-level float swizzle/constant requires compile_typed_shader";
             return false;
+        case TypedOpcode::FloatCompose: {
+            if (instruction.dst.type()!=TypedType::F32x4 || instruction.aux>=typed.float4_composites().size()) {
+                error="typed float4 compose side-table entry is invalid";
+                return false;
+            }
+            for (const auto component:typed.float4_composites()[instruction.aux]) {
+                if (!valid_value_use(typed,component,value_types,value_defined)) {
+                    error="typed float4 compose has an unresolved scalar component";
+                    return false;
+                }
+            }
+            value_types[instruction.dst.id()]=TypedType::F32x4;
+            value_defined[instruction.dst.id()]=true;
+            break;
+        }
         case TypedOpcode::FloatExtract: {
             const auto components=typed_component_count(instruction.src0.type());
             if (instruction.dst.type()!=TypedType::F32 || !typed_is_float(instruction.src0.type()) ||
@@ -761,6 +829,7 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         }
     }
     if (!bind_labels_at(static_cast<uint32_t>(typed.instructions().size()))) return false;
+    if (lowered_values) *lowered_values=values;
     return true;
 }
 
@@ -816,12 +885,15 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         std::vector<IrMatrix4Uniform> vertex_matrices;
         std::vector<const TypedResource *> inputs;
         std::vector<const TypedResource *> matrices;
+        std::vector<const TypedResource *> vertex_uniforms;
         for (const auto &resource : resources) {
             if (resource.kind == TypedResourceKind::Input) inputs.push_back(&resource);
             else if (resource.kind == TypedResourceKind::Matrix4) matrices.push_back(&resource);
+            else if (resource.kind == TypedResourceKind::Uniform) vertex_uniforms.push_back(&resource);
         }
         std::sort(inputs.begin(), inputs.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
         std::sort(matrices.begin(), matrices.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
+        std::sort(vertex_uniforms.begin(), vertex_uniforms.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
         if (inputs.empty()) { out.error = "typed vertex shader has no inputs"; return false; }
 
         std::unordered_map<uint32_t, uint32_t> attribute_for_value;
@@ -849,6 +921,8 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         bool passthrough_position = false;
         bool constructed_position = false;
         bool transformed_position = false;
+        bool generic_position = false;
+        uint16_t position_compose = std::numeric_limits<uint16_t>::max();
         uint32_t position_attribute = 0;
         uint32_t position_matrix = 0;
         bool varying_written = false;
@@ -893,6 +967,11 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                     transformed_position = true;
                     position_attribute = attr_it->second;
                     position_matrix = matrix_it->second;
+                } else if (def->opcode()==TypedOpcode::FloatCompose &&
+                           instruction.src0.type()==TypedType::F32x4 &&
+                           def->aux<program.float4_composites().size()) {
+                    generic_position=true;
+                    position_compose=def->aux;
                 } else {
                     out.error = "typed vertex position producer is unsupported"; return false;
                 }
@@ -918,6 +997,110 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             selected_varying_semantic = varying_semantic;
         }
         if (!position_written) { out.error = "typed vertex shader does not write position"; return false; }
+        if (generic_position) {
+            if (passthrough_position || constructed_position || transformed_position || !vertex_matrices.empty() ||
+                !varying_written || varying_attribute>=vertex_attributes.size() ||
+                selected_varying_semantic!=IrVaryingSemantic::Color || vertex_attributes.size()!=2 ||
+                position_compose>=program.float4_composites().size()) {
+                out.error="generic vertex POSITION+COLOR shape is outside the validated Geometrizer subset";
+                return false;
+            }
+            std::vector<IrUniformFloat> uniform_meta;
+            uint32_t uniform_words=0;
+            for (const auto *uniform:vertex_uniforms) {
+                const uint8_t components=typed_component_count(uniform->type);
+                if (!typed_is_float(uniform->type) || components<1 || components>4) {
+                    out.error="generic vertex profile only accepts F32 scalar/vector uniforms";
+                    return false;
+                }
+                uniform_meta.push_back({shader.resource_name(*uniform),components,uniform->index});
+                uniform_words=std::max<uint32_t>(uniform_words,static_cast<uint32_t>(uniform->index)+components);
+            }
+            uniform_words=(uniform_words+3u)&~3u;
+            if (uniform_words>=254) { out.error="generic vertex uniform footprint exceeds compact SA subset"; return false; }
+
+            MachineProgram primary;
+            if (!primary.emit<MachineOpcode::Phase>()) {
+                out.error="failed to start generic vertex Machine program";
+                return false;
+            }
+            std::vector<MachineOperand> literal_bindings(program.literals().size());
+            std::vector<IrLiteralF32> literal_meta;
+            std::unordered_map<uint32_t,uint32_t> literal_index_by_bits;
+            auto bind_literal=[&](TypedValue value) -> bool {
+                if (value.kind()!=TypedValueKind::Literal || value.type()!=TypedType::F32 ||
+                    value.id()>=program.literals().size()) return true;
+                if (literal_bindings[value.id()].kind()!=MachineOperandKind::None) return true;
+                const uint32_t bits=program.literals()[value.id()];
+                if (bits==0) {
+                    literal_bindings[value.id()]=primary.physical(machine_immediate(0),MachineType::F32);
+                    return true;
+                }
+                auto [it,inserted]=literal_index_by_bits.emplace(bits,static_cast<uint32_t>(literal_meta.size()));
+                if (inserted) literal_meta.push_back({it->second,bits});
+                const uint32_t word=uniform_words+it->second;
+                if (word>=254) return false;
+                literal_bindings[value.id()]=primary.physical(machine_secondary(static_cast<uint8_t>(word/2u)),
+                    MachineType::F32,static_cast<uint8_t>(word&1u));
+                return true;
+            };
+            for (const auto &instruction:instructions) {
+                if (!bind_literal(instruction.dst) || !bind_literal(instruction.src0) || !bind_literal(instruction.src1)) {
+                    out.error="generic vertex literal table exceeds compact SA subset";
+                    return false;
+                }
+            }
+            for (const auto &composite:program.float4_composites())
+                for (const auto component:composite)
+                    if (!bind_literal(component)) {
+                        out.error="generic vertex composite literal table exceeds compact SA subset";
+                        return false;
+                    }
+
+            std::vector<MachineOperand> lowered_values;
+            std::string machine_error;
+            if (!lower_typed_program_impl(program,primary,machine_error,false,nullptr,nullptr,nullptr,
+                    false,std::numeric_limits<uint16_t>::max(),&literal_bindings,&lowered_values,true)) {
+                out.error="generic vertex Typed->Machine lowering failed: "+machine_error;
+                return false;
+            }
+            auto lowered=[&](TypedValue value) -> MachineOperand {
+                if (value.kind()==TypedValueKind::Value)
+                    return value.id()<lowered_values.size()?lowered_values[value.id()]:MachineOperand{};
+                if (value.kind()==TypedValueKind::Literal)
+                    return value.id()<literal_bindings.size()?literal_bindings[value.id()]:MachineOperand{};
+                return {};
+            };
+            const auto &position_components=program.float4_composites()[position_compose];
+            for (uint8_t lane=0;lane<4;++lane) {
+                const auto src=lowered(position_components[lane]);
+                if (src.kind()==MachineOperandKind::None || src.type()!=MachineType::F32) {
+                    out.error="generic vertex POSITION component did not lower to F32";
+                    return false;
+                }
+                uint8_t swizzle=0;
+                if (src.kind()==MachineOperandKind::PhysicalValue && src.physical_component()!=0xff)
+                    swizzle=src.physical_component();
+                if (!primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                        machine_move_config(static_cast<uint8_t>(1u<<(lane&1u)),swizzle),
+                        primary.physical(machine_vertex_output(static_cast<uint8_t>(lane/2u)),MachineType::F32),src)) {
+                    out.error="failed to append generic vertex POSITION move";
+                    return false;
+                }
+            }
+            const auto color_resource=inputs[varying_attribute];
+            const auto color=lowered(color_resource->value);
+            if (color.kind()==MachineOperandKind::None || color.type()!=MachineType::F32 ||
+                !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                    machine_move_config(3,4,1,true,false),
+                    primary.physical(machine_vertex_output(2),MachineType::F32),color) ||
+                !primary.emit<MachineOpcode::Emit>()) {
+                out.error="failed to append generic vertex COLOR/EMIT";
+                return false;
+            }
+            return compile_vertex_generic_machine(primary,vertex_attributes,uniform_meta,literal_meta,
+                                                  selected_varying_semantic,0,0,out);
+        }
         if (passthrough_position) {
             if (constructed_position || transformed_position || !vertex_matrices.empty() ||
                 position_attribute>=vertex_attributes.size()) {

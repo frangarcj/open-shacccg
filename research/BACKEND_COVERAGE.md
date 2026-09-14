@@ -436,6 +436,24 @@ GUIDs. Pass uses the normal primary uniform copy plus fixed VPCK words
 validated fragment-secondary layout to four qwords (and the oracle has separately
 observed five/eight-word int4 streams, though int4 lowering remains closed).
 
+## Geometrizer vertex integration
+
+The first production-shaped integration target is a Cg translation of Geometrizer's
+`POLY_VS` semantics: float3 position + float4 color inputs, packed float2/scalar
+uniforms, two scalar divisions, dynamic `clamp`, `log2`, depth scaling and a
+composed POSITION + COLOR output. Sony compiles the probe to 14 primary + 4
+secondary instructions. Open now compiles the same source through generic
+Typed/Machine vertex lowering using field-level reciprocal/Log2 VCOMP, V32NMAD and
+VMOV. Its current schedule is 21 primary instructions and no secondary program;
+reflection, flags and the vertex interface match, while secondary-register and
+literal counts differ because Open does not yet hoist reciprocals or materialize
+Sony's otherwise-unused `-1` literal.
+
+Reaching this shader generalized nested uniform component access chains, F32
+component extraction, scalar F32 literals backed by the GXP literal table, dynamic
+MAX/MIN clamp lowering and float4 composition via a Typed side table. The hot Typed
+and Machine instruction records remain 16 bytes.
+
 Backend fallback diagnostics now retain the SPIRV-Cross Typed-path failure when
 the dependency-free parser also rejects a shader, so future oracle sweeps expose
 the actual higher-level coverage gap instead of only the final fallback error.

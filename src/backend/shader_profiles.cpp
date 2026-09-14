@@ -3,6 +3,7 @@
 #include "backend/machine_ir.hpp"
 #include "gxp/gxp_writer.hpp"
 
+#include <algorithm>
 #include <vector>
 
 namespace vsc::backend {
@@ -288,6 +289,96 @@ bool compile_vertex_passthrough_varying(const IrAttribute &position, const IrAtt
     if(!needed){out.error="GXP writer rejected vertex passthrough-varying profile";return false;}
     out.gxp.resize(needed);
     if(!gxp::write_program(image,out.gxp.data(),out.gxp.size())){out.gxp.clear();out.error="GXP writer failed for vertex passthrough-varying profile";return false;}
+    return true;
+}
+
+bool compile_vertex_generic_machine(const MachineProgram &primary,
+                                    const std::vector<IrAttribute> &attributes,
+                                    const std::vector<IrUniformFloat> &uniforms,
+                                    const std::vector<IrLiteralF32> &literal_values,
+                                    IrVaryingSemantic varying_semantic,
+                                    uint32_t binary_guid, uint32_t source_guid,
+                                    IrCompileResult &out) {
+    out={};
+    if (attributes.size()!=2 || varying_semantic!=IrVaryingSemantic::Color ||
+        attributes[0].resource_index!=0 || attributes[1].resource_index!=4 ||
+        attributes[1].components!=4) {
+        out.error="generic vertex profile currently requires position data at attr0 plus float4 COLOR attr1";
+        return false;
+    }
+    uint32_t uniform_words=0;
+    std::vector<gxp::ParameterDesc> parameters;
+    parameters.reserve(attributes.size()+uniforms.size());
+    parameters.push_back({attributes[0].name.c_str(),0,0,4,0,14,0,1,0});
+    parameters.push_back({attributes[1].name.c_str(),0,0,4,0,14,1,1,4});
+    for (const auto &uniform:uniforms) {
+        if (uniform.name.empty() || uniform.components<1 || uniform.components>4) {
+            out.error="generic vertex uniform metadata is invalid";
+            return false;
+        }
+        const uint32_t end=uniform.resource_index+uniform.components;
+        uniform_words=std::max(uniform_words,end);
+        parameters.push_back({uniform.name.c_str(),1,0,uniform.components,14,0,0,1,uniform.resource_index});
+    }
+    uniform_words=(uniform_words+3u)&~3u;
+    if (uniform_words>0xffffu || uniform_words+literal_values.size()>0xffffu) {
+        out.error="generic vertex secondary-attribute footprint is too large";
+        return false;
+    }
+
+    std::vector<gxp::ParameterContainerDesc> containers;
+    if (uniform_words) containers.push_back({14,0,0,static_cast<uint16_t>(uniform_words)});
+    if (!literal_values.empty())
+        containers.push_back({19,0,static_cast<uint16_t>(uniform_words),static_cast<uint16_t>(literal_values.size())});
+    std::vector<gxp::LiteralDesc> literals;
+    literals.reserve(literal_values.size());
+    for (const auto &literal:literal_values) {
+        if (literal.resource_index>=literal_values.size()) {
+            out.error="generic vertex literal resource index is out of range";
+            return false;
+        }
+        literals.push_back({literal.resource_index,literal.value_bits});
+    }
+
+    MachineCompileResult compiled;
+    if (!compile_words(primary,compiled,out,"generic vertex Machine IR lowering failed")) return false;
+
+    uint8_t interface_block[32]{};
+    interface_block[0]=0xf7;
+    interface_block[16]=0x00; interface_block[17]=0x18;
+    interface_block[18]=0x00; interface_block[19]=0x08;
+
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00090000;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=8;
+    image.secondary_register_count=static_cast<uint16_t>(uniform_words+literal_values.size());
+    image.primary_phase_count=1;
+    image.data_buffer_count=4;
+    image.default_uniform_buffer_count=uniform_words;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=compiled.words.data();
+    image.primary_instruction_count=compiled.words.size();
+    image.containers=containers.data();
+    image.container_count=containers.size();
+    image.parameters=parameters.data();
+    image.parameter_count=parameters.size();
+    image.literals=literals.data();
+    image.literal_count=literals.size();
+    image.vertex_primary_padding_word=true;
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected generic vertex profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for generic vertex profile"; return false;
+    }
     return true;
 }
 

@@ -87,6 +87,7 @@ const char *control_class_name(ControlClass cls) {
 VSC_RAW_CODEC(vmov, VmovEncoding, VmovFields)
 VSC_RAW_CODEC(vpck, VpckEncoding, VpckFields)
 VSC_RAW_CODEC(v32nmad, V32NmadEncoding, V32NmadFields)
+VSC_RAW_CODEC(vcomp, VcompEncoding, VcompFields)
 VSC_RAW_CODEC(vmad, VmadEncoding, VmadFields)
 VSC_RAW_CODEC(vtst, VtstEncoding, VtstFields)
 VSC_RAW_CODEC(kill, KillEncoding, KillFields)
@@ -421,6 +422,50 @@ bool decode_vcomp_rcp_scalar_f32_semantic(uint64_t word, VcompRcpScalarF32Semant
     if (!decode_vcomp_rcp_f32(word,&f) || !f.scalar || f.source_pair!=0 || f.component>=2) return false;
     i->src={RegisterBank::PrimaryAttribute,0};
     i->component=f.component;
+    return true;
+}
+
+bool encode_vcomp_f32_semantic(const VcompF32Semantic &i, uint64_t *word) {
+    if (!word || i.src_component >= 4 || i.dest_mask == 0 || i.dest_mask >= 16 ||
+        i.dst.num >= 128 || i.src.num >= 128 ||
+        (i.op != ComplexOp::Reciprocal && i.op != ComplexOp::Log2))
+        return false;
+    VcompFields f{};
+    if (!encode_dest_bank(i.dst.bank,&f.dest_bank,&f.dest_ext) ||
+        !encode_src1_bank(i.src.bank,&f.src1_bank,&f.src1_ext)) return false;
+    f.pred=static_cast<uint8_t>(Predicate::Always);
+    f.skip_invalid=i.skip_invalid;
+    f.dest_type=0; // F32
+    f.end=i.end;
+    f.no_schedule=i.no_schedule;
+    f.op2=static_cast<uint8_t>(i.op);
+    f.src_type=0; // F32
+    f.src1_mod=0;
+    f.src_component=i.src_component;
+    f.dest_num=i.dst.num;
+    f.src1_num=i.src.num;
+    f.write_mask=i.dest_mask;
+    return encode_vcomp(f,word);
+}
+
+bool decode_vcomp_f32_semantic(uint64_t word, VcompF32Semantic *i) {
+    if (!i) return false;
+    VcompFields f{};
+    if (!decode_vcomp(word,&f) || f.pred!=static_cast<uint8_t>(Predicate::Always) ||
+        f.dest_type!=0 || f.sync_start || f.repeat_count!=0 || f.src_type!=0 ||
+        f.src1_mod!=0 || f.src_component>=4 || f.write_mask==0 ||
+        (f.op2!=static_cast<uint8_t>(ComplexOp::Reciprocal) &&
+         f.op2!=static_cast<uint8_t>(ComplexOp::Log2))) return false;
+    if (!decode_dest_bank(f.dest_bank,f.dest_ext,&i->dst.bank) ||
+        !decode_src1_bank(f.src1_bank,f.src1_ext,&i->src.bank)) return false;
+    i->op=static_cast<ComplexOp>(f.op2);
+    i->dst.num=f.dest_num;
+    i->src.num=f.src1_num;
+    i->src_component=f.src_component;
+    i->dest_mask=f.write_mask;
+    i->skip_invalid=f.skip_invalid;
+    i->no_schedule=f.no_schedule;
+    i->end=f.end;
     return true;
 }
 

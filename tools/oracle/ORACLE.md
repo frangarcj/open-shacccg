@@ -178,3 +178,10 @@ VPCK words `0x408106caa0000080` / `0x4085094ea0010000`; OR first emits
 The writer therefore accepts the observed four-word secondary stream; int4 probes
 have additionally demonstrated five- and eight-word layouts, but their instruction
 profiles are not enabled yet. `--feature integer` currently contains eleven exact cases.
+
+`--feature integration` contains a production-shaped vertex probe based on the
+current Geometrizer `POLY_VS` semantics. Sony emits 14 primary + 4 secondary words;
+Open currently emits a semantically equivalent longer primary-only schedule. This
+case is intentionally a coverage oracle rather than a byte-identity gate: it drives
+component extraction, packed float uniforms, dynamic clamp, reciprocal division,
+VCOMP Log2, literal-table use and generic POSITION+COLOR finalization together.

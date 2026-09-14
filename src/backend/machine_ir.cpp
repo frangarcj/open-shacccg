@@ -348,7 +348,7 @@ MachineType pack_format_machine_type(usse::PackFormat format) {
 bool uses_instruction_config(MachineOpcode opcode) {
     return opcode == MachineOpcode::Move || opcode == MachineOpcode::MoveUpdate || opcode == MachineOpcode::Pack ||
         opcode == MachineOpcode::PackSwizzle || opcode == MachineOpcode::PackValue || opcode == MachineOpcode::Vector ||
-        opcode == MachineOpcode::Vmad;
+        opcode == MachineOpcode::ComplexF32 || opcode == MachineOpcode::Vmad;
 }
 
 } // namespace
@@ -946,6 +946,47 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             apply_scalar_component(instruction.src0,op.src1_swizzle);
             apply_scalar_component(instruction.src1,op.src2_swizzle);
             if (!builder.instruction(op)) { out.error = "failed to encode machine V32NMAD"; return false; }
+            break;
+        }
+        case MachineOpcode::ComplexF32: {
+            const uint16_t config=instruction.config();
+            if (guard!=usse::Predicate::Always ||
+                instruction.subop()>static_cast<uint8_t>(usse::ComplexOp::Log2) ||
+                instruction.subop()==1 || (config&~0x0003u)) {
+                out.error="machine complex F32 operation is outside reciprocal/log2 subset";
+                return false;
+            }
+            usse::RegisterRef dst{},src{};
+            if (!resolve_register_value(instruction.dst,MachineType::F32,out.value_registers,&dst) ||
+                !resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&src)) {
+                out.error="machine complex F32 requires register-backed F32 operands";
+                return false;
+            }
+            uint8_t component=instruction.src0.physical_component();
+            if (component==0xff) component=0;
+            if (component>=4) {
+                out.error="machine complex F32 source component is invalid";
+                return false;
+            }
+            uint8_t dest_mask=1;
+            const uint8_t dst_component=instruction.dst.physical_component();
+            if (dst_component!=0xff) {
+                if (dst_component>=4) { out.error="machine complex F32 destination component is invalid"; return false; }
+                dest_mask=static_cast<uint8_t>(1u<<dst_component);
+            }
+            usse::VcompF32Semantic complex{};
+            complex.op=static_cast<usse::ComplexOp>(instruction.subop());
+            complex.dst=dst;
+            complex.src=src;
+            complex.src_component=component;
+            complex.dest_mask=dest_mask;
+            complex.skip_invalid=true;
+            complex.no_schedule=(config&0x0001u)!=0;
+            complex.end=(config&0x0002u)!=0;
+            if (!builder.instruction(complex)) {
+                out.error="failed to encode machine VCOMP F32";
+                return false;
+            }
             break;
         }
         case MachineOpcode::DivF32: {

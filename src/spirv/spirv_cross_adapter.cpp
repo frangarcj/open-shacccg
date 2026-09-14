@@ -497,7 +497,21 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 if (block != uniform_blocks.end() && index_it != constants.end()) {
                     const uint32_t member = index_it->second;
                     if (member >= block->second.size()) { error = "uniform access-chain member is out of range"; return false; }
-                    access_chain_members[args[1]] = block->second[member];
+                    const auto &uniform=block->second[member];
+                    if (count==5) {
+                        access_chain_members[args[1]]=uniform;
+                    } else if (count==6 && !uniform.matrix) {
+                        const auto component_it=constants.find(args[4]);
+                        const uint8_t components=backend::typed_component_count(uniform.value.type());
+                        if (component_it==constants.end() || component_it->second>=components) {
+                            error="uniform access-chain component is unresolved or out of range";
+                            return false;
+                        }
+                        input_access_chains[args[1]]={uniform.value,component_it->second};
+                    } else {
+                        error="uniform access-chain shape is outside the validated scalar/vector subset";
+                        return false;
+                    }
                 } else if (index_it != constants.end()) {
                     const auto input=values.find(args[2]);
                     if (input!=values.end() && typed_is_float(input->second.type())) {
@@ -516,13 +530,14 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     if (it->second.matrix) matrix_values[args[1]] = it->second.resource;
                     else values[args[1]] = it->second.value;
                 } else if (auto it=input_access_chains.find(args[2]); it!=input_access_chains.end()) {
-                    if (it->second.component!=0 || typed_type(compiler.get_type(args[0]))!=backend::TypedType::F32) {
-                        error="only float-vector X access is validated for control-flow comparisons";
+                    if (typed_type(compiler.get_type(args[0]))!=backend::TypedType::F32 ||
+                        it->second.component>=backend::typed_component_count(it->second.source.type())) {
+                        error="float-vector access-chain component is outside the validated scalar subset";
                         return false;
                     }
                     const auto dst=program.make_value<backend::TypedType::F32>();
-                    if (!program.emit<backend::TypedOpcode::FloatExtract>(0,dst,it->second.source)) {
-                        error="failed to emit Typed IR float X extraction";
+                    if (!program.emit<backend::TypedOpcode::FloatExtract>(static_cast<uint8_t>(it->second.component),dst,it->second.source)) {
+                        error="failed to emit Typed IR float component extraction";
                         return false;
                     }
                     values[args[1]]=dst;
@@ -631,8 +646,32 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 const uint8_t source_components = backend::typed_component_count(source.type());
                 if (!valid || source.kind() == backend::TypedValueKind::None ||
                     (source_components != 2 && source_components != 3) || extracted != source_components) {
-                    error = "composite construct is not a homogeneous position expansion";
-                    return false;
+                    std::array<backend::TypedValue,4> components{};
+                    bool compose=count==7;
+                    for (uint8_t lane=0;compose && lane<4;++lane) {
+                        const uint32_t operand=args[2+lane];
+                        if (auto value=values.find(operand); value!=values.end() &&
+                            value->second.type()==backend::TypedType::F32) {
+                            components[lane]=value->second;
+                        } else if (auto constant=constants.find(operand); constant!=constants.end()) {
+                            components[lane]=program.literal_f32(constant->second);
+                        } else {
+                            compose=false;
+                        }
+                        compose = compose && components[lane].kind()!=backend::TypedValueKind::None;
+                    }
+                    if (!compose) {
+                        error = "composite construct is outside homogeneous-position/general F32x4 subset";
+                        return false;
+                    }
+                    const auto dst=program.compose_f32x4(components);
+                    if (dst.kind()==backend::TypedValueKind::None) {
+                        error="failed to emit Typed F32x4 composite";
+                        return false;
+                    }
+                    values[args[1]]=dst;
+                    offset+=count;
+                    continue;
                 }
                 const auto dst = program.make_value<backend::TypedType::F32x4>();
                 if (!program.emit<backend::TypedOpcode::ConstructPosition>(0, dst, source)) {
@@ -698,6 +737,24 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         error = "failed to emit Typed IR FAbs"; return false;
                     }
                     values[args[1]] = dst;
+                } else if (ext == GLSLstd450Log2) {
+                    if (count!=6 || result_type!=backend::TypedType::F32) {
+                        error="GLSL.std.450 Log2 is outside the validated scalar F32 subset";
+                        return false;
+                    }
+                    const auto source=values.find(args[4]);
+                    if (source==values.end() || source->second.type()!=backend::TypedType::F32) {
+                        error="unresolved GLSL.std.450 Log2 operand";
+                        return false;
+                    }
+                    const auto dst=program.make_value<backend::TypedType::F32>();
+                    if (dst.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::FloatUnary>(
+                            static_cast<uint8_t>(backend::TypedFloatUnaryOp::Log2),dst,source->second)) {
+                        error="failed to emit Typed IR Log2";
+                        return false;
+                    }
+                    values[args[1]]=dst;
                 } else if (ext == GLSLstd450FMin || ext == GLSLstd450FMax) {
                     if (count != 7 || !result_float) {
                         error = "GLSL.std.450 min/max is outside the validated F32 subset";

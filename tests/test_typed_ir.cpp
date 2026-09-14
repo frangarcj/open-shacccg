@@ -542,6 +542,26 @@ int test_typed_ir() {
 
     {
         TypedProgram program;
+        const auto numerator=program.input<TypedType::F32>(0);
+        const auto denominator=program.uniform<TypedType::F32>(0);
+        const auto quotient=program.make_value<TypedType::F32>();
+        const auto logged=program.make_value<TypedType::F32>();
+        program.emit<TypedOpcode::FloatBinary>(static_cast<uint8_t>(TypedFloatOp::Div),quotient,numerator,denominator);
+        program.emit<TypedOpcode::FloatUnary>(static_cast<uint8_t>(TypedFloatUnaryOp::Log2),logged,quotient);
+        MachineCompileResult result;
+        usse::VcompF32Semantic reciprocal{},log2{};
+        usse::V32NmadSemantic multiply{};
+        if (!compile_typed_program(program,result) || result.words.size()!=3 ||
+            !usse::decode_vcomp_f32_semantic(result.words[0],&reciprocal) ||
+            reciprocal.op!=usse::ComplexOp::Reciprocal || reciprocal.src.bank!=usse::RegisterBank::SecondaryAttribute ||
+            !usse::decode_v32nmad_semantic(result.words[1],&multiply) || multiply.op!=usse::VectorOp::Mul ||
+            !usse::decode_vcomp_f32_semantic(result.words[2],&log2) || log2.op!=usse::ComplexOp::Log2 ||
+            log2.src.bank!=usse::RegisterBank::Temp)
+            failures += fail("typed scalar division/Log2 did not lower through VCOMP/V32NMAD");
+    }
+
+    {
+        TypedProgram program;
         const auto source = program.input<TypedType::F32x4>(0);
         const auto dst = program.make_value<TypedType::F16x4>();
         program.emit<TypedOpcode::FloatConvert>(

@@ -119,6 +119,26 @@ struct VcompRcpScalarF32Semantic {
     uint8_t component = 0; // X/Y packed scalar input
 };
 
+enum class ComplexOp : uint8_t {
+    Reciprocal = 0,
+    Log2 = 2,
+};
+
+// Field-level VCOMP shape independently anchored by reciprocal and Log2
+// differential probes. The current semantic surface deliberately stays on
+// scalar F32, but unlike the older division-only helpers it permits the
+// observed TEMP/PA/SA bank combinations needed by real vertex expressions.
+struct VcompF32Semantic {
+    ComplexOp op = ComplexOp::Reciprocal;
+    RegisterRef dst{};
+    RegisterRef src{};
+    uint8_t src_component = 0;
+    uint8_t dest_mask = 1;
+    bool skip_invalid = true;
+    bool no_schedule = false;
+    bool end = false;
+};
+
 // Fixed F32 division combine forms observed after reciprocal VCOMPs and
 // numerator staging. Kept narrow until the general V16NMAD layout is anchored.
 struct V16NmadDivF32Semantic { uint8_t components = 4; };
@@ -428,6 +448,27 @@ struct VbwFields {
     uint8_t src2_num = 0;
 };
 
+struct VcompFields {
+    uint8_t pred = 0;
+    bool skip_invalid = false;
+    uint8_t dest_type = 0;
+    bool sync_start = false;
+    bool dest_ext = false;
+    bool end = false;
+    bool src1_ext = false;
+    uint8_t repeat_count = 0;
+    bool no_schedule = false;
+    uint8_t op2 = 0;
+    uint8_t src_type = 0;
+    uint8_t src1_mod = 0;
+    uint8_t src_component = 0;
+    uint8_t dest_bank = 0;
+    uint8_t src1_bank = 0;
+    uint8_t dest_num = 0;
+    uint8_t src1_num = 0;
+    uint8_t write_mask = 0;
+};
+
 struct KillFields {
     uint8_t dontcare_top = 0;
     uint8_t short_predicate = 0;
@@ -494,6 +535,8 @@ bool decode_vpck(uint64_t word, VpckFields *fields);
 bool encode_vpck(const VpckFields &fields, uint64_t *word);
 bool decode_v32nmad(uint64_t word, V32NmadFields *fields);
 bool encode_v32nmad(const V32NmadFields &fields, uint64_t *word);
+bool decode_vcomp(uint64_t word, VcompFields *fields);
+bool encode_vcomp(const VcompFields &fields, uint64_t *word);
 bool decode_vcomp_rcp_f32(uint64_t word, VcompRcpF32Fields *fields);
 bool encode_vcomp_rcp_f32(const VcompRcpF32Fields &fields, uint64_t *word);
 bool decode_vmad(uint64_t word, VmadFields *fields);
@@ -529,6 +572,8 @@ bool encode_vcomp_rcp_f32_semantic(const VcompRcpF32Semantic &instruction, uint6
 bool decode_vcomp_rcp_f32_semantic(uint64_t word, VcompRcpF32Semantic *instruction);
 bool encode_vcomp_rcp_scalar_f32_semantic(const VcompRcpScalarF32Semantic &instruction, uint64_t *word);
 bool decode_vcomp_rcp_scalar_f32_semantic(uint64_t word, VcompRcpScalarF32Semantic *instruction);
+bool encode_vcomp_f32_semantic(const VcompF32Semantic &instruction, uint64_t *word);
+bool decode_vcomp_f32_semantic(uint64_t word, VcompF32Semantic *instruction);
 bool encode_v16nmad_div_f32_semantic(const V16NmadDivF32Semantic &, uint64_t *word);
 bool decode_v16nmad_div_f32_semantic(uint64_t word, V16NmadDivF32Semantic *instruction);
 bool encode_v16nmad_dot_splat_f32_semantic(const V16NmadDotSplatF32Semantic &, uint64_t *word);
@@ -563,6 +608,7 @@ inline bool encode_semantic(const VpckSemantic &i, uint64_t *word) { return enco
 inline bool encode_semantic(const V32NmadSemantic &i, uint64_t *word) { return encode_v32nmad_semantic(i, word); }
 inline bool encode_semantic(const VcompRcpF32Semantic &i, uint64_t *word) { return encode_vcomp_rcp_f32_semantic(i, word); }
 inline bool encode_semantic(const VcompRcpScalarF32Semantic &i, uint64_t *word) { return encode_vcomp_rcp_scalar_f32_semantic(i, word); }
+inline bool encode_semantic(const VcompF32Semantic &i, uint64_t *word) { return encode_vcomp_f32_semantic(i, word); }
 inline bool encode_semantic(const V16NmadDivF32Semantic &i, uint64_t *word) { return encode_v16nmad_div_f32_semantic(i, word); }
 inline bool encode_semantic(const V16NmadDotSplatF32Semantic &i, uint64_t *word) { return encode_v16nmad_dot_splat_f32_semantic(i, word); }
 inline bool encode_semantic(const V16NmadF32ToS32Semantic &i, uint64_t *word) { return encode_v16nmad_f32_to_s32_semantic(i, word); }

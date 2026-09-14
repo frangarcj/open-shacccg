@@ -304,6 +304,47 @@ bool compile_oracle_vertex_profile(const std::string &source, const char *name,
     return ok;
 }
 
+bool compile_geometrizer_poly_vertex(const std::string &source) {
+    VscCompileRequest request{};
+    request.source_name="vp-geometrizer-poly.cg";
+    request.source=source.data();
+    request.source_size=source.size();
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_VERTEX;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+    if (ok) {
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        ok=view.valid() && view.sdk_version()==0x0165 && view.flags()==0x00090000 &&
+            view.primary_register_count()==8 && view.secondary_register_count()>=7 &&
+            view.parameter_count()==4 && view.literal_count()>=3 &&
+            view.primary_instruction_count()>=15;
+        const char *names[]={"a_pos","a_color","u_screen_size","u_z_max"};
+        const uint32_t resources[]={0,4,0,2};
+        for (uint32_t i=0;ok && i<4;++i) {
+            vsc::gxp::ParameterView parameter{};
+            ok=view.parameter(i,parameter) && parameter.name==names[i] && parameter.resource_index==resources[i];
+        }
+        bool vcomp=false,v32=false,vmov=false;
+        const auto code=view.primary_program();
+        for (size_t off=0;ok && off+sizeof(uint64_t)<=code.size;off+=sizeof(uint64_t)) {
+            uint64_t word=0;
+            std::memcpy(&word,code.data+off,sizeof(word));
+            const auto family=vsc::usse::classify_major(word);
+            vcomp |= family==vsc::usse::MajorClass::Vcomp;
+            v32 |= family==vsc::usse::MajorClass::V32Nmad;
+            vmov |= family==vsc::usse::MajorClass::Vmov;
+        }
+        ok=ok && vcomp && v32 && vmov;
+    }
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: Geometrizer POLY_VS diagnostic=%s\n",
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
+
 bool compile_oracle_s32_profile(const std::string &source, const char *name,
                                 uint32_t expected_size, uint32_t expected_params,
                                 const uint64_t *secondary_words, size_t secondary_count) {
@@ -516,6 +557,11 @@ int test_cg_frontend() {
         if (source.empty() || !compile_oracle_vertex_profile(source,"vp-varying.cg",
                 249,8,0,params,2,words,3))
             failures += fail("Cg vertex position/uv passthrough did not reproduce oracle profile");
+    }
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/vp-geometrizer-poly.cg");
+        if (source.empty() || !compile_geometrizer_poly_vertex(source))
+            failures += fail("Geometrizer POLY_VS integration profile did not compile through generic vertex Machine IR");
     }
     {
         const char *alu_probes[]={

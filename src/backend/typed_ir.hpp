@@ -102,6 +102,7 @@ enum class TypedFloatUnaryOp : uint8_t {
     Neg,
     Abs,
     Saturate,
+    Log2,
 };
 
 enum class TypedFloatSwizzleOp : uint8_t {
@@ -137,6 +138,7 @@ public:
     TypedValue literal_s32(int32_t value);
     TypedValue literal_f32(uint32_t bits);
     TypedValue literal_f32x4(const std::array<uint32_t,4> &bits);
+    TypedValue compose_f32x4(const std::array<TypedValue,4> &components);
     TypedValue sampler(uint16_t binding);
 
     TypedValue input(TypedType type, uint16_t location);
@@ -172,6 +174,7 @@ public:
     const std::vector<TypedInstruction> &instructions() const { return instructions_; }
     const std::vector<uint32_t> &literals() const { return literals_; }
     const std::vector<std::array<uint32_t,4>> &float4_literals() const { return float4_literals_; }
+    const std::vector<std::array<TypedValue,4>> &float4_composites() const { return float4_composites_; }
     const std::vector<uint32_t> &labels() const { return labels_; }
     uint32_t value_count() const { return next_value_; }
     uint16_t predicate_count() const { return next_predicate_; }
@@ -180,6 +183,7 @@ private:
     std::vector<TypedInstruction> instructions_;
     std::vector<uint32_t> literals_;
     std::vector<std::array<uint32_t,4>> float4_literals_;
+    std::vector<std::array<TypedValue,4>> float4_composites_;
     std::vector<uint32_t> labels_;
     uint32_t next_value_ = 0;
     uint16_t next_predicate_ = 0;

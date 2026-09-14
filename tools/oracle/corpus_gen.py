@@ -129,6 +129,21 @@ float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1,float4 c:TEXCOORD2):COLOR0 {{
          "uniform float4x4 mvp; float4 main(float4 p:POSITION) : POSITION { return mul(mvp, p); }", "matrix")
     emit(root, manifest, "vp-varying", "sce_vp_psp2",
          "struct O { float4 p:POSITION; float2 uv:TEXCOORD0; }; O main(float4 p:POSITION,float2 uv:TEXCOORD0) { O o; o.p=p; o.uv=uv; return o; }", "interface")
+    emit(root, manifest, "vp-geometrizer-poly", "sce_vp_psp2", """
+uniform float2 u_screen_size;
+uniform float u_z_max;
+struct O { float4 position:POSITION; float4 color:COLOR; };
+O main(float3 a_pos:TEXCOORD0, float4 a_color:TEXCOORD1) {
+    O o;
+    float2 ndc=float2((a_pos.x/u_screen_size.x)*2.0-1.0,
+                      1.0-(a_pos.y/u_screen_size.y)*2.0);
+    float zn=log2(1.0+clamp(a_pos.z,0.0,u_z_max))*0.0602059935;
+    float clip_z=zn*1.998-1.0;
+    o.position=float4(ndc,clip_z,1.0);
+    o.color=a_color;
+    return o;
+}
+""", "integration", project="geometrizer", shader="POLY_VS")
 
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
     print(f"generated {len(manifest)} shaders in {root}")

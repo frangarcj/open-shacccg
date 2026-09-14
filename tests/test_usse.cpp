@@ -355,6 +355,41 @@ int test_usse() {
             decoded.component!=component)
             failures += fail("semantic packed-scalar reciprocal VCOMP oracle word mismatch");
     }
+    {
+        struct Probe {
+            VcompF32Semantic semantic;
+            uint64_t word;
+        };
+        const Probe probes[]={
+            {{ComplexOp::Reciprocal,{RegisterBank::Temp,124},{RegisterBank::PrimaryAttribute,0},0,1,true,true,false},
+             0x308008008f800001ULL},
+            {{ComplexOp::Log2,{RegisterBank::PrimaryAttribute,0},{RegisterBank::PrimaryAttribute,0},0,1,true,false,false},
+             0x3080040280000001ULL},
+            {{ComplexOp::Log2,{RegisterBank::PrimaryAttribute,0},{RegisterBank::PrimaryAttribute,0},1,2,true,false,false},
+             0x3080040a80000002ULL},
+            {{ComplexOp::Log2,{RegisterBank::Temp,124},{RegisterBank::PrimaryAttribute,0},0,1,true,true,false},
+             0x30800c008f800001ULL},
+        };
+        for (const auto &probe:probes) {
+            uint64_t word=0;
+            VcompF32Semantic decoded{};
+            if (!encode_vcomp_f32_semantic(probe.semantic,&word) || word!=probe.word ||
+                !decode_vcomp_f32_semantic(word,&decoded) || decoded.op!=probe.semantic.op ||
+                decoded.dst.bank!=probe.semantic.dst.bank || decoded.dst.num!=probe.semantic.dst.num ||
+                decoded.src.bank!=probe.semantic.src.bank || decoded.src.num!=probe.semantic.src.num ||
+                decoded.src_component!=probe.semantic.src_component || decoded.dest_mask!=probe.semantic.dest_mask ||
+                decoded.no_schedule!=probe.semantic.no_schedule || decoded.end!=probe.semantic.end)
+                failures += fail("general F32 VCOMP reciprocal/Log2 oracle profile mismatch");
+        }
+        VcompF32Semantic sa_profile{ComplexOp::Reciprocal,{RegisterBank::Temp,0},
+                                    {RegisterBank::SecondaryAttribute,0},0,1,true,false,false};
+        uint64_t sa_word=0;
+        VcompF32Semantic sa_decoded{};
+        if (!encode_vcomp_f32_semantic(sa_profile,&sa_word) ||
+            !decode_vcomp_f32_semantic(sa_word,&sa_decoded) ||
+            sa_decoded.src.bank!=RegisterBank::SecondaryAttribute || sa_decoded.dst.bank!=RegisterBank::Temp)
+            failures += fail("general F32 VCOMP SA/TEMP bank field roundtrip mismatch");
+    }
     const uint64_t div_combine_words[]={
         0x10a4008600040f7cULL,0x10a4418600040f7cULL,
         0x10a4438600040f7cULL,0x10a4478600040f7cULL,
