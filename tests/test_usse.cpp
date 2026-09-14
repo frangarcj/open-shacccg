@@ -22,6 +22,7 @@ int test_usse() {
         {0x50810009e0400600ULL, 0x0a, MajorClass::Vbw},
         {0x08c51f889f240001ULL, 0x01, MajorClass::V32Nmad},
         {0x18b18f80cf411100ULL, 0x03, MajorClass::VectorMadDot},
+        {0xd08180042020c001ULL, 0x1a, MajorClass::I32Mad2},
     };
     for (const auto &c : cases) {
         if (major_opcode(c.word) != c.major) failures += fail("wrong major opcode extraction");
@@ -152,6 +153,24 @@ int test_usse() {
         bw.src2_bank!=2 || !bw.src2_ext || bw.dest_num!=2 || bw.src1_num!=12 ||
         bw.src2_num!=0 || bw.src2_select!=0)
         failures += fail("VBW field positions mismatch");
+
+    const uint64_t i32mad2_words[] = {
+        0xd08180042020c001ULL, // TEMP1 = SA3 * TEMP0 + imm(1), sn=0
+        0xd09080040000c001ULL, // TEMP0 feed-through from TEMP1, sn=1
+        0xd08180042020c002ULL, // +2 differential oracle case
+        0xd08180042020c003ULL, // +3 differential oracle case
+    };
+    for (uint64_t known : i32mad2_words) {
+        I32Mad2Fields im{};
+        uint64_t roundtrip=0;
+        if (!decode_i32mad2(known,&im) || !encode_i32mad2(im,&roundtrip) || roundtrip!=known)
+            failures += fail("I32MAD2 raw field roundtrip mismatch");
+    }
+    I32Mad2Fields im{};
+    if (!decode_i32mad2(i32mad2_words[0],&im) || im.sn!=0 || im.dest_num!=1 ||
+        im.src0_num!=3 || im.src1_num!=0 || im.src2_num!=1 || !im.src0_ext ||
+        !im.src2_ext || im.src0_bank!=1 || im.src2_bank!=2)
+        failures += fail("I32MAD2 oracle field positions mismatch");
 
     const uint64_t kill_words[] = {
         0xf9300406f0000408ULL,
@@ -359,6 +378,40 @@ int test_usse() {
             decoded.rhs.bank!=RegisterBank::PrimaryAttribute || decoded.rhs.num!=2)
             failures += fail("oracle F32 VTST semantic decode mismatch");
     }
+
+    VtstS32Semantic scmp{};
+    scmp.lhs={RegisterBank::Temp,0};
+    scmp.rhs={RegisterBank::SecondaryAttribute,0};
+    scmp.op=CompareOp::Less;
+    uint64_t scmp_word=0;
+    if (!encode_vtst_s32_semantic(scmp,&scmp_word) || scmp_word!=0x48a8068130078000ULL)
+        failures += fail("oracle S32 loop VTST semantic encode mismatch");
+    VtstS32Semantic scmp_dec{};
+    if (!decode_vtst_s32_semantic(scmp_word,&scmp_dec) || scmp_dec.op!=CompareOp::Less ||
+        scmp_dec.lhs.bank!=RegisterBank::Temp || scmp_dec.lhs.num!=0 ||
+        scmp_dec.rhs.bank!=RegisterBank::SecondaryAttribute || scmp_dec.rhs.num!=0)
+        failures += fail("oracle S32 loop VTST semantic decode mismatch");
+
+    I32Mad2Semantic loop_update{};
+    loop_update.dst={RegisterBank::Temp,1};
+    loop_update.src0={RegisterBank::SecondaryAttribute,3};
+    loop_update.src1={RegisterBank::Temp,0};
+    loop_update.src2={RegisterBank::Immediate,1};
+    loop_update.sn=0;
+    uint64_t imad_word=0;
+    if (!encode_i32mad2_semantic(loop_update,&imad_word) || imad_word!=i32mad2_words[0])
+        failures += fail("semantic loop I32MAD2 update mismatch");
+    I32Mad2Semantic loop_dec{};
+    if (!decode_i32mad2_semantic(imad_word,&loop_dec) || loop_dec.sn!=0 ||
+        loop_dec.dst.bank!=RegisterBank::Temp || loop_dec.dst.num!=1 ||
+        loop_dec.src0.bank!=RegisterBank::SecondaryAttribute || loop_dec.src0.num!=3 ||
+        loop_dec.src2.bank!=RegisterBank::Immediate || loop_dec.src2.num!=1)
+        failures += fail("semantic loop I32MAD2 update decode mismatch");
+    loop_update.dst={RegisterBank::Temp,0};
+    loop_update.src2={RegisterBank::Temp,1};
+    loop_update.sn=1;
+    if (!encode_i32mad2_semantic(loop_update,&imad_word) || imad_word!=i32mad2_words[1])
+        failures += fail("semantic loop I32MAD2 feed-through mismatch");
 
     // Semantic VBW: the real shader trace uses OR with an immediate zero as a
     // scalar U32 copy. Keep the immediate encoding generic but fail if a U32

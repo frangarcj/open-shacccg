@@ -215,6 +215,15 @@ GXP`; the regression requires PA=12, the oracle control flags, the exact F32
 VTST anchor and decodable non-zero BR offsets. More general phi consumers and
 loop-carried values remain fail-closed.
 
+The dynamic-loop oracle case also identifies the integer control primitives
+around the back-edge. `for (int i=0; i<n; ++i)` uses a signed-32 VTST `<`
+profile (`0x48a8068130078000`) followed in the latch by an I32MAD2 update/feed
+pair (`0xd08180042020c001`, `0xd09080040000c001`). Differential `i+=2` and
+`i+=3` cases change only the immediate source of the update word, anchoring that
+field independently. Raw/semantic I32MAD2 and signed-loop VTST codecs reproduce
+these words exactly; decrementing loops use a different source profile and are
+still intentionally unsupported.
+
 ## Next backend order
 
 1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, keeping the single Typed -> Machine lowering path fail-closed.

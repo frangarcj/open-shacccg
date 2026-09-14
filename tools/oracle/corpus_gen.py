@@ -76,6 +76,15 @@ float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1,float4 c:TEXCOORD2):COLOR0 {
     return x;
 }
 """, "control", op="branch-backward")
+    for step in (2, 3):
+        emit(root, manifest, f"fp-loop-step{step}", "sce_fp_psp2", f"""
+uniform int n;
+float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1,float4 c:TEXCOORD2):COLOR0 {{
+    float4 x=a;
+    for (int i=0; i<n; i+={step}) x=x*b+c;
+    return x;
+}}
+""", "control", op=f"loop-step{step}")
     for suffix, compare in (("eq", "=="), ("ne", "!="), ("lt", "<"),
                             ("le", "<="), ("gt", ">"), ("ge", ">=")):
         emit(root, manifest, f"fp-cmp-{suffix}-big", "sce_fp_psp2", f"""

@@ -23,6 +23,7 @@ MajorClass classify_major(uint64_t word) {
     case 0x0d:
     case 0x0e: return MajorClass::Vbw;
     case 0x0f: return MajorClass::VtstMask;
+    case 0x1a: return MajorClass::I32Mad2;
     case 0x1c: return MajorClass::Sample;
     case 0x1f: return MajorClass::Control;
     default: return MajorClass::Unknown;
@@ -42,6 +43,7 @@ const char *major_class_name(MajorClass cls) {
     case MajorClass::Vtst: return "VTST";
     case MajorClass::Vbw: return "VBW";
     case MajorClass::VtstMask: return "VTSTMSK";
+    case MajorClass::I32Mad2: return "I32MAD2";
     case MajorClass::Sample: return "SMP";
     case MajorClass::Control: return "CONTROL";
     case MajorClass::Unknown: return "UNKNOWN";
@@ -89,6 +91,7 @@ VSC_RAW_CODEC(vmad, VmadEncoding, VmadFields)
 VSC_RAW_CODEC(vtst, VtstEncoding, VtstFields)
 VSC_RAW_CODEC(kill, KillEncoding, KillFields)
 VSC_RAW_CODEC(branch, BranchEncoding, BranchFields)
+VSC_RAW_CODEC(i32mad2, I32Mad2Encoding, I32Mad2Fields)
 
 #undef VSC_RAW_CODEC
 
@@ -158,6 +161,28 @@ bool decode_src1_bank(uint8_t selector, bool extended, RegisterBank *bank) {
     *bank = extended ? ext[selector] : base[selector];
     return true;
 }
+
+namespace {
+bool encode_src0_bank(RegisterBank bank, uint8_t *selector, bool *extended) {
+    if (!selector || !extended) return false;
+    switch (bank) {
+    case RegisterBank::Temp: *selector=0; *extended=false; return true;
+    case RegisterBank::PrimaryAttribute: *selector=1; *extended=false; return true;
+    case RegisterBank::Output: *selector=0; *extended=true; return true;
+    case RegisterBank::SecondaryAttribute: *selector=1; *extended=true; return true;
+    default: return false;
+    }
+}
+
+bool decode_src0_bank(uint8_t selector, bool extended, RegisterBank *bank) {
+    if (!bank || selector > 1) return false;
+    if (extended)
+        *bank = selector ? RegisterBank::SecondaryAttribute : RegisterBank::Output;
+    else
+        *bank = selector ? RegisterBank::PrimaryAttribute : RegisterBank::Temp;
+    return true;
+}
+} // namespace
 
 bool encode_vmov_semantic(const VmovSemantic &i, uint64_t *word) {
     if (!word || i.dst.num >= 64 || i.src.num >= 64 || i.dest_mask >= 16 ||
@@ -472,6 +497,95 @@ bool decode_vtst_f32_semantic(uint64_t word, VtstF32Semantic *i) {
     i->predicate_destination=f.predicate_destination;
     i->component=f.channel;
     i->skip_invalid=f.skip_invalid;
+    return true;
+}
+
+bool encode_vtst_s32_semantic(const VtstS32Semantic &i, uint64_t *word) {
+    if (!word || i.op!=CompareOp::Less || i.lhs.num>=128 || i.rhs.num>=128 ||
+        i.predicate_destination>=4) return false;
+    VtstFields f{};
+    if (!encode_src1_bank(i.lhs.bank,&f.src1_bank,&f.src1_ext) ||
+        !encode_src1_bank(i.rhs.bank,&f.src2_bank,&f.src2_ext)) return false;
+    f.pred=static_cast<uint8_t>(i.predicate);
+    f.skip_invalid=i.skip_invalid;
+    f.once_only=true;
+    f.dest_ext=true;
+    f.precision=false;
+    f.zero_test=2;
+    f.sign_test=1;
+    f.test_crcomb_and=true;
+    f.channel=0;
+    f.predicate_destination=i.predicate_destination;
+    f.dest_bank=1;
+    f.dest_num=0;
+    f.test_write_enable=false;
+    f.alu_select=1;
+    f.alu_op=14;
+    f.src1_num=i.lhs.num;
+    f.src2_num=i.rhs.num;
+    return encode_vtst(f,word);
+}
+
+bool decode_vtst_s32_semantic(uint64_t word, VtstS32Semantic *i) {
+    if (!i) return false;
+    VtstFields f{};
+    if (!decode_vtst(word,&f)) return false;
+    if (!f.dest_ext || f.dest_bank!=1 || f.dest_num!=0 || f.test_write_enable ||
+        f.alu_select!=1 || f.alu_op!=14 || f.precision || f.src1_negative ||
+        f.src2_vector_scalar_component || f.repeat_count!=0 || !f.once_only || f.sync_start ||
+        !f.test_crcomb_and || f.channel!=0 || f.zero_test!=2 || f.sign_test!=1)
+        return false;
+    if (!decode_src1_bank(f.src1_bank,f.src1_ext,&i->lhs.bank) ||
+        !decode_src1_bank(f.src2_bank,f.src2_ext,&i->rhs.bank)) return false;
+    i->lhs.num=f.src1_num;
+    i->rhs.num=f.src2_num;
+    i->predicate=static_cast<Predicate>(f.pred);
+    i->predicate_destination=f.predicate_destination;
+    i->op=CompareOp::Less;
+    i->skip_invalid=f.skip_invalid;
+    return true;
+}
+
+bool encode_i32mad2_semantic(const I32Mad2Semantic &i, uint64_t *word) {
+    if (!word || i.sn>1 || i.dst.num>=128 || i.src0.num>=128 ||
+        i.src1.num>=128 || i.src2.num>=128) return false;
+    I32Mad2Fields f{};
+    if (!encode_dest_bank(i.dst.bank,&f.dest_bank,&f.dest_ext) ||
+        !encode_src0_bank(i.src0.bank,&f.src0_bank,&f.src0_ext) ||
+        !encode_src1_bank(i.src1.bank,&f.src1_bank,&f.src1_ext) ||
+        !encode_src1_bank(i.src2.bank,&f.src2_bank,&f.src2_ext)) return false;
+    f.pred=static_cast<uint8_t>(Predicate::Always);
+    f.dontcare=true;
+    f.no_schedule=false;
+    f.sn=i.sn;
+    f.end=false;
+    f.count=0;
+    f.is_signed=false;
+    f.negative_src1=false;
+    f.negative_src2=false;
+    f.dest_num=i.dst.num;
+    f.src0_num=i.src0.num;
+    f.src1_num=i.src1.num;
+    f.src2_num=i.src2.num;
+    return encode_i32mad2(f,word);
+}
+
+bool decode_i32mad2_semantic(uint64_t word, I32Mad2Semantic *i) {
+    if (!i) return false;
+    I32Mad2Fields f{};
+    if (!decode_i32mad2(word,&f)) return false;
+    if (f.pred!=static_cast<uint8_t>(Predicate::Always) || !f.dontcare || f.no_schedule ||
+        f.sn>1 || f.end || f.count!=0 || f.is_signed || f.negative_src1 || f.negative_src2)
+        return false;
+    if (!decode_dest_bank(f.dest_bank,f.dest_ext,&i->dst.bank) ||
+        !decode_src0_bank(f.src0_bank,f.src0_ext,&i->src0.bank) ||
+        !decode_src1_bank(f.src1_bank,f.src1_ext,&i->src1.bank) ||
+        !decode_src1_bank(f.src2_bank,f.src2_ext,&i->src2.bank)) return false;
+    i->dst.num=f.dest_num;
+    i->src0.num=f.src0_num;
+    i->src1.num=f.src1_num;
+    i->src2.num=f.src2_num;
+    i->sn=f.sn;
     return true;
 }
 

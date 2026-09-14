@@ -666,6 +666,20 @@
     "op": "branch-backward"
   },
   {
+    "name": "fp-loop-step2",
+    "file": "fp-loop-step2.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "control",
+    "op": "loop-step2"
+  },
+  {
+    "name": "fp-loop-step3",
+    "file": "fp-loop-step3.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "control",
+    "op": "loop-step3"
+  },
+  {
     "name": "fp-cmp-eq-big",
     "file": "fp-cmp-eq-big.cg",
     "profile": "sce_fp_psp2",

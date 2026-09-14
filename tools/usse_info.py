@@ -29,6 +29,7 @@ NAMES = {
     0x0d: 'VBW',
     0x0e: 'VBW',
     0x0f: 'VTSTMSK',
+    0x1a: 'I32MAD2',
     0x1c: 'SMP',
     0x1f: 'CONTROL',
 }

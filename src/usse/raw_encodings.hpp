@@ -101,6 +101,19 @@ using KillEncoding = Encoding<0xff3ff9fff0000000ULL, 0xf9300006f0000000ULL,
 using BranchEncoding = Encoding<0xf8fffffffff00000ULL, 0xf800004000000000ULL,
     VSC_FIELD(BranchFields, pred, 56, 3), VSC_FIELD(BranchFields, offset, 0, 20)>;
 
+using I32Mad2Encoding = Encoding<0xf8000c7800000000ULL, 0xd000000000000000ULL,
+    VSC_FIELD(I32Mad2Fields, pred, 56, 3), VSC_FIELD(I32Mad2Fields, dontcare, 55, 1),
+    VSC_FIELD(I32Mad2Fields, no_schedule, 54, 1), VSC_FIELD(I32Mad2Fields, sn, 52, 2),
+    VSC_FIELD(I32Mad2Fields, dest_ext, 51, 1), VSC_FIELD(I32Mad2Fields, end, 50, 1),
+    VSC_FIELD(I32Mad2Fields, src1_ext, 49, 1), VSC_FIELD(I32Mad2Fields, src2_ext, 48, 1),
+    VSC_FIELD(I32Mad2Fields, src0_ext, 47, 1), VSC_FIELD(I32Mad2Fields, count, 44, 3),
+    VSC_FIELD(I32Mad2Fields, is_signed, 41, 1), VSC_FIELD(I32Mad2Fields, negative_src1, 40, 1),
+    VSC_FIELD(I32Mad2Fields, negative_src2, 39, 1), VSC_FIELD(I32Mad2Fields, src0_bank, 34, 1),
+    VSC_FIELD(I32Mad2Fields, dest_bank, 32, 2), VSC_FIELD(I32Mad2Fields, src1_bank, 30, 2),
+    VSC_FIELD(I32Mad2Fields, src2_bank, 28, 2), VSC_FIELD(I32Mad2Fields, dest_num, 21, 7),
+    VSC_FIELD(I32Mad2Fields, src0_num, 14, 7), VSC_FIELD(I32Mad2Fields, src1_num, 7, 7),
+    VSC_FIELD(I32Mad2Fields, src2_num, 0, 7)>;
+
 #undef VSC_FIELD
 
 } // namespace vsc::usse::detail

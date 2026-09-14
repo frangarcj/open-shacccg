@@ -155,6 +155,28 @@ struct VtstF32Semantic {
     bool skip_invalid = false;
 };
 
+// Oracle-validated signed-32 loop compare. The first supported form is the
+// glslang/SceShaccCg `i < n` profile used by a dynamic for-loop.
+struct VtstS32Semantic {
+    RegisterRef lhs{};
+    RegisterRef rhs{};
+    Predicate predicate = Predicate::Always;
+    CompareOp op = CompareOp::Less;
+    uint8_t predicate_destination = 0;
+    bool skip_invalid = true;
+};
+
+// Oracle-validated I32MAD2 subset used for loop-counter update/feed-through.
+// The semantic layer deliberately exposes only sn=0/1, unsigned operands and
+// unmodified scalar registers until more oracle cases establish other forms.
+struct I32Mad2Semantic {
+    RegisterRef dst{};
+    RegisterRef src0{};
+    RegisterRef src1{};
+    RegisterRef src2{};
+    uint8_t sn = 0;
+};
+
 enum class BitwiseOp : uint8_t {
     And,
     Or,
@@ -365,6 +387,30 @@ struct BranchFields {
     uint32_t offset = 0; // raw signed-20-bit two's-complement payload
 };
 
+struct I32Mad2Fields {
+    uint8_t pred = 0;
+    bool dontcare = false;
+    bool no_schedule = false;
+    uint8_t sn = 0;
+    bool dest_ext = false;
+    bool end = false;
+    bool src1_ext = false;
+    bool src2_ext = false;
+    bool src0_ext = false;
+    uint8_t count = 0;
+    bool is_signed = false;
+    bool negative_src1 = false;
+    bool negative_src2 = false;
+    uint8_t src0_bank = 0;
+    uint8_t dest_bank = 0;
+    uint8_t src1_bank = 0;
+    uint8_t src2_bank = 0;
+    uint8_t dest_num = 0;
+    uint8_t src0_num = 0;
+    uint8_t src1_num = 0;
+    uint8_t src2_num = 0;
+};
+
 struct Instruction {
     Opcode opcode = Opcode::End;
     uint16_t dst = 0;
@@ -379,7 +425,7 @@ enum class ControlClass : uint8_t {
 
 enum class MajorClass : uint8_t {
     Vmad2, V32Nmad, V16Nmad, VectorMadDot, Vdual, Vcomp, Vmov, Vpck,
-    Vtst, Vbw, VtstMask, Sample, Control, Unknown,
+    Vtst, Vbw, VtstMask, I32Mad2, Sample, Control, Unknown,
 };
 
 uint8_t major_opcode(uint64_t word);
@@ -406,6 +452,8 @@ bool decode_kill(uint64_t word, KillFields *fields);
 bool encode_kill(const KillFields &fields, uint64_t *word);
 bool decode_branch(uint64_t word, BranchFields *fields);
 bool encode_branch(const BranchFields &fields, uint64_t *word);
+bool decode_i32mad2(uint64_t word, I32Mad2Fields *fields);
+bool encode_i32mad2(const I32Mad2Fields &fields, uint64_t *word);
 
 // Context-sensitive bank conversion helpers. These expose semantics without
 // changing the raw codecs above.
@@ -429,6 +477,10 @@ bool encode_vtst_semantic(const VtstSemantic &instruction, uint64_t *word);
 bool decode_vtst_semantic(uint64_t word, VtstSemantic *instruction);
 bool encode_vtst_f32_semantic(const VtstF32Semantic &instruction, uint64_t *word);
 bool decode_vtst_f32_semantic(uint64_t word, VtstF32Semantic *instruction);
+bool encode_vtst_s32_semantic(const VtstS32Semantic &instruction, uint64_t *word);
+bool decode_vtst_s32_semantic(uint64_t word, VtstS32Semantic *instruction);
+bool encode_i32mad2_semantic(const I32Mad2Semantic &instruction, uint64_t *word);
+bool decode_i32mad2_semantic(uint64_t word, I32Mad2Semantic *instruction);
 bool encode_vbw_semantic(const VbwSemantic &instruction, uint64_t *word);
 bool decode_vbw_semantic(uint64_t word, VbwSemantic *instruction);
 bool encode_kill_semantic(const KillSemantic &instruction, uint64_t *word);
@@ -442,6 +494,8 @@ inline bool encode_semantic(const V32NmadSemantic &i, uint64_t *word) { return e
 inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return encode_vmad_semantic(i, word); }
 inline bool encode_semantic(const VtstSemantic &i, uint64_t *word) { return encode_vtst_semantic(i, word); }
 inline bool encode_semantic(const VtstF32Semantic &i, uint64_t *word) { return encode_vtst_f32_semantic(i, word); }
+inline bool encode_semantic(const VtstS32Semantic &i, uint64_t *word) { return encode_vtst_s32_semantic(i, word); }
+inline bool encode_semantic(const I32Mad2Semantic &i, uint64_t *word) { return encode_i32mad2_semantic(i, word); }
 inline bool encode_semantic(const VbwSemantic &i, uint64_t *word) { return encode_vbw_semantic(i, word); }
 inline bool encode_semantic(const KillSemantic &i, uint64_t *word) { return encode_kill_semantic(i, word); }
 inline bool encode_semantic(const BranchSemantic &i, uint64_t *word) { return encode_branch_semantic(i, word); }
