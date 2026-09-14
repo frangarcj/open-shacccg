@@ -76,6 +76,19 @@ float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1,float4 c:TEXCOORD2):COLOR0 {
     return x;
 }
 """, "control", op="branch-backward")
+    for suffix, compare in (("eq", "=="), ("ne", "!="), ("lt", "<"),
+                            ("le", "<="), ("gt", ">"), ("ge", ">=")):
+        emit(root, manifest, f"fp-cmp-{suffix}-big", "sce_fp_psp2", f"""
+float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1,float4 c:TEXCOORD2):COLOR0 {{
+    float4 x;
+    if (a.x {compare} b.x) {{
+        x=a*b+c; x=x*b+c; x=x*b+c; x=x*b+c; x=x*b+c; x=x*b+c;
+    }} else {{
+        x=b*a-c; x=x*a-c; x=x*a-c; x=x*a-c; x=x*a-c; x=x*a-c;
+    }}
+    return x;
+}}
+""", "control", op=f"f32-compare-{suffix}")
     emit(root, manifest, "fp-texture2d", "sce_fp_psp2",
          "uniform sampler2D tex; float4 main(float2 uv:TEXCOORD0):COLOR0 { return tex2D(tex, uv); }", "texture")
 

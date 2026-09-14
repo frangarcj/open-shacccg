@@ -252,6 +252,22 @@ int test_machine_ir() {
         }
     }
 
+    {
+        MachineProgram program;
+        const auto predicate = program.make_predicate();
+        const auto lhs = program.physical<MachineType::F32>(usse::RegisterBank::PrimaryAttribute,0);
+        const auto rhs = program.physical<MachineType::F32>(usse::RegisterBank::PrimaryAttribute,2);
+        if (!program.emit<MachineOpcode::Compare>(static_cast<uint8_t>(usse::CompareOp::Greater),
+                                                  predicate,lhs,rhs)) {
+            failures += fail("could not construct oracle F32 compare Machine IR");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=1 ||
+                result.words[0]!=0x48088a81a0038002ULL)
+                failures += fail("machine F32 compare did not reproduce oracle VTST word");
+        }
+    }
+
     // A predicate whose last read is the guard of an instruction may be
     // overwritten by that instruction's predicate destination. This matches
     // the real !p0 CMP -> p0 form and avoids artificial predicate pressure.

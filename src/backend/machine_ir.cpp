@@ -954,21 +954,41 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 out.error = "invalid compare subop";
                 return false;
             }
-            usse::VtstSemantic compare{};
-            if (!resolve_register_value(instruction.src0, MachineType::U32, out.value_registers, &compare.lhs) ||
-                !resolve_register_value(instruction.src1, MachineType::U32, out.value_registers, &compare.rhs)) {
-                out.error = "machine compare requires register-backed U32 sources";
-                return false;
-            }
             if (instruction.dst.id() >= out.predicate_registers.size() ||
                 out.predicate_registers[instruction.dst.id()] == 0xff) {
                 out.error = "compare predicate was not allocated";
                 return false;
             }
-            compare.predicate = guard;
-            compare.op = static_cast<usse::CompareOp>(instruction.subop());
-            compare.predicate_destination = out.predicate_registers[instruction.dst.id()];
-            if (!builder.instruction(compare)) { out.error = "failed to encode machine compare"; return false; }
+            if (instruction.src0.type() != instruction.src1.type()) {
+                out.error = "machine compare source types do not match";
+                return false;
+            }
+            if (instruction.src0.type() == MachineType::U32) {
+                usse::VtstSemantic compare{};
+                if (!resolve_register_value(instruction.src0, MachineType::U32, out.value_registers, &compare.lhs) ||
+                    !resolve_register_value(instruction.src1, MachineType::U32, out.value_registers, &compare.rhs)) {
+                    out.error = "machine compare requires register-backed U32 sources";
+                    return false;
+                }
+                compare.predicate = guard;
+                compare.op = static_cast<usse::CompareOp>(instruction.subop());
+                compare.predicate_destination = out.predicate_registers[instruction.dst.id()];
+                if (!builder.instruction(compare)) { out.error = "failed to encode machine U32 compare"; return false; }
+            } else if (instruction.src0.type() == MachineType::F32) {
+                usse::VtstF32Semantic compare{};
+                if (!resolve_register_value(instruction.src0, MachineType::F32, out.value_registers, &compare.lhs) ||
+                    !resolve_register_value(instruction.src1, MachineType::F32, out.value_registers, &compare.rhs)) {
+                    out.error = "machine compare requires register-backed F32 sources";
+                    return false;
+                }
+                compare.predicate = guard;
+                compare.op = static_cast<usse::CompareOp>(instruction.subop());
+                compare.predicate_destination = out.predicate_registers[instruction.dst.id()];
+                if (!builder.instruction(compare)) { out.error = "failed to encode machine F32 compare"; return false; }
+            } else {
+                out.error = "machine compare type is outside the validated U32/F32 subset";
+                return false;
+            }
             break;
         }
         case MachineOpcode::Kill: {

@@ -96,6 +96,38 @@ std::vector<uint32_t> make_u32_if_else_spirv() {
     return m;
 }
 
+std::vector<uint32_t> make_f32_if_else_spirv() {
+    std::vector<uint32_t> m={0x07230203u,0x00010000u,0u,40u,0u};
+    spv_append(m,17,{1});             // Capability Shader
+    spv_append(m,14,{0,1});           // MemoryModel Logical GLSL450
+    spv_string(m,15,{4,20},"main",{10,11});
+    spv_append(m,16,{20,7});          // OriginUpperLeft
+    spv_append(m,71,{10,30,0});       // Location 0 -> PA0
+    spv_append(m,71,{11,30,2});       // Location 2 -> PA2, matching oracle anchors
+    spv_append(m,19,{1});             // void
+    spv_append(m,20,{2});             // bool
+    spv_append(m,22,{3,32});          // f32
+    spv_append(m,32,{4,1,3});         // ptr Input f32
+    spv_append(m,33,{5,1});           // void()
+    spv_append(m,59,{4,10,1});
+    spv_append(m,59,{4,11,1});
+    spv_append(m,54,{1,20,0,5});
+    spv_append(m,248,{21});
+    spv_append(m,61,{3,22,10});
+    spv_append(m,61,{3,23,11});
+    spv_append(m,186,{2,24,22,23});   // FOrdGreaterThan
+    spv_append(m,247,{30,0});         // SelectionMerge
+    spv_append(m,250,{24,26,27});     // BranchConditional
+    spv_append(m,248,{26});
+    spv_append(m,249,{30});            // Branch merge
+    spv_append(m,248,{27});
+    spv_append(m,249,{30});            // Branch merge
+    spv_append(m,248,{30});
+    spv_append(m,253,{});
+    spv_append(m,56,{});
+    return m;
+}
+
 std::vector<uint32_t> make_float_extinst_spirv() {
     std::vector<uint32_t> m={0x07230203u,0x00010000u,0u,40u,0u};
     spv_append(m,17,{1});                         // Capability Shader
@@ -183,6 +215,21 @@ int test_typed_ir() {
                        result.words[2]!=0xf800004000000002ULL) {
                 failures += fail("typed branch program emitted unexpected BR words");
             }
+        }
+    }
+
+    {
+        TypedProgram program;
+        const auto lhs=program.input<TypedType::F32>(0);
+        const auto rhs=program.input<TypedType::F32>(2);
+        const auto predicate=program.make_predicate();
+        if (!program.emit<TypedOpcode::Compare>(static_cast<uint8_t>(usse::CompareOp::Greater),predicate,lhs,rhs)) {
+            failures += fail("could not construct typed F32 compare");
+        } else {
+            MachineCompileResult result;
+            if (!compile_typed_program(program,result) || result.words.size()!=1 ||
+                result.words[0]!=0x48088a81a0038002ULL)
+                failures += fail("typed F32 compare did not reproduce oracle VTST word");
         }
     }
 
@@ -429,6 +476,21 @@ int test_typed_ir() {
     }
 
 #if defined(OPENSHACCG_ENABLE_SPIRV_CROSS)
+    {
+        const auto source=make_f32_if_else_spirv();
+        TypedProgram program;
+        std::string error;
+        if (!spirv_cross_to_typed_fragment(source,"main",program,error)) {
+            failures += fail("SPIRV-Cross rejected structured F32 if/else fixture");
+        } else {
+            MachineCompileResult result;
+            if (!compile_typed_program(program,result) || result.words.empty() ||
+                result.words[0]!=0x48088a81a0038002ULL) {
+                failures += fail("SPIR-V F32 compare/if did not reproduce oracle VTST anchor");
+            }
+        }
+    }
+
     {
         const auto source = make_u32_if_else_spirv();
         TypedProgram program;

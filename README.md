@@ -28,6 +28,8 @@ Implemented now:
 - SPIRV-Cross lowering for `GLSL.std.450` FAbs/FMin/FMax, validated X-splat shuffles and `OpFConvert`
 - oracle-validated USSE BR encoding with signed 20-bit forward/backward offsets,
   compact Machine/Typed label tables and structured U32 conditional/unconditional branches
+- oracle-validated F32 VTST compare profiles for `==`, `!=`, `<`, `<=`, `>` and `>=`,
+  exposed through Machine/Typed IR and the scalar control-flow SPIR-V adapter
 - all seven public libvita2d Cg shaders now pass through the Typed Vita IR path; generated GXPs are
   byte-identical to the preserved public samples except for Sony's two 32-bit GUID fields
 - frontend -> SPIR-V and SPIR-V -> Vita IR -> USSE/GXP boundaries

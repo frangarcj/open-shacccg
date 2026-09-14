@@ -333,6 +333,33 @@ int test_usse() {
     if (!encode_vtst_semantic(cmp,&cmp_word) || cmp_word!=0x4d880181b007c006ULL)
         failures += fail("predicated semantic VTST mismatch");
 
+    const uint64_t f32_cmp_words[] = {
+        0x48088181a0038002ULL, // ==
+        0x48088281a0038002ULL, // !=
+        0x48088681a0038002ULL, // <
+        0x48088501a0038002ULL, // <=
+        0x48088a81a0038002ULL, // >
+        0x48088901a0038002ULL, // >=
+    };
+    const CompareOp f32_cmp_ops[] = {
+        CompareOp::Equal, CompareOp::NotEqual, CompareOp::Less,
+        CompareOp::LessEqual, CompareOp::Greater, CompareOp::GreaterEqual,
+    };
+    for (size_t i=0;i<6;i++) {
+        VtstF32Semantic fcmp{};
+        fcmp.lhs={RegisterBank::PrimaryAttribute,0};
+        fcmp.rhs={RegisterBank::PrimaryAttribute,2};
+        fcmp.op=f32_cmp_ops[i];
+        uint64_t word=0;
+        if (!encode_vtst_f32_semantic(fcmp,&word) || word!=f32_cmp_words[i])
+            failures += fail("oracle F32 VTST semantic encode mismatch");
+        VtstF32Semantic decoded{};
+        if (!decode_vtst_f32_semantic(f32_cmp_words[i],&decoded) || decoded.op!=f32_cmp_ops[i] ||
+            decoded.lhs.bank!=RegisterBank::PrimaryAttribute || decoded.lhs.num!=0 ||
+            decoded.rhs.bank!=RegisterBank::PrimaryAttribute || decoded.rhs.num!=2)
+            failures += fail("oracle F32 VTST semantic decode mismatch");
+    }
+
     // Semantic VBW: the real shader trace uses OR with an immediate zero as a
     // scalar U32 copy. Keep the immediate encoding generic but fail if a U32
     // constant cannot be represented by the USSE rotated-16-bit form.

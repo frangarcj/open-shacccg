@@ -196,13 +196,21 @@ itself. Raw/semantic USSE codecs and compact Machine IR labels now reproduce
 these words exactly. Typed IR also owns label side tables plus conditional and
 unconditional jumps, and the SPIRV-Cross U32 control-flow adapter lowers a
 structured `SelectionMerge`/`BranchConditional` graph through those labels.
-P1/!P1 BR forms, float VTST predicates, phi values and general loops remain
-fail-closed until their oracle evidence/lowering rules are added.
+P1/!P1 BR forms, phi values and general loops remain fail-closed until their
+oracle evidence/lowering rules are added.
+
+The same oracle corpus now carries six large F32 compare cases. They establish
+the VTST floating subtract/test profile for `==`, `!=`, `<`, `<=`, `>` and `>=`.
+All six share `precision=F32`, ALU select 0/op 14 and differ only in the
+sign/zero/CR-combine tests. Semantic USSE, Machine IR and Typed IR reproduce the
+oracle words exactly; the SPIRV-Cross scalar-F32 control adapter maps the ordered
+SPIR-V comparisons onto this profile. Phi/merge value transport is still the
+remaining blocker for arbitrary value-producing Cg `if/else` shaders.
 
 ## Next backend order
 
 1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, keeping the single Typed -> Machine lowering path fail-closed.
-2. **Complete structured control flow.** BR forward/backward offsets are now oracle-validated. Add float VTST predicate forms and phi/merge lowering, then generalize loops beyond the current label/branch substrate.
+2. **Complete structured control flow.** BR forward/backward offsets and the six F32 VTST compare forms are oracle-validated. Add phi/merge value lowering, then generalize loops beyond the current label/branch substrate.
 3. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
 4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
 5. **Common missing ALU families.** Prioritize VCOMP, VMAD2 and VDUAL based on real traces, then remaining instruction families by corpus frequency.

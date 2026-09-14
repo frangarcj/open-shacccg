@@ -143,6 +143,18 @@ struct VtstSemantic {
     bool skip_invalid = true;
 };
 
+// Oracle-validated F32 compare profile. This uses the VTST floating subtract
+// ALU rather than the scalar-U32 test profile above.
+struct VtstF32Semantic {
+    RegisterRef lhs{};
+    RegisterRef rhs{};
+    Predicate predicate = Predicate::Always;
+    CompareOp op = CompareOp::Equal;
+    uint8_t predicate_destination = 0;
+    uint8_t component = 0;
+    bool skip_invalid = false;
+};
+
 enum class BitwiseOp : uint8_t {
     And,
     Or,
@@ -415,6 +427,8 @@ bool encode_vmad_semantic(const VmadSemantic &instruction, uint64_t *word);
 bool decode_vmad_semantic(uint64_t word, VmadSemantic *instruction);
 bool encode_vtst_semantic(const VtstSemantic &instruction, uint64_t *word);
 bool decode_vtst_semantic(uint64_t word, VtstSemantic *instruction);
+bool encode_vtst_f32_semantic(const VtstF32Semantic &instruction, uint64_t *word);
+bool decode_vtst_f32_semantic(uint64_t word, VtstF32Semantic *instruction);
 bool encode_vbw_semantic(const VbwSemantic &instruction, uint64_t *word);
 bool decode_vbw_semantic(uint64_t word, VbwSemantic *instruction);
 bool encode_kill_semantic(const KillSemantic &instruction, uint64_t *word);
@@ -427,6 +441,7 @@ inline bool encode_semantic(const VpckSemantic &i, uint64_t *word) { return enco
 inline bool encode_semantic(const V32NmadSemantic &i, uint64_t *word) { return encode_v32nmad_semantic(i, word); }
 inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return encode_vmad_semantic(i, word); }
 inline bool encode_semantic(const VtstSemantic &i, uint64_t *word) { return encode_vtst_semantic(i, word); }
+inline bool encode_semantic(const VtstF32Semantic &i, uint64_t *word) { return encode_vtst_f32_semantic(i, word); }
 inline bool encode_semantic(const VbwSemantic &i, uint64_t *word) { return encode_vbw_semantic(i, word); }
 inline bool encode_semantic(const KillSemantic &i, uint64_t *word) { return encode_kill_semantic(i, word); }
 inline bool encode_semantic(const BranchSemantic &i, uint64_t *word) { return encode_branch_semantic(i, word); }

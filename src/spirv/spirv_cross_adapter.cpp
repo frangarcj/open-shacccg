@@ -22,6 +22,12 @@ bool is_scalar_u32(const spirv_cross::Compiler &compiler, uint32_t type_id) {
         type.vecsize == 1 && type.columns == 1 && type.array.empty();
 }
 
+bool is_scalar_f32(const spirv_cross::Compiler &compiler, uint32_t type_id) {
+    const auto &type = compiler.get_type(type_id);
+    return type.basetype == spirv_cross::SPIRType::Float && type.width == 32 &&
+        type.vecsize == 1 && type.columns == 1 && type.array.empty();
+}
+
 backend::TypedType typed_type(const spirv_cross::SPIRType &type) {
     if (!type.array.empty() || type.columns != 1) return backend::TypedType::Invalid;
     auto vector_type = [&](backend::TypedType scalar, backend::TypedType v2,
@@ -119,6 +125,18 @@ bool map_compare(uint16_t op, usse::CompareOp &mapped) {
     case spv::OpULessThanEqual: mapped = usse::CompareOp::LessEqual; return true;
     case spv::OpUGreaterThan: mapped = usse::CompareOp::Greater; return true;
     case spv::OpUGreaterThanEqual: mapped = usse::CompareOp::GreaterEqual; return true;
+    default: return false;
+    }
+}
+
+bool map_float_compare(uint16_t op, usse::CompareOp &mapped) {
+    switch (static_cast<spv::Op>(op)) {
+    case spv::OpFOrdEqual: mapped = usse::CompareOp::Equal; return true;
+    case spv::OpFOrdNotEqual: mapped = usse::CompareOp::NotEqual; return true;
+    case spv::OpFOrdLessThan: mapped = usse::CompareOp::Less; return true;
+    case spv::OpFOrdLessThanEqual: mapped = usse::CompareOp::LessEqual; return true;
+    case spv::OpFOrdGreaterThan: mapped = usse::CompareOp::Greater; return true;
+    case spv::OpFOrdGreaterThanEqual: mapped = usse::CompareOp::GreaterEqual; return true;
     default: return false;
     }
 }
@@ -579,12 +597,13 @@ bool spirv_cross_to_typed_fragment(const std::vector<uint32_t> &words,
 
         std::unordered_map<uint32_t, backend::TypedValue> values;
         for (const auto &resource : resources.stage_inputs) {
-            if (!is_scalar_u32(compiler, resource.type_id) ||
-                !compiler.has_decoration(resource.id, spv::DecorationLocation))
+            if (!compiler.has_decoration(resource.id, spv::DecorationLocation))
                 continue;
+            const auto type = typed_type(compiler.get_type(resource.type_id));
+            if (type != backend::TypedType::U32 && type != backend::TypedType::F32) continue;
             const uint32_t location = compiler.get_decoration(resource.id, spv::DecorationLocation);
             if (location >= 128) { error = "stage input location exceeds current Typed IR register subset"; return false; }
-            const auto value = typed.input<backend::TypedType::U32>(static_cast<uint16_t>(location));
+            const auto value = typed.input(type, static_cast<uint16_t>(location));
             if (value.kind() == backend::TypedValueKind::None) { error = "failed to create Typed IR input"; return false; }
             values[resource.id] = value;
         }
@@ -663,8 +682,9 @@ bool spirv_cross_to_typed_fragment(const std::vector<uint32_t> &words,
                 }
             } else if (op == spv::OpLoad && count >= 4) {
                 backend::TypedValue source{};
-                if (!is_scalar_u32(compiler, args[0]) || !lookup(values, args[2], source)) {
-                    error = "Typed IR adapter supports only direct scalar U32 resource loads";
+                if ((!is_scalar_u32(compiler,args[0]) && !is_scalar_f32(compiler,args[0])) ||
+                    !lookup(values, args[2], source)) {
+                    error = "Typed IR adapter supports only direct scalar U32/F32 resource loads";
                     return false;
                 }
                 values[args[1]] = source;
@@ -692,6 +712,18 @@ bool spirv_cross_to_typed_fragment(const std::vector<uint32_t> &words,
                         error = "failed to emit Typed IR compare"; return false;
                     }
                     values[args[1]] = dst;
+                } else if (map_float_compare(op, compare)) {
+                    if (count != 5) { error = "invalid F32 compare instruction"; return false; }
+                    backend::TypedValue lhs{}, rhs{};
+                    if (!lookup(values,args[2],lhs) || !lookup(values,args[3],rhs) ||
+                        lhs.type()!=backend::TypedType::F32 || rhs.type()!=backend::TypedType::F32) {
+                        error = "unresolved F32 compare operand"; return false;
+                    }
+                    const auto dst=typed.make_predicate();
+                    if (!typed.emit<backend::TypedOpcode::Compare>(static_cast<uint8_t>(compare),dst,lhs,rhs)) {
+                        error = "failed to emit Typed IR F32 compare"; return false;
+                    }
+                    values[args[1]]=dst;
                 } else if (op == spv::OpBranchConditional) {
                     if (count != 4) { error = "invalid conditional branch"; return false; }
                     backend::TypedValue predicate{};

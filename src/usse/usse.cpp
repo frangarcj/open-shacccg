@@ -416,6 +416,66 @@ bool decode_vtst_semantic(uint64_t word, VtstSemantic *i) {
 }
 
 namespace {
+bool encode_f32_compare_test(CompareOp op, uint8_t *zero_test, uint8_t *sign_test,
+                             bool *crcomb_and) {
+    if (!zero_test || !sign_test || !crcomb_and) return false;
+    if (!encode_compare_test(op, zero_test, sign_test)) return false;
+    *crcomb_and = op != CompareOp::LessEqual && op != CompareOp::GreaterEqual;
+    return true;
+}
+
+bool decode_f32_compare_test(uint8_t zero_test, uint8_t sign_test, bool crcomb_and,
+                             CompareOp *op) {
+    if (!decode_compare_test(zero_test, sign_test, op)) return false;
+    const bool expected = *op != CompareOp::LessEqual && *op != CompareOp::GreaterEqual;
+    return crcomb_and == expected;
+}
+} // namespace
+
+bool encode_vtst_f32_semantic(const VtstF32Semantic &i, uint64_t *word) {
+    if (!word || i.lhs.num>=128 || i.rhs.num>=128 || i.predicate_destination>=4 || i.component>=4)
+        return false;
+    VtstFields f{};
+    if (!encode_src1_bank(i.lhs.bank,&f.src1_bank,&f.src1_ext) ||
+        !encode_src1_bank(i.rhs.bank,&f.src2_bank,&f.src2_ext)) return false;
+    f.pred=static_cast<uint8_t>(i.predicate);
+    f.skip_invalid=i.skip_invalid;
+    f.dest_ext=true;
+    f.precision=true;
+    if (!encode_f32_compare_test(i.op,&f.zero_test,&f.sign_test,&f.test_crcomb_and)) return false;
+    f.channel=i.component;
+    f.predicate_destination=i.predicate_destination;
+    f.dest_bank=1;
+    f.dest_num=0;
+    f.test_write_enable=false;
+    f.alu_select=0;
+    f.alu_op=14;
+    f.src1_num=i.lhs.num;
+    f.src2_num=i.rhs.num;
+    return encode_vtst(f,word);
+}
+
+bool decode_vtst_f32_semantic(uint64_t word, VtstF32Semantic *i) {
+    if (!i) return false;
+    VtstFields f{};
+    if (!decode_vtst(word,&f)) return false;
+    if (!f.dest_ext || f.dest_bank!=1 || f.dest_num!=0 || f.test_write_enable ||
+        f.alu_select!=0 || f.alu_op!=14 || !f.precision || f.src1_negative ||
+        f.src2_vector_scalar_component || f.repeat_count!=0 || f.once_only || f.sync_start ||
+        f.channel>=4) return false;
+    if (!decode_src1_bank(f.src1_bank,f.src1_ext,&i->lhs.bank) ||
+        !decode_src1_bank(f.src2_bank,f.src2_ext,&i->rhs.bank) ||
+        !decode_f32_compare_test(f.zero_test,f.sign_test,f.test_crcomb_and,&i->op)) return false;
+    i->lhs.num=f.src1_num;
+    i->rhs.num=f.src2_num;
+    i->predicate=static_cast<Predicate>(f.pred);
+    i->predicate_destination=f.predicate_destination;
+    i->component=f.channel;
+    i->skip_invalid=f.skip_invalid;
+    return true;
+}
+
+namespace {
 uint32_t rotate_left32(uint32_t value, uint8_t amount) {
     amount &= 31;
     return amount ? static_cast<uint32_t>((value<<amount)|(value>>(32-amount))) : value;

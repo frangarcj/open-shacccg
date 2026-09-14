@@ -666,6 +666,48 @@
     "op": "branch-backward"
   },
   {
+    "name": "fp-cmp-eq-big",
+    "file": "fp-cmp-eq-big.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "control",
+    "op": "f32-compare-eq"
+  },
+  {
+    "name": "fp-cmp-ne-big",
+    "file": "fp-cmp-ne-big.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "control",
+    "op": "f32-compare-ne"
+  },
+  {
+    "name": "fp-cmp-lt-big",
+    "file": "fp-cmp-lt-big.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "control",
+    "op": "f32-compare-lt"
+  },
+  {
+    "name": "fp-cmp-le-big",
+    "file": "fp-cmp-le-big.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "control",
+    "op": "f32-compare-le"
+  },
+  {
+    "name": "fp-cmp-gt-big",
+    "file": "fp-cmp-gt-big.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "control",
+    "op": "f32-compare-gt"
+  },
+  {
+    "name": "fp-cmp-ge-big",
+    "file": "fp-cmp-ge-big.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "control",
+    "op": "f32-compare-ge"
+  },
+  {
     "name": "fp-texture2d",
     "file": "fp-texture2d.cg",
     "profile": "sce_fp_psp2",

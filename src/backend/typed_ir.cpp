@@ -510,9 +510,11 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             break;
         }
         case TypedOpcode::Compare: {
-            if (instruction.src0.type() != TypedType::U32 || instruction.src1.type() != TypedType::U32 ||
+            const bool u32 = instruction.src0.type() == TypedType::U32 && instruction.src1.type() == TypedType::U32;
+            const bool f32 = instruction.src0.type() == TypedType::F32 && instruction.src1.type() == TypedType::F32;
+            if ((!u32 && !f32) ||
                 instruction.subop() > static_cast<uint8_t>(usse::CompareOp::GreaterEqual)) {
-                error = "typed compare currently requires U32 operands"; return false;
+                error = "typed compare currently requires matching U32 or F32 scalar operands"; return false;
             }
             const auto dst = machine.make_predicate();
             const auto src0 = lower_value(typed, instruction.src0, values, literals, machine);
