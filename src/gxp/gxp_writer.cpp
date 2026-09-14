@@ -11,6 +11,7 @@ constexpr uint32_t kFragmentFlag = 1u;
 constexpr size_t kFixedPrefixSize = 0x98;
 constexpr size_t kInterfaceSize = 32;
 constexpr size_t kContainerSize = 8;
+constexpr size_t kLiteralSize = 8;
 
 constexpr size_t kOffMagic = 0x00;
 constexpr size_t kOffMajor = 0x04;
@@ -103,10 +104,13 @@ bool valid_desc(const ProgramImage &image) {
         return false;
     if (image.parameter_count && !image.parameters)
         return false;
+    if (image.literal_count && !image.literals)
+        return false;
     if (image.primary_instruction_count > std::numeric_limits<uint32_t>::max() ||
         image.secondary_instruction_count > std::numeric_limits<uint32_t>::max() ||
         image.container_count > std::numeric_limits<uint32_t>::max() ||
-        image.parameter_count > std::numeric_limits<uint32_t>::max())
+        image.parameter_count > std::numeric_limits<uint32_t>::max() ||
+        image.literal_count > std::numeric_limits<uint32_t>::max())
         return false;
     for (size_t i = 0; i < image.parameter_count; ++i) {
         if (!image.parameters[i].name) return false;
@@ -122,6 +126,7 @@ struct Layout {
     size_t secondary_off = 0;
     size_t secondary_end = 0;
     size_t primary_off = 0;
+    size_t literals_off = 0;
     size_t aux_off = 0;
     size_t containers_off = 0;
     size_t parameters_off = 0;
@@ -166,6 +171,9 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
     l.primary_off = cursor;
     if (!mul_size(image.primary_instruction_count, sizeof(uint64_t), bytes) || !add_size(cursor, bytes)) return false;
     cursor = align_up(cursor, 4); if (!cursor) return false;
+
+    l.literals_off = cursor;
+    if (!mul_size(image.literal_count, kLiteralSize, bytes) || !add_size(cursor, bytes)) return false;
     l.aux_off = cursor;
 
     l.containers_off = cursor;
@@ -227,11 +235,12 @@ bool write_program(const ProgramImage &image, uint8_t *output, size_t capacity,
 
     if (!put_rel32(output, kOffLiteralData, l.aux_off)) return false;
 
-    // Auxiliary tables are intentionally unsupported in this first canonical
-    // writer. Zero counts still receive in-range offsets, matching the robust
-    // pattern used by known-good binaries.
-    binary::store<uint32_t>(output, kOffLiteralsCount, 0);
-    if (!put_rel32(output, kOffLiterals, l.aux_off)) return false;
+    // Literal entries are the first validated auxiliary table. `literalData`
+    // points immediately after that table in Sony's v1.4 images; when the
+    // table is empty both relative pointers naturally collapse to aux_off,
+    // preserving all existing byte-identical public regressions.
+    binary::store<uint32_t>(output, kOffLiteralsCount, static_cast<uint32_t>(image.literal_count));
+    if (!put_rel32(output, kOffLiterals, l.literals_off)) return false;
     binary::store<uint32_t>(output, kOffUniformBufferCount, 0);
     if (!put_rel32(output, kOffUniformBuffers, l.parameters_off)) return false;
     binary::store<uint32_t>(output, kOffDependentSamplerCount, 0);
@@ -251,6 +260,13 @@ bool write_program(const ProgramImage &image, uint8_t *output, size_t capacity,
     if (image.primary_instruction_count)
         std::memcpy(output + l.primary_off, image.primary_instructions,
                     image.primary_instruction_count * sizeof(uint64_t));
+
+    for (size_t i = 0; i < image.literal_count; ++i) {
+        const auto &literal = image.literals[i];
+        const size_t off = l.literals_off + i * kLiteralSize;
+        binary::store<uint32_t>(output, off, literal.resource_index);
+        binary::store<uint32_t>(output, off + 4, literal.value_bits);
+    }
 
     for (size_t i = 0; i < image.container_count; ++i) {
         const auto &c = image.containers[i];

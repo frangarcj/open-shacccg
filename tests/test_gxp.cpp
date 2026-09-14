@@ -229,6 +229,39 @@ int test_gxp_writer() {
         std::memcmp(secondary_range.data, secondary, sizeof(secondary)) != 0)
         failures += fail("canonical GXP writer secondary code did not round-trip");
 
+    // Oracle-derived literal tables are an array of 8-byte
+    // {resource_index,value_bits} entries placed between primary code and the
+    // container table. The literal-data anchor points immediately after them.
+    {
+        const LiteralDesc literals[] = {{0,0},{1,1}};
+        ProgramImage literal_image=image;
+        literal_image.literals=literals;
+        literal_image.literal_count=2;
+        const size_t literal_need=required_size(literal_image);
+        std::vector<uint8_t> literal_bytes(literal_need);
+        if (!literal_need || !write_program(literal_image,literal_bytes.data(),literal_bytes.size())) {
+            failures += fail("canonical GXP writer rejected oracle literal table");
+        } else {
+            auto get_u32=[&](size_t off) {
+                uint32_t value=0;
+                std::memcpy(&value,literal_bytes.data()+off,sizeof(value));
+                return value;
+            };
+            const size_t literals_off=0x74u+get_u32(0x74);
+            const size_t literal_data_off=0x68u+get_u32(0x68);
+            const size_t containers_off=0x94u+get_u32(0x94);
+            if (get_u32(0x70)!=2 || literal_data_off!=literals_off+2*sizeof(LiteralDesc) ||
+                containers_off!=literal_data_off)
+                failures += fail("oracle literal table pointers/count were serialized incorrectly");
+            if (literals_off+2*sizeof(LiteralDesc)>literal_bytes.size() ||
+                std::memcmp(literal_bytes.data()+literals_off,literals,sizeof(literals))!=0)
+                failures += fail("oracle literal table entry layout mismatch");
+            ProgramView literal_view(literal_bytes.data(),literal_bytes.size());
+            if (!literal_view.valid() || literal_view.literal_count()!=2)
+                failures += fail("GXP reader did not observe serialized literals");
+        }
+    }
+
 
     // Full independent texture_v reconstruction. Every operand-bearing USSE
     // instruction is assembled from semantic operands, then serialized from

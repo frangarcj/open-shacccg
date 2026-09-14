@@ -26,6 +26,16 @@ struct ParameterContainerDesc {
     uint16_t size_in_f32 = 0;
 };
 
+// Observed v1.4 literal-table entry. `resource_index` selects the scalar
+// secondary-attribute slot within container 19 and `value_bits` is the raw
+// 32-bit payload consumed by USSE. The oracle anchors both integer 0/1 and
+// packed floating-point constants to this exact 8-byte layout.
+struct LiteralDesc {
+    uint32_t resource_index = 0;
+    uint32_t value_bits = 0;
+};
+static_assert(sizeof(LiteralDesc) == 8, "GXP literal entries must stay 8 bytes");
+
 // Minimal, canonical GXP serializer input.  It covers the pieces needed by the
 // first backend milestones (interface block, code, uniform/sampler reflection
 // and parameter containers). More exotic auxiliary tables are intentionally
@@ -74,6 +84,8 @@ struct ProgramImage {
     size_t container_count = 0;
     const ParameterDesc *parameters = nullptr;
     size_t parameter_count = 0;
+    const LiteralDesc *literals = nullptr;
+    size_t literal_count = 0;
 };
 
 struct WriteResult {
