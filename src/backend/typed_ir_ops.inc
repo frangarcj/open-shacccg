@@ -1,0 +1,5 @@
+VSC_TYPED_OP(Input,   "input",   ValueDef,     None,         None)
+VSC_TYPED_OP(Uniform, "uniform", ValueDef,     None,         None)
+VSC_TYPED_OP(Bitwise, "bitwise", ValueDef,     ValueUse,     ValueUse)
+VSC_TYPED_OP(Compare, "compare", PredicateDef, ValueUse,     ValueUse)
+VSC_TYPED_OP(Discard, "discard", None,         PredicateUse, None)

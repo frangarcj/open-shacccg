@@ -252,6 +252,14 @@ runtime representation. GXP serialization similarly uses reusable member-field
 descriptors for scalar, array and packed-nibble wire fields; relative offsets
 and the few layout rules that cannot be derived stay explicit.
 
+A compact typed Vita IR now sits above Machine IR with the same storage model:
+4-byte typed handles, 16-byte instructions and one `typed_ir_ops.inc` opcode/
+operand-role list. The first generic lowering covers U32 input/uniform values,
+VBW bitwise operations, comparisons and discard. It allocates TEMP values and
+predicate registers from lifetimes instead of exposing physical registers in
+the typed IR. A `U32 OR -> compare -> discard` regression exercises the full
+Typed IR -> Machine IR -> semantic USSE path and verifies TEMP reuse.
+
 As a full-path regression, `texture_v.gxp` from the MIT-licensed libvita2d
 corpus is reconstructed from structured GXP metadata plus semantic USSE
 operands. The generated image is byte-for-byte identical to the public sample,

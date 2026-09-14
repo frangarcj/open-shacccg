@@ -112,6 +112,7 @@ private:
 struct MachineCompileResult {
     std::vector<uint64_t> words;
     std::vector<uint8_t> predicate_registers;
+    std::vector<usse::RegisterRef> value_registers;
     std::string error;
 };
 

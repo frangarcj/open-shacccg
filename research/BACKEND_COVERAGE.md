@@ -78,6 +78,8 @@ compile-time descriptors instead of external code generation.
   supported families; no Python generator or generated `.inc` is required.
 - `src/backend/machine_ops.inc` is the sole Machine IR opcode/role list and is
   included to generate both enum values and runtime descriptors.
+- `src/backend/typed_ir_ops.inc` applies the same pattern to typed Vita IR;
+  typed values are 4-byte handles and instructions are 16 bytes.
 - Machine operands stay 4 bytes and instructions stay 16 bytes; typed template
   factories improve construction without changing storage.
 - `ProgramBuilder::instruction<T>()` dispatches semantic encoders by type, so
@@ -92,15 +94,14 @@ compact ISA decoders without importing Vita3K's GPL implementation.
 
 ## Next backend order
 
-1. **Typed Vita IR.** Replace the float4-only assumption in the generic fragment DAG with explicit scalar/vector types. Add U32 values and integer leaves without exposing physical USSE registers to the frontend, then lower them into the compact Machine IR.
-2. **Virtual value allocation.** Extend the descriptor-driven Machine IR allocator from predicates to typed value lifetimes/banks, keeping physical register choices out of Vita IR.
-3. **Predicate values and control statements.** Route Vita IR compares and `discard` through the now-tested Machine IR VTST/KILL path instead of emitting semantic USSE directly.
-4. **BR control flow.** Add raw and semantic BR only once branch offset/direction semantics are anchored by real words. Then lower structured `if/else`; loops come after branch back-edges are independently validated.
-5. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
-6. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
-7. **Common missing ALU families.** Prioritize VCOMP, VMAD2 and VDUAL based on real traces, then remaining instruction families by corpus frequency.
-8. **Resource/reflection generalization.** Derive register counts, parameter types, containers, uniform buffers, literals and dependent samplers from IR instead of current sample-shaped layouts.
-9. **Hardware gate.** Treat a capability as complete only after host regressions plus real-Vita `sceGxmProgramCheck`/render validation where possible.
+1. **Broaden typed Vita IR.** The compact typed layer now covers U32 resources, bitwise, compare and discard. Add F32/F16/vector arithmetic and conversions without reintroducing node classes.
+2. **Bank-aware value allocation.** U32 virtual values now receive TEMP registers from lifetimes. Extend the same allocator with per-op bank/width constraints for F32/F16 vectors, PA/SA/OUTPUT and GPI staging.
+3. **BR control flow.** Add raw and semantic BR only once branch offset/direction semantics are anchored by real words. Then lower structured `if/else`; loops come after branch back-edges are independently validated.
+4. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
+5. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
+6. **Common missing ALU families.** Prioritize VCOMP, VMAD2 and VDUAL based on real traces, then remaining instruction families by corpus frequency.
+7. **Resource/reflection generalization.** Derive register counts, parameter types, containers, uniform buffers, literals and dependent samplers from IR instead of current sample-shaped layouts.
+8. **Hardware gate.** Treat a capability as complete only after host regressions plus real-Vita `sceGxmProgramCheck`/render validation where possible.
 
 ## Definition of progress
 

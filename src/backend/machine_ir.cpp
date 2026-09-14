@@ -91,6 +91,49 @@ struct PredicateInterval {
     uint8_t allowed = 0x0f;
 };
 
+struct ValueInterval {
+    bool defined = false;
+    uint32_t start = 0;
+    uint32_t end = 0;
+    MachineType type = MachineType::Invalid;
+};
+
+template <size_t RegisterCount, typename Interval, typename Allowed>
+bool allocate_intervals(const std::vector<Interval> &intervals,
+                        const std::array<bool, RegisterCount> &reserved,
+                        Allowed allowed,
+                        std::vector<uint8_t> &assignment) {
+    assignment.assign(intervals.size(), 0xff);
+    std::vector<uint32_t> order;
+    for (uint32_t id = 0; id < intervals.size(); ++id)
+        if (intervals[id].defined) order.push_back(id);
+    std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
+        return intervals[a].start < intervals[b].start;
+    });
+
+    for (uint32_t id : order) {
+        const auto &current = intervals[id];
+        for (uint16_t reg = 0; reg < RegisterCount; ++reg) {
+            if (reserved[reg] || !allowed(current, static_cast<uint8_t>(reg))) continue;
+            bool busy = false;
+            for (uint32_t other : order) {
+                if (other == id || assignment[other] != reg) continue;
+                const auto &prior = intervals[other];
+                if (prior.start < current.end && current.start < prior.end) {
+                    busy = true;
+                    break;
+                }
+            }
+            if (!busy) {
+                assignment[id] = static_cast<uint8_t>(reg);
+                break;
+            }
+        }
+        if (assignment[id] == 0xff) return false;
+    }
+    return true;
+}
+
 bool resolve_predicate(const MachineInstruction &instruction, const MachineOperand &operand,
                        const std::vector<uint8_t> &assignment, usse::Predicate *predicate) {
     if (operand.kind() == MachineOperandKind::PhysicalPredicate)
@@ -115,11 +158,17 @@ bool resolve_guard(const MachineInstruction &instruction, const std::vector<uint
     return physical != 0xff && predicate_from_physical(physical, instruction.guard_inverted(), predicate);
 }
 
-bool resolve_physical_value(const MachineOperand &operand, MachineType expected,
+bool resolve_register_value(const MachineOperand &operand, MachineType expected,
+                            const std::vector<usse::RegisterRef> &assignment,
                             usse::RegisterRef *reg) {
-    if (!reg || operand.kind() != MachineOperandKind::PhysicalValue || operand.type() != expected)
+    if (!reg || operand.type() != expected) return false;
+    if (operand.kind() == MachineOperandKind::PhysicalValue) {
+        *reg = operand.physical_register();
+        return reg->bank != usse::RegisterBank::Invalid;
+    }
+    if (operand.kind() != MachineOperandKind::VirtualValue || operand.id() >= assignment.size())
         return false;
-    *reg = operand.physical_register();
+    *reg = assignment[operand.id()];
     return reg->bank != usse::RegisterBank::Invalid;
 }
 
@@ -213,7 +262,9 @@ bool MachineProgram::append(MachineOpcode opcode, uint8_t subop, MachineOperand 
 
 bool compile_machine_program(const MachineProgram &program, MachineCompileResult &out) {
     out = {};
-    std::vector<PredicateInterval> intervals(program.predicate_count());
+    std::vector<PredicateInterval> predicate_intervals(program.predicate_count());
+    std::vector<ValueInterval> value_intervals(program.value_count());
+    std::array<bool, 128> reserved_temps{};
 
     for (uint32_t index = 0; index < program.instructions().size(); ++index) {
         const auto &instruction = program.instructions()[index];
@@ -230,17 +281,57 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 }
                 continue;
             }
-            if ((role == OperandRole::ValueUse || role == OperandRole::ValueDef) && !is_value_operand(operand)) {
-                out.error = std::string(desc->name) + " requires a value operand";
-                return false;
-            }
-            if (role == OperandRole::PredicateDef) {
+            if (role == OperandRole::ValueDef) {
+                if (operand.kind() != MachineOperandKind::VirtualValue ||
+                    operand.type() == MachineType::Invalid || operand.id() >= value_intervals.size()) {
+                    out.error = std::string(desc->name) + " requires a virtual value destination";
+                    return false;
+                }
+                auto &interval = value_intervals[operand.id()];
+                if (interval.defined) { out.error = "virtual value defined twice"; return false; }
+                interval.defined = true;
+                interval.type = operand.type();
+                interval.start = 2 * index + 1;
+                interval.end = interval.start + 1;
+            } else if (role == OperandRole::ValueUse) {
+                if (!is_value_operand(operand)) {
+                    out.error = std::string(desc->name) + " requires a value operand";
+                    return false;
+                }
+                if (operand.kind() == MachineOperandKind::VirtualValue) {
+                    if (operand.id() >= value_intervals.size() || !value_intervals[operand.id()].defined) {
+                        out.error = "virtual value used before definition";
+                        return false;
+                    }
+                    auto &interval = value_intervals[operand.id()];
+                    if (interval.type != operand.type()) { out.error = "virtual value type mismatch"; return false; }
+                    interval.end = std::max(interval.end, 2 * index + 1);
+                } else if (operand.kind() == MachineOperandKind::PhysicalValue) {
+                    const auto reg = operand.physical_register();
+                    if (reg.bank == usse::RegisterBank::Invalid) {
+                        out.error = "invalid physical value register";
+                        return false;
+                    }
+                    if (reg.bank == usse::RegisterBank::Temp) {
+                        if (reg.num >= reserved_temps.size()) {
+                            out.error = "physical TEMP register exceeds current machine subset";
+                            return false;
+                        }
+                        reserved_temps[reg.num] = true;
+                    }
+                } else if (operand.kind() == MachineOperandKind::Literal) {
+                    if (operand.id() >= program.literals().size()) {
+                        out.error = "literal operand is out of range";
+                        return false;
+                    }
+                }
+            } else if (role == OperandRole::PredicateDef) {
                 if (operand.kind() != MachineOperandKind::VirtualPredicate || operand.inverted() ||
-                    operand.id() >= intervals.size()) {
+                    operand.id() >= predicate_intervals.size()) {
                     out.error = std::string(desc->name) + " requires a virtual predicate destination";
                     return false;
                 }
-                auto &interval = intervals[operand.id()];
+                auto &interval = predicate_intervals[operand.id()];
                 if (interval.defined) { out.error = "virtual predicate defined twice"; return false; }
                 interval.defined = true;
                 // Uses happen before defs inside one instruction. Encoding the
@@ -260,11 +351,11 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                         return false;
                     }
                 } else {
-                    if (operand.id() >= intervals.size() || !intervals[operand.id()].defined) {
+                    if (operand.id() >= predicate_intervals.size() || !predicate_intervals[operand.id()].defined) {
                         out.error = "virtual predicate used before definition";
                         return false;
                     }
-                    auto &interval = intervals[operand.id()];
+                    auto &interval = predicate_intervals[operand.id()];
                     interval.end = std::max(interval.end, 2 * index + 1);
                     interval.allowed &= allowed;
                 }
@@ -279,42 +370,38 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                     return false;
                 }
             } else {
-                if (instruction.guard_id() >= intervals.size() || !intervals[instruction.guard_id()].defined) {
+                if (instruction.guard_id() >= predicate_intervals.size() || !predicate_intervals[instruction.guard_id()].defined) {
                     out.error = "guard predicate used before definition";
                     return false;
                 }
-                auto &interval = intervals[instruction.guard_id()];
+                auto &interval = predicate_intervals[instruction.guard_id()];
                 interval.end = std::max(interval.end, 2 * index + 1);
                 interval.allowed &= allowed;
             }
         }
     }
 
-    out.predicate_registers.assign(program.predicate_count(), 0xff);
-    std::vector<uint32_t> order;
-    for (uint32_t id = 0; id < intervals.size(); ++id)
-        if (intervals[id].defined) order.push_back(id);
-    std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
-        return intervals[a].start < intervals[b].start;
-    });
+    std::array<bool, 4> no_reserved_predicates{};
+    if (!allocate_intervals<4>(predicate_intervals, no_reserved_predicates,
+                               [](const PredicateInterval &interval, uint8_t reg) {
+                                   return (interval.allowed & (1u << reg)) != 0;
+                               }, out.predicate_registers)) {
+        out.error = "predicate register pressure exceeds encodable hardware set";
+        return false;
+    }
 
-    for (uint32_t id : order) {
-        const auto &current = intervals[id];
-        uint8_t used = 0;
-        for (uint32_t other : order) {
-            if (other == id || out.predicate_registers[other] == 0xff) continue;
-            const auto &prior = intervals[other];
-            if (prior.start < current.end && current.start < prior.end)
-                used |= static_cast<uint8_t>(1u << out.predicate_registers[other]);
-        }
-        const uint8_t available = static_cast<uint8_t>(current.allowed & ~used & 0x0f);
-        if (!available) { out.error = "predicate register pressure exceeds encodable hardware set"; return false; }
-        for (uint8_t reg = 0; reg < 4; ++reg) {
-            if (available & (1u << reg)) {
-                out.predicate_registers[id] = reg;
-                break;
-            }
-        }
+    std::vector<uint8_t> value_numbers;
+    if (!allocate_intervals<128>(value_intervals, reserved_temps,
+                                 [](const ValueInterval &interval, uint8_t) {
+                                     return interval.type == MachineType::U32;
+                                 }, value_numbers)) {
+        out.error = "temporary register pressure exceeds current U32 machine subset";
+        return false;
+    }
+    out.value_registers.assign(program.value_count(), {});
+    for (uint32_t id = 0; id < value_intervals.size(); ++id) {
+        if (!value_intervals[id].defined) continue;
+        out.value_registers[id] = {usse::RegisterBank::Temp, value_numbers[id]};
     }
 
     ProgramBuilder builder;
@@ -331,9 +418,9 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 return false;
             }
             usse::VtstSemantic compare{};
-            if (!resolve_physical_value(instruction.src0, MachineType::U32, &compare.lhs) ||
-                !resolve_physical_value(instruction.src1, MachineType::U32, &compare.rhs)) {
-                out.error = "initial machine compare requires physical U32 sources";
+            if (!resolve_register_value(instruction.src0, MachineType::U32, out.value_registers, &compare.lhs) ||
+                !resolve_register_value(instruction.src1, MachineType::U32, out.value_registers, &compare.rhs)) {
+                out.error = "machine compare requires register-backed U32 sources";
                 return false;
             }
             if (instruction.dst.id() >= out.predicate_registers.size() ||
@@ -360,6 +447,39 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             usse::KillSemantic kill{};
             kill.predicate = predicate;
             if (!builder.instruction(kill)) { out.error = "failed to encode machine kill"; return false; }
+            break;
+        }
+        case MachineOpcode::Bitwise: {
+            if (instruction.subop() > static_cast<uint8_t>(usse::BitwiseOp::ArithmeticShiftRight)) {
+                out.error = "invalid bitwise subop";
+                return false;
+            }
+            if (instruction.dst.kind() != MachineOperandKind::VirtualValue ||
+                instruction.dst.type() != MachineType::U32 ||
+                instruction.dst.id() >= out.value_registers.size()) {
+                out.error = "bitwise destination is not an allocated U32 value";
+                return false;
+            }
+            usse::VbwSemantic op{};
+            op.op = static_cast<usse::BitwiseOp>(instruction.subop());
+            op.dst = out.value_registers[instruction.dst.id()];
+            op.predicate = guard;
+            if (!resolve_register_value(instruction.src0, MachineType::U32, out.value_registers, &op.src1)) {
+                out.error = "bitwise source1 must be a register-backed U32 value";
+                return false;
+            }
+            if (instruction.src1.kind() == MachineOperandKind::Literal) {
+                if (instruction.src1.type() != MachineType::U32 || instruction.src1.id() >= program.literals().size()) {
+                    out.error = "bitwise literal source is invalid";
+                    return false;
+                }
+                op.src2_is_immediate = true;
+                op.immediate = program.literals()[instruction.src1.id()];
+            } else if (!resolve_register_value(instruction.src1, MachineType::U32, out.value_registers, &op.src2)) {
+                out.error = "bitwise source2 must be a U32 register or literal";
+                return false;
+            }
+            if (!builder.instruction(op)) { out.error = "failed to encode machine bitwise operation"; return false; }
             break;
         }
         case MachineOpcode::Count:
