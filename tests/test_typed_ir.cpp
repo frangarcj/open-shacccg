@@ -220,6 +220,41 @@ int test_typed_ir() {
 
     {
         TypedProgram program;
+        const auto zero=program.literal_s32(0);
+        const auto counter=program.make_value<TypedType::S32>();
+        const auto limit=program.uniform<TypedType::S32>(0);
+        const auto predicate=program.make_predicate();
+        if (!program.emit<TypedOpcode::StateInit>(0,counter,zero) ||
+            !program.emit<TypedOpcode::Compare>(static_cast<uint8_t>(usse::CompareOp::Less),predicate,counter,limit) ||
+            !program.emit<TypedOpcode::IntIncrement>(1,counter)) {
+            failures += fail("could not construct Typed loop counter primitives");
+        } else {
+            MachineCompileResult result;
+            if (!compile_typed_program(program,result) || result.words.size()!=4 ||
+                result.words[0]!=0x50810008e0000100ULL ||
+                result.words[1]!=0x48a8068130078000ULL ||
+                result.words[2]!=0xd08180042020c001ULL ||
+                result.words[3]!=0xd09080040000c001ULL)
+                failures += fail("Typed loop counter primitives did not reproduce oracle words");
+        }
+    }
+
+    {
+        TypedProgram program;
+        const auto input=program.input<TypedType::F32x4>(0);
+        const auto state=program.make_value<TypedType::F32x4>();
+        if (!program.emit<TypedOpcode::StateInit>(0,state,input) ||
+            !program.emit<TypedOpcode::StateUpdate>(0,state,input)) {
+            failures += fail("could not construct Typed mutable float4 state");
+        } else {
+            MachineCompileResult result;
+            if (!compile_typed_program(program,result) || result.words.size()!=2)
+                failures += fail("Typed mutable float4 state did not lower through Machine IR");
+        }
+    }
+
+    {
+        TypedProgram program;
         const auto lhs=program.input<TypedType::F32>(0);
         const auto rhs=program.input<TypedType::F32>(2);
         const auto predicate=program.make_predicate();

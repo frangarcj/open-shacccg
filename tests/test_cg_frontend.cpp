@@ -192,6 +192,51 @@ bool compile_fragment_gxp(const std::string &source, const char *name) {
     vsc_destroy_result(&request.allocator,&result);
     return ok;
 }
+
+bool compile_loop_gxp(const std::string &source, const char *name, uint8_t step) {
+    VscCompileRequest request{};
+    request.source_name=name;
+    request.source=source.data();
+    request.source_size=source.size();
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_FRAGMENT;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+    if (ok) {
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        ok=view.valid() && view.flags()==0x00081001 &&
+            view.primary_register_count()==12 && view.secondary_register_count()==4 &&
+            view.literal_count()==2 && view.container_count()==2 && view.parameter_count()==1;
+        vsc::gxp::ParameterView parameter{};
+        if (ok) {
+            ok=view.parameter(0,parameter) && parameter.name=="n" && parameter.category==1 &&
+                parameter.type==4 && parameter.component_count==1 && parameter.container_index==14 &&
+                parameter.resource_index==0;
+        }
+        bool init=false,compare=false,update=false,feed=false,backedge=false;
+        const uint64_t update_word=0xd08180042020c000ULL | step;
+        const auto code=view.primary_program();
+        for (size_t offset=0; ok && offset+8<=code.size; offset+=8) {
+            uint64_t word=0;
+            std::memcpy(&word,code.data+offset,sizeof(word));
+            init |= word==0x50810008e0000100ULL;
+            compare |= word==0x48a8068130078000ULL;
+            update |= word==update_word;
+            feed |= word==0xd09080040000c001ULL;
+            if (vsc::usse::classify_control(word)==vsc::usse::ControlClass::Branch) {
+                vsc::usse::BranchSemantic branch{};
+                if (vsc::usse::decode_branch_semantic(word,&branch) && branch.offset<0) backedge=true;
+            }
+        }
+        ok=ok && init && compare && update && feed && backedge;
+    }
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: %s loop diagnostic=%s\n",name,
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
 #endif
 #endif
 } // namespace
@@ -238,6 +283,15 @@ int test_cg_frontend() {
     const std::string ternary=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-ternary.cg");
     if (ternary.empty() || !compile_fragment_gxp(ternary,"fp-ternary.cg"))
         failures += fail("Cg float4 ternary did not lower through validated branch control flow");
+    struct LoopProbe { const char *name; uint8_t step; };
+    const LoopProbe loop_probes[]={{"fp-loop",1},{"fp-loop-step2",2},{"fp-loop-step3",3}};
+    for (const auto &probe:loop_probes) {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/"+probe.name+".cg");
+        if (source.empty() || !compile_loop_gxp(source,probe.name,probe.step)) {
+            std::fprintf(stderr,"test_cg_frontend: loop probe failed: %s\n",probe.name);
+            ++failures;
+        }
+    }
 #endif
     return failures;
 #endif

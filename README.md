@@ -30,15 +30,16 @@ Implemented now:
   compact Machine/Typed label tables and structured U32 conditional/unconditional branches
 - oracle-validated F32 VTST compare profiles for `==`, `!=`, `<`, `<=`, `>` and `>=`,
   exposed through Machine/Typed IR and the scalar control-flow SPIR-V adapter
-- oracle-validated dynamic-loop control primitives: signed-32 `i<n` VTST plus the
-  I32MAD2 update/feed-through pair used by Sony for positive immediate loop steps
+- oracle-validated dynamic loops end to end for positive steps 1/2/3: mutable
+  Typed/Machine loop state, signed-32 `i<n` VTST, I32MAD2 counter update/feed-through and BR back-edges
 - structured fragment `if/else` from glslang: two-way `OpPhi` values that feed COLOR0 are
   sunk into branch-local output packs, so real Cg conditionals reach Machine BR/GXP without a physical phi opcode
 - all seven public libvita2d Cg shaders now pass through the Typed Vita IR path; generated GXPs are
   byte-identical to the preserved public samples except for Sony's two 32-bit GUID fields
 - frontend -> SPIR-V and SPIR-V -> Vita IR -> USSE/GXP boundaries
 - independent structured GXP reader for real Vita program images
-- canonical GXP serializer for interface data, primary/secondary code, parameter containers and reflection names
+- canonical GXP serializer for interface data, primary/secondary code, parameter containers,
+  oracle-derived 8-byte literal tables and reflection names
 - coarse USSE2 major-opcode classifier, verified against known-good public GXP programs
 - seven known-good public libvita2d shader/source pairs retained under their upstream MIT license for regression research
 - Vita `exports.yml` target skeleton and firmware NID reference manifest
@@ -56,7 +57,7 @@ Not implemented yet:
 - complete Cg compatibility beyond the glslang HLSL-compatible subset (callback includes, option defines, profile quirks and remaining Cg-only syntax)
 - derive Sony-compatible binary/source GUIDs instead of currently emitting zero for newly compiled shaders
 - field-level USSE instruction encoding
-- exotic GXP auxiliary tables (literal/uniform-buffer/dependent-sampler tables)
+- remaining exotic GXP auxiliary tables (uniform-buffer/dependent-sampler tables)
 - full `SceShaccCg` reflection export surface
 - real-Vita validation of GXP produced by the canonical writer
 

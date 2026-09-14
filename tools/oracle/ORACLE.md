@@ -121,3 +121,10 @@ experiments. `--strict-open` makes OpenShaccCg compile failures or any byte
 difference outside Sony's two GUID fields fail the command, which is useful for
 regressions that are expected to be byte-identical. Without it, backend gaps are
 reported but do not make a successful Sony-oracle run fail.
+
+The dynamic-loop probes also anchor one GXP auxiliary-table format. The v1.4
+literal table is an array of 8-byte `{uint32 resource_index, uint32 value_bits}`
+entries. For `fp-loop`, Sony emits `{0,0}` and `{1,1}` in container 19 at SA2/SA3;
+the header's literal-data pointer targets the byte immediately after those
+entries. This observable layout is covered by the canonical writer tests; Sony
+GXP files themselves remain temporary/local-only.

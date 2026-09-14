@@ -71,6 +71,39 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        const auto counter=program.make_value<MachineType::S32>();
+        if (!program.emit<MachineOpcode::LoopCounterInit>(0,counter) ||
+            !program.emit<MachineOpcode::LoopIncrement>(1,counter)) {
+            failures += fail("could not construct oracle loop counter Machine IR");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=3 ||
+                result.words[0]!=0x50810008e0000100ULL ||
+                result.words[1]!=0xd08180042020c001ULL ||
+                result.words[2]!=0xd09080040000c001ULL)
+                failures += fail("Machine loop counter did not reproduce oracle VBW/I32MAD2 words");
+        }
+    }
+
+    {
+        MachineProgram program;
+        const auto state=program.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+        const auto source=program.physical(machine_primary(0),MachineType::F32);
+        if (!program.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                machine_move_config(0xF),state,source) ||
+            !program.emit_config<MachineOpcode::MoveUpdate>(static_cast<uint8_t>(usse::DataType::F32),
+                machine_move_config(0xF),state,source)) {
+            failures += fail("could not construct mutable float Machine state");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=2 ||
+                result.value_registers.empty() || result.value_registers[0].bank!=usse::RegisterBank::Temp)
+                failures += fail("mutable float Machine state did not allocate/compile");
+        }
+    }
+
+    {
+        MachineProgram program;
         const auto head = program.make_label();
         if (head.kind()==MachineOperandKind::None || !program.bind_label(head)) {
             failures += fail("could not bind backward branch label");

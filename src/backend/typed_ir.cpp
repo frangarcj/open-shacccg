@@ -24,7 +24,7 @@ TypedValue pack_value(TypedValueKind kind, TypedType type, uint32_t payload, boo
     return out;
 }
 
-enum class TypedRole : uint8_t { None, ValueUse, ValueDef, PredicateUse, PredicateDef };
+enum class TypedRole : uint8_t { None, ValueUse, ValueDef, ValueUpdate, PredicateUse, PredicateDef };
 struct TypedOpcodeDesc { const char *name; std::array<TypedRole, 3> roles; };
 
 constexpr TypedOpcodeDesc kTypedOpcodeDesc[] = {
@@ -80,7 +80,8 @@ bool valid_value_use(const TypedProgram &program, const TypedValue &value,
                      const std::vector<TypedType> &types, const std::vector<bool> &defined) {
     if (!is_value(value) || value.type() == TypedType::Invalid) return false;
     if (value.kind() == TypedValueKind::Literal)
-        return value.id() < program.literals().size() && value.type() == TypedType::U32;
+        return value.id() < program.literals().size() &&
+            (value.type() == TypedType::U32 || value.type() == TypedType::S32);
     return value.id() < defined.size() && defined[value.id()] && types[value.id()] == value.type();
 }
 
@@ -174,6 +175,12 @@ TypedValue TypedProgram::literal_u32(uint32_t value) {
     if (literals_.size() > kPayloadMask) return {};
     literals_.push_back(value);
     return TypedValue::literal(static_cast<uint32_t>(literals_.size() - 1), TypedType::U32);
+}
+
+TypedValue TypedProgram::literal_s32(int32_t value) {
+    if (literals_.size() > kPayloadMask) return {};
+    literals_.push_back(static_cast<uint32_t>(value));
+    return TypedValue::literal(static_cast<uint32_t>(literals_.size() - 1), TypedType::S32);
 }
 
 TypedValue TypedProgram::input(TypedType type, uint16_t location) {
@@ -310,6 +317,13 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 if (!valid_value_use(typed, operand, value_types, value_defined)) {
                     error = std::string(desc->name) + " has invalid value source"; return false;
                 }
+            } else if (role == TypedRole::ValueUpdate) {
+                if (operand.kind()!=TypedValueKind::Value || operand.type()==TypedType::Invalid ||
+                    operand.id()>=value_defined.size() || !value_defined[operand.id()] ||
+                    value_types[operand.id()]!=operand.type()) {
+                    error=std::string(desc->name)+" requires an already-defined mutable value";
+                    return false;
+                }
             } else if (role == TypedRole::PredicateDef) {
                 if (operand.kind() != TypedValueKind::Predicate || operand.inverted() ||
                     operand.id() >= predicate_defined.size() || predicate_defined[operand.id()]) {
@@ -351,6 +365,59 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         case TypedOpcode::Sample2D:
             error = "high-level typed shader operation requires compile_typed_shader";
             return false;
+        case TypedOpcode::StateInit: {
+            if (instruction.dst.type()==TypedType::F32x4 && instruction.src0.type()==TypedType::F32x4) {
+                const auto src=lower_value(typed,instruction.src0,values,literals,machine);
+                const auto dst=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+                if (src.kind()==MachineOperandKind::None || dst.kind()==MachineOperandKind::None ||
+                    !machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                        machine_move_config(0xF),dst,src)) {
+                    error="failed to initialize mutable float4 state";
+                    return false;
+                }
+                values[instruction.dst.id()]=dst;
+            } else if (instruction.dst.type()==TypedType::S32 && instruction.src0.type()==TypedType::S32 &&
+                       instruction.src0.kind()==TypedValueKind::Literal &&
+                       instruction.src0.id()<typed.literals().size() && typed.literals()[instruction.src0.id()]==0) {
+                const auto dst=machine.make_value<MachineType::S32>();
+                if (dst.kind()==MachineOperandKind::None || !machine.emit<MachineOpcode::LoopCounterInit>(0,dst)) {
+                    error="failed to initialize oracle loop counter state";
+                    return false;
+                }
+                values[instruction.dst.id()]=dst;
+            } else {
+                error="typed state init supports only float4 copy or S32 literal zero";
+                return false;
+            }
+            value_types[instruction.dst.id()]=instruction.dst.type();
+            value_defined[instruction.dst.id()]=true;
+            break;
+        }
+        case TypedOpcode::StateUpdate: {
+            if (instruction.dst.type()!=TypedType::F32x4 || instruction.src0.type()!=TypedType::F32x4) {
+                error="typed state update currently supports only float4 loop state";
+                return false;
+            }
+            const auto state=values[instruction.dst.id()];
+            const auto src=lower_value(typed,instruction.src0,values,literals,machine);
+            if (state.kind()!=MachineOperandKind::VirtualValue || src.kind()==MachineOperandKind::None ||
+                !machine.emit_config<MachineOpcode::MoveUpdate>(static_cast<uint8_t>(usse::DataType::F32),
+                    machine_move_config(0xF),state,src)) {
+                error="failed to update mutable float4 loop state";
+                return false;
+            }
+            break;
+        }
+        case TypedOpcode::IntIncrement: {
+            const uint8_t step=instruction.subop();
+            if (instruction.dst.type()!=TypedType::S32 || step<1 || step>3 ||
+                instruction.dst.id()>=values.size() || values[instruction.dst.id()].kind()!=MachineOperandKind::VirtualValue ||
+                !machine.emit<MachineOpcode::LoopIncrement>(step,values[instruction.dst.id()])) {
+                error="typed integer increment is outside oracle loop step 1..3 subset";
+                return false;
+            }
+            break;
+        }
         case TypedOpcode::StoreOutput: {
             if (emit_fragment_stores) {
                 if (instruction.aux != fragment_output_resource || instruction.src0.type() != TypedType::F32x4) {
@@ -552,9 +619,14 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         case TypedOpcode::Compare: {
             const bool u32 = instruction.src0.type() == TypedType::U32 && instruction.src1.type() == TypedType::U32;
             const bool f32 = instruction.src0.type() == TypedType::F32 && instruction.src1.type() == TypedType::F32;
-            if ((!u32 && !f32) ||
+            const bool s32 = instruction.src0.type() == TypedType::S32 && instruction.src1.type() == TypedType::S32;
+            if ((!u32 && !f32 && !s32) ||
                 instruction.subop() > static_cast<uint8_t>(usse::CompareOp::GreaterEqual)) {
-                error = "typed compare currently requires matching U32 or F32 scalar operands"; return false;
+                error = "typed compare currently requires matching U32/F32/S32 scalar operands"; return false;
+            }
+            if (s32 && instruction.subop()!=static_cast<uint8_t>(usse::CompareOp::Less)) {
+                error="typed S32 compare currently supports only oracle loop less-than";
+                return false;
             }
             const auto dst = machine.make_predicate();
             const auto src0 = lower_value(typed, instruction.src0, values, literals, machine);
@@ -610,7 +682,9 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
 
     std::vector<const TypedInstruction *> defs(program.value_count(), nullptr);
     for (const auto &instruction : instructions) {
-        if (instruction.dst.kind() == TypedValueKind::Value && instruction.dst.id() < defs.size()) {
+        const auto *desc=descriptor(instruction.opcode());
+        if (desc && desc->roles[0]==TypedRole::ValueDef &&
+            instruction.dst.kind() == TypedValueKind::Value && instruction.dst.id() < defs.size()) {
             if (defs[instruction.dst.id()]) { out.error = "typed shader value is defined twice"; return false; }
             defs[instruction.dst.id()] = &instruction;
         }
@@ -749,6 +823,7 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     }
 
     std::vector<IrUniformVec4> fragment_uniforms;
+    std::vector<IrUniformS32> fragment_s32_uniforms;
     std::vector<IrSampler2D> fragment_samplers;
     std::vector<const TypedResource *> inputs;
     std::vector<const TypedResource *> uniforms;
@@ -762,10 +837,18 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     std::sort(uniforms.begin(), uniforms.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
     std::sort(samplers.begin(), samplers.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
     for (const auto *resource : uniforms) {
-        if (resource->type != TypedType::F32x4 || resource->value.kind() != TypedValueKind::Value) {
-            out.error = "typed fragment uniform is not a supported float4"; return false;
+        if (resource->value.kind() != TypedValueKind::Value) {
+            out.error="typed fragment uniform has no value handle";
+            return false;
         }
-        fragment_uniforms.push_back({shader.resource_name(*resource), resource->index});
+        if (resource->type==TypedType::F32x4)
+            fragment_uniforms.push_back({shader.resource_name(*resource),resource->index});
+        else if (resource->type==TypedType::S32)
+            fragment_s32_uniforms.push_back({shader.resource_name(*resource),resource->index});
+        else {
+            out.error="typed fragment uniform type is outside validated float4/S32 profiles";
+            return false;
+        }
     }
     for (const auto *resource : samplers)
         fragment_samplers.push_back({shader.resource_name(*resource), resource->index});
@@ -775,9 +858,18 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         if (instruction.opcode() == TypedOpcode::StoreOutput) output_stores.push_back(&instruction);
 
     if (!program.labels().empty()) {
-        if (output_stores.empty() || !uniforms.empty() || !samplers.empty() ||
-            inputs.size()<2 || inputs.size()>3) {
-            out.error = "typed fragment control path requires 2-3 float4 inputs, output stores and no uniforms/samplers";
+        const bool loop_control=std::any_of(instructions.begin(),instructions.end(),[](const TypedInstruction &instruction) {
+            return instruction.opcode()==TypedOpcode::IntIncrement;
+        });
+        if (output_stores.empty() || !samplers.empty() || inputs.size()<2 || inputs.size()>3) {
+            out.error = "typed fragment control path requires 2-3 float4 inputs and output stores";
+            return false;
+        }
+        if ((!loop_control && !uniforms.empty()) ||
+            (loop_control && (inputs.size()!=3 || !fragment_uniforms.empty() || fragment_s32_uniforms.size()!=1 || uniforms.size()!=1))) {
+            out.error=loop_control ?
+                "typed loop path requires three float4 inputs and one S32 uniform" :
+                "typed non-loop control path does not accept uniforms";
             return false;
         }
         for (size_t i=0;i<inputs.size();++i) {
@@ -809,6 +901,8 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             out.error=machine_error;
             return false;
         }
+        if (loop_control)
+            return compile_fragment_loop_machine(primary,fragment_s32_uniforms[0],0,0,out);
         return compile_fragment_control_machine(primary,static_cast<uint8_t>(inputs.size()),0,0,out);
     }
 

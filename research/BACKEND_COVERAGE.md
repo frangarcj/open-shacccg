@@ -196,8 +196,8 @@ itself. Raw/semantic USSE codecs and compact Machine IR labels now reproduce
 these words exactly. Typed IR also owns label side tables plus conditional and
 unconditional jumps, and the SPIRV-Cross U32 control-flow adapter lowers a
 structured `SelectionMerge`/`BranchConditional` graph through those labels.
-P1/!P1 BR forms, general phi values and loop-carried phis remain fail-closed
-until their oracle evidence/lowering rules are added.
+P1/!P1 BR forms and general phi consumers remain fail-closed until their oracle
+evidence/lowering rules are added.
 
 The same oracle corpus now carries six large F32 compare cases. They establish
 the VTST floating subtract/test profile for `==`, `!=`, `<`, `<=`, `>` and `>=`.
@@ -213,18 +213,16 @@ the output store is sunk into each predecessor before its jump to the merge.
 `fp-if-big.cg` now compiles through `Cg -> SPIR-V -> Typed CFG -> Machine BR ->
 GXP`; the regression requires PA=12, the oracle control flags, the exact F32
 VTST anchor and decodable non-zero BR offsets. More general phi consumers and
-loop-carried values remain fail-closed.
+general non-output selection phis remain fail-closed.
 
-The differential control corpus currently compiles 12/12 cases with Sony and
-9/12 with OpenShaccCg. Three frontend/control compatibility gaps were closed
+The differential control corpus now compiles 12/12 cases with both Sony and
+OpenShaccCg. Three frontend/control compatibility gaps were closed
 without adding guessed machine families: glslang's case-free `OpSwitch` wrapper
 for early returns is treated as its exact unconditional-default jump semantics,
 `OpFUnordNotEqual` is mapped to the oracle-anchored Cg `!=` VTST profile, and a
 float4 `OpSelect` feeding COLOR0 is desugared into the already validated Typed
 BR/store CFG. Sony if-converts that ternary to a predicated in-place VMOV; Open
-currently favors the longer validated BR form. The three remaining control
-failures are the dynamic-loop cases and share scalar integer uniform/loop-value
-lowering rather than an unknown BR encoding.
+currently favors the longer validated BR form.
 
 The dynamic-loop oracle case also identifies the integer control primitives
 around the back-edge. `for (int i=0; i<n; ++i)` uses a signed-32 VTST `<`
@@ -232,13 +230,20 @@ profile (`0x48a8068130078000`) followed in the latch by an I32MAD2 update/feed
 pair (`0xd08180042020c001`, `0xd09080040000c001`). Differential `i+=2` and
 `i+=3` cases change only the immediate source of the update word, anchoring that
 field independently. Raw/semantic I32MAD2 and signed-loop VTST codecs reproduce
-these words exactly; decrementing loops use a different source profile and are
-still intentionally unsupported.
+these words exactly. The loop lowering now represents the float4 and S32 phis as
+explicit mutable state, emits the exact Sony counter init/compare/update words,
+and keeps the float body on the existing validated V32NMAD path. The oracle also
+establishes the GXP literal table as 8-byte `{resource_index,value_bits}` entries:
+loop literals `{0,0}`/`{1,1}` occupy container 19 at SA2/SA3 while the S32 `n`
+uniform occupies container 14. Open's three positive-step loop GXPs match Sony's
+observable metadata exactly; instruction selection differs in the float body and
+extra state moves/branches. Decrementing loops use a different source profile and
+remain intentionally unsupported.
 
 ## Next backend order
 
 1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, keeping the single Typed -> Machine lowering path fail-closed.
-2. **Complete structured control flow.** BR forward/backward offsets, six F32 VTST compares, direct COLOR0 two-way phi merge and output `OpSelect` are validated. The control corpus is 9/12; next connect scalar integer uniforms and loop-carried values for the three dynamic-loop cases, then generalize remaining phi consumers.
+2. **Complete structured control flow.** BR forward/backward offsets, six F32 VTST compares, direct COLOR0 two-way phi merge, output `OpSelect` and positive-step dynamic loops are validated; the control corpus is 12/12. Next generalize remaining phi consumers and derive decrement/other loop-update profiles from oracle probes.
 3. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
 4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
 5. **Common missing ALU families.** Prioritize VCOMP, VMAD2 and VDUAL based on real traces, then remaining instruction families by corpus frequency.

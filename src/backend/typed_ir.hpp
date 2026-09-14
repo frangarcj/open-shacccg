@@ -127,6 +127,7 @@ public:
 
     TypedValue make_predicate(bool inverted = false);
     TypedValue literal_u32(uint32_t value);
+    TypedValue literal_s32(int32_t value);
     TypedValue sampler(uint16_t binding);
 
     TypedValue input(TypedType type, uint16_t location);

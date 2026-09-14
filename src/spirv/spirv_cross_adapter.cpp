@@ -201,6 +201,9 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             uint32_t value1 = 0;
             uint32_t label1 = 0;
             uint16_t output_resource = std::numeric_limits<uint16_t>::max();
+            backend::TypedType type = backend::TypedType::Invalid;
+            uint32_t continue_label = 0;
+            bool loop_state = false;
         };
         struct SelectSink {
             uint32_t condition = 0;
@@ -222,6 +225,8 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
         std::unordered_map<uint32_t, PhiSink> phi_sinks;
         std::unordered_map<uint32_t, SelectSink> select_sinks;
         std::unordered_map<uint32_t, uint16_t> block_labels;
+        std::unordered_map<uint32_t, uint32_t> loop_headers;
+        std::unordered_set<uint32_t> s32_loop_state_ids;
 
         auto add_resource = [&](backend::TypedResourceKind kind, backend::TypedValue value,
                                 backend::TypedType type, const std::string &resource_name,
@@ -382,7 +387,19 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     phi.merge_label=scan_label;
                     phi.value0=args[2]; phi.label0=args[3];
                     phi.value1=args[4]; phi.label1=args[5];
+                    phi.type=typed_type(compiler.get_type(args[0]));
+                    if (phi.type==backend::TypedType::Invalid) {
+                        error="OpPhi type is outside the validated Typed shader subset";
+                        return false;
+                    }
                     phi_sinks[args[1]]=phi;
+                } else if (scan_function && op==spv::OpLoopMerge) {
+                    if (count!=4 || !scan_label) {
+                        error="invalid structured OpLoopMerge";
+                        return false;
+                    }
+                    loop_headers[scan_label]=args[1];
+                    has_control=true;
                 } else if (scan_function && op==spv::OpSelect) {
                     if (count!=6) {
                         error="only ordinary three-operand OpSelect is supported";
@@ -400,6 +417,13 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         select->second.output_resource=output->second;
                 }
                 offset+=count;
+            }
+            for (auto &entry:phi_sinks) {
+                auto loop=loop_headers.find(entry.second.merge_label);
+                if (loop!=loop_headers.end()) {
+                    entry.second.loop_state=true;
+                    entry.second.continue_label=loop->second;
+                }
             }
             if (has_control) {
                 for (uint32_t id:function_labels) {
@@ -652,7 +676,50 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 values[args[1]] = dst;
             } else {
                 usse::CompareOp compare{};
-                if (map_float_compare(op,compare)) {
+                if (op==spv::OpSLessThan) {
+                    if (count!=5) { error="invalid signed integer compare instruction"; return false; }
+                    const auto lhs=values.find(args[2]);
+                    const auto rhs=values.find(args[3]);
+                    if (lhs==values.end() || rhs==values.end() ||
+                        lhs->second.type()!=backend::TypedType::S32 || rhs->second.type()!=backend::TypedType::S32) {
+                        error="signed loop compare operands are unresolved or non-S32";
+                        return false;
+                    }
+                    const auto dst=program.make_predicate();
+                    if (dst.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::Compare>(
+                            static_cast<uint8_t>(usse::CompareOp::Less),dst,lhs->second,rhs->second)) {
+                        error="failed to emit Typed S32 loop compare";
+                        return false;
+                    }
+                    values[args[1]]=dst;
+                } else if (op==spv::OpIAdd) {
+                    if (count!=5 || typed_type(compiler.get_type(args[0]))!=backend::TypedType::S32) {
+                        error="integer add is outside the validated S32 loop subset";
+                        return false;
+                    }
+                    backend::TypedValue state{};
+                    uint32_t constant_id=0;
+                    auto lhs=values.find(args[2]);
+                    auto rhs=values.find(args[3]);
+                    if (lhs!=values.end() && lhs->second.type()==backend::TypedType::S32 &&
+                        s32_loop_state_ids.count(lhs->second.id())) {
+                        state=lhs->second;
+                        constant_id=args[3];
+                    } else if (rhs!=values.end() && rhs->second.type()==backend::TypedType::S32 &&
+                               s32_loop_state_ids.count(rhs->second.id())) {
+                        state=rhs->second;
+                        constant_id=args[2];
+                    }
+                    const auto constant=constants.find(constant_id);
+                    const uint32_t step=constant==constants.end()?0:constant->second;
+                    if (state.kind()==backend::TypedValueKind::None || step<1 || step>3 ||
+                        !program.emit<backend::TypedOpcode::IntIncrement>(static_cast<uint8_t>(step),state)) {
+                        error="S32 loop increment is outside oracle-validated step 1..3";
+                        return false;
+                    }
+                    values[args[1]]=state;
+                } else if (map_float_compare(op,compare)) {
                     if (count!=5) { error="invalid floating compare instruction"; return false; }
                     auto resolve_scalar_f32 = [&](uint32_t id, backend::TypedValue &value) -> bool {
                         if (auto it=values.find(id); it!=values.end() && it->second.type()==backend::TypedType::F32) {
@@ -729,10 +796,73 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 } else if (op == spv::OpBranch) {
                     if (count!=2 || block_labels.empty()) { error="unconditional branch is outside structured Typed shader subset"; return false; }
                     const uint32_t target_id=args[0];
+                    // Loop phis become explicit mutable state. Initialize that
+                    // state on the entry edge and update it on the continue
+                    // back-edge; the header itself then only aliases the phi id
+                    // to the stable Typed state handle.
+                    for (auto &entry:phi_sinks) {
+                        auto &phi=entry.second;
+                        if (!phi.loop_state || phi.merge_label!=target_id) continue;
+                        uint32_t incoming=0;
+                        if (phi.label0==current_label) incoming=phi.value0;
+                        else if (phi.label1==current_label) incoming=phi.value1;
+                        else {
+                            error="loop phi has no incoming value for predecessor";
+                            return false;
+                        }
+                        if (current_label!=phi.continue_label) {
+                            backend::TypedValue initial{};
+                            if (auto value=values.find(incoming); value!=values.end()) {
+                                initial=value->second;
+                            } else if (phi.type==backend::TypedType::S32) {
+                                auto constant=constants.find(incoming);
+                                if (constant==constants.end()) {
+                                    error="S32 loop phi initial value is not a constant";
+                                    return false;
+                                }
+                                initial=program.literal_s32(static_cast<int32_t>(constant->second));
+                            }
+                            if (initial.kind()==backend::TypedValueKind::None || initial.type()!=phi.type) {
+                                error="loop phi initial value is unresolved or type-mismatched";
+                                return false;
+                            }
+                            const auto state=program.make_value(phi.type);
+                            if (state.kind()==backend::TypedValueKind::None ||
+                                !program.emit<backend::TypedOpcode::StateInit>(0,state,initial)) {
+                                error="failed to initialize Typed loop state";
+                                return false;
+                            }
+                            values[entry.first]=state;
+                            if (phi.type==backend::TypedType::S32) s32_loop_state_ids.insert(state.id());
+                        } else {
+                            const auto state=values.find(entry.first);
+                            const auto next=values.find(incoming);
+                            if (state==values.end() || next==values.end()) {
+                                error="loop back-edge state is unresolved";
+                                return false;
+                            }
+                            if (phi.type==backend::TypedType::F32x4) {
+                                if (next->second.type()!=phi.type ||
+                                    !program.emit<backend::TypedOpcode::StateUpdate>(0,state->second,next->second)) {
+                                    error="failed to update Typed float4 loop state";
+                                    return false;
+                                }
+                            } else if (phi.type==backend::TypedType::S32) {
+                                if (next->second.bits!=state->second.bits) {
+                                    error="S32 loop back-edge is not the validated in-place increment";
+                                    return false;
+                                }
+                            } else {
+                                error="loop state type is outside the validated float4/S32 subset";
+                                return false;
+                            }
+                        }
+                    }
                     // If this predecessor contributes to a two-way phi that feeds
                     // fragment COLOR0, sink the store before leaving the block.
                     for (const auto &entry:phi_sinks) {
                         const auto &phi=entry.second;
+                        if (phi.loop_state) continue;
                         if (phi.merge_label!=target_id || phi.output_resource==std::numeric_limits<uint16_t>::max()) continue;
                         uint32_t incoming=0;
                         if (phi.label0==current_label) incoming=phi.value0;
@@ -752,7 +882,16 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     }
                 } else if (op == spv::OpPhi) {
                     const auto phi=phi_sinks.find(args[1]);
-                    if (phi==phi_sinks.end() || phi->second.output_resource==std::numeric_limits<uint16_t>::max()) {
+                    if (phi==phi_sinks.end()) {
+                        error="OpPhi is outside the validated structured subset";
+                        return false;
+                    }
+                    if (phi->second.loop_state) {
+                        if (values.find(args[1])==values.end()) {
+                            error="loop phi state was not initialized on its entry edge";
+                            return false;
+                        }
+                    } else if (phi->second.output_resource==std::numeric_limits<uint16_t>::max()) {
                         error="OpPhi is not the validated two-way fragment-output merge";
                         return false;
                     }
@@ -788,7 +927,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 } else if (op == spv::OpStore && count >= 3) {
                     const auto phi=phi_sinks.find(args[1]);
                     const auto select=select_sinks.find(args[1]);
-                    if ((phi!=phi_sinks.end() && phi->second.output_resource!=std::numeric_limits<uint16_t>::max()) ||
+                    if ((phi!=phi_sinks.end() && !phi->second.loop_state && phi->second.output_resource!=std::numeric_limits<uint16_t>::max()) ||
                         (select!=select_sinks.end() && select->second.output_resource!=std::numeric_limits<uint16_t>::max())) {
                         // Already materialized in each predecessor.
                     } else {
@@ -801,6 +940,8 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                             error = "failed to emit Typed IR output store"; return false;
                         }
                     }
+                } else if (op == spv::OpLoopMerge) {
+                    // Structured loop metadata was consumed by the pre-scan.
                 } else if (op == spv::OpSwitch) {
                     // glslang wraps early-return HLSL/Cg functions in a
                     // selection containing an OpSwitch with no case pairs.

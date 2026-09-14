@@ -25,6 +25,7 @@ enum class OperandRole : uint8_t {
     None,
     ValueUse,
     ValueDef,
+    ValueUpdate,
     ValuePairUse,
     LabelUse,
     PredicateUse,
@@ -344,7 +345,7 @@ MachineType pack_format_machine_type(usse::PackFormat format) {
 }
 
 bool uses_instruction_config(MachineOpcode opcode) {
-    return opcode == MachineOpcode::Move || opcode == MachineOpcode::Pack ||
+    return opcode == MachineOpcode::Move || opcode == MachineOpcode::MoveUpdate || opcode == MachineOpcode::Pack ||
         opcode == MachineOpcode::PackValue || opcode == MachineOpcode::Vector ||
         opcode == MachineOpcode::Vmad;
 }
@@ -581,6 +582,15 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 interval.defined = true;
                 interval.start = 2 * index + 1;
                 interval.end = interval.start + 1;
+            } else if (role == OperandRole::ValueUpdate) {
+                if (operand.kind() != MachineOperandKind::VirtualValue || operand.type() == MachineType::Invalid ||
+                    operand.id() >= value_intervals.size() || !value_intervals[operand.id()].defined ||
+                    program.value_descs()[operand.id()].type != operand.type()) {
+                    out.error = std::string(desc->name) + " requires an already-defined mutable value";
+                    return false;
+                }
+                auto &interval = value_intervals[operand.id()];
+                interval.end = std::max(interval.end, 2 * index + 2);
             } else if (role == OperandRole::ValueUse) {
                 if (!is_value_operand(operand)) {
                     out.error = std::string(desc->name) + " requires a value operand";
@@ -679,6 +689,8 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 interval.allowed &= allowed;
             }
         }
+        if (instruction.opcode() == MachineOpcode::LoopIncrement)
+            reserved_temps[1] = true;
     }
 
     std::array<bool, 4> no_reserved_predicates{};
@@ -713,12 +725,14 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
     }
 
     // Labels are bound to Machine IR instruction positions, but BR offsets are
-    // measured in emitted USSE instructions. Account for zero-word pseudo-ops
-    // (currently DependentSample) when resolving the final signed delta.
+    // measured in emitted USSE instructions. Account for zero- and multi-word
+    // pseudo-ops when resolving the final signed delta.
     std::vector<uint32_t> word_positions(program.instructions().size() + 1, 0);
     for (uint32_t i = 0; i < program.instructions().size(); ++i) {
-        const bool emits_word = program.instructions()[i].opcode() != MachineOpcode::DependentSample;
-        word_positions[i + 1] = word_positions[i] + (emits_word ? 1u : 0u);
+        uint32_t words=1;
+        if (program.instructions()[i].opcode()==MachineOpcode::DependentSample) words=0;
+        else if (program.instructions()[i].opcode()==MachineOpcode::LoopIncrement) words=2;
+        word_positions[i + 1] = word_positions[i] + words;
     }
     for (uint32_t position : program.labels()) {
         if (position == std::numeric_limits<uint32_t>::max() || position > program.instructions().size()) {
@@ -754,7 +768,8 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 return false;
             }
             break;
-        case MachineOpcode::Move: {
+        case MachineOpcode::Move:
+        case MachineOpcode::MoveUpdate: {
             const auto data_type = static_cast<usse::DataType>(instruction.subop());
             const MachineType expected = data_type_machine_type(data_type);
             const uint16_t config = instruction.config();
@@ -949,6 +964,53 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             }
             break;
         }
+        case MachineOpcode::LoopCounterInit: {
+            usse::RegisterRef state{};
+            if (instruction.subop()!=0 || guard!=usse::Predicate::Always ||
+                !resolve_register_value(instruction.dst,MachineType::S32,out.value_registers,&state) ||
+                state.bank!=usse::RegisterBank::Temp || state.num!=0) {
+                out.error="loop counter init requires the oracle-validated S32 TEMP0 state";
+                return false;
+            }
+            usse::VbwSemantic init{};
+            init.op=usse::BitwiseOp::Or;
+            init.dst=state;
+            init.src1={usse::RegisterBank::SecondaryAttribute,2};
+            init.src2_is_immediate=true;
+            init.immediate=0;
+            if (!builder.instruction(init)) {
+                out.error="failed to encode oracle loop-counter VBW init";
+                return false;
+            }
+            break;
+        }
+        case MachineOpcode::LoopIncrement: {
+            usse::RegisterRef state{};
+            const uint8_t step=instruction.subop();
+            if (step<1 || step>3 || guard!=usse::Predicate::Always ||
+                !resolve_register_value(instruction.dst,MachineType::S32,out.value_registers,&state) ||
+                state.bank!=usse::RegisterBank::Temp || state.num!=0) {
+                out.error="loop increment requires S32 TEMP0 and oracle-validated step 1..3";
+                return false;
+            }
+            usse::I32Mad2Semantic update{};
+            update.dst={usse::RegisterBank::Temp,1};
+            update.src0={usse::RegisterBank::SecondaryAttribute,3};
+            update.src1=state;
+            update.src2={usse::RegisterBank::Immediate,step};
+            update.sn=0;
+            usse::I32Mad2Semantic feed{};
+            feed.dst=state;
+            feed.src0={usse::RegisterBank::SecondaryAttribute,3};
+            feed.src1=state;
+            feed.src2={usse::RegisterBank::Temp,1};
+            feed.sn=1;
+            if (!builder.instruction(update) || !builder.instruction(feed)) {
+                out.error="failed to encode oracle loop I32MAD2 update pair";
+                return false;
+            }
+            break;
+        }
         case MachineOpcode::Compare: {
             if (instruction.subop() > static_cast<uint8_t>(usse::CompareOp::GreaterEqual)) {
                 out.error = "invalid compare subop";
@@ -985,8 +1047,19 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 compare.op = static_cast<usse::CompareOp>(instruction.subop());
                 compare.predicate_destination = out.predicate_registers[instruction.dst.id()];
                 if (!builder.instruction(compare)) { out.error = "failed to encode machine F32 compare"; return false; }
+            } else if (instruction.src0.type() == MachineType::S32) {
+                usse::VtstS32Semantic compare{};
+                if (!resolve_register_value(instruction.src0,MachineType::S32,out.value_registers,&compare.lhs) ||
+                    !resolve_register_value(instruction.src1,MachineType::S32,out.value_registers,&compare.rhs)) {
+                    out.error="machine compare requires register-backed S32 sources";
+                    return false;
+                }
+                compare.predicate=guard;
+                compare.op=static_cast<usse::CompareOp>(instruction.subop());
+                compare.predicate_destination=out.predicate_registers[instruction.dst.id()];
+                if (!builder.instruction(compare)) { out.error="failed to encode machine S32 compare"; return false; }
             } else {
-                out.error = "machine compare type is outside the validated U32/F32 subset";
+                out.error = "machine compare type is outside the validated U32/F32/S32 subset";
                 return false;
             }
             break;

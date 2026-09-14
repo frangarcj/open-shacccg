@@ -31,6 +31,11 @@ struct IrUniformVec4 {
     uint32_t resource_index = 0;
 };
 
+struct IrUniformS32 {
+    std::string name;
+    uint32_t resource_index = 0;
+};
+
 struct IrSampler2D {
     std::string name;
     uint32_t resource_index = 0;
@@ -63,5 +68,9 @@ bool compile_fragment_control_machine(const MachineProgram &primary,
                                       uint8_t float4_input_count,
                                       uint32_t binary_guid, uint32_t source_guid,
                                       IrCompileResult &out);
+bool compile_fragment_loop_machine(const MachineProgram &primary,
+                                   const IrUniformS32 &uniform,
+                                   uint32_t binary_guid, uint32_t source_guid,
+                                   IrCompileResult &out);
 
 } // namespace vsc::backend
