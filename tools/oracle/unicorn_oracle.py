@@ -32,7 +32,8 @@ try:
         UC_ARM_REG_R4, UC_ARM_REG_R5, UC_ARM_REG_R6, UC_ARM_REG_R7,
         UC_ARM_REG_R8, UC_ARM_REG_R9, UC_ARM_REG_R10, UC_ARM_REG_R11,
         UC_ARM_REG_R12, UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC,
-        UC_ARM_REG_CPSR,
+        UC_ARM_REG_CPSR, UC_ARM_REG_C13_C0_3, UC_ARM_REG_C1_C0_2,
+        UC_ARM_REG_FPEXC, UC_CPU_ARM_CORTEX_A9,
     )
 except ImportError as exc:  # pragma: no cover - dependency is host optional
     Uc = None
@@ -46,6 +47,8 @@ HEAP_BASE = 0x90000000
 HEAP_SIZE = 0x04000000
 TRAMP_BASE = 0x8F000000
 TRAMP_SIZE = 0x00010000
+TLS_BASE = 0x8E000000
+TLS_SIZE = 0x00020000
 RETURN_ADDR = TRAMP_BASE + 0xF000
 
 # Custom host callback trap IDs. Import trap IDs are read from trap_map.json.
@@ -67,6 +70,7 @@ EXPORT_NIDS = {
 # Known imports in the uploaded 1.6.5 module. Unknown NIDs remain visible in
 # trace output instead of being silently guessed.
 KNOWN_IMPORTS = {
+    0x120AFC8C: "sceKernelUnlockLwMutex2",
     0x14E9DBD7: "sceClibMemcpy",
     0x244E76D2: "sceKernelDeleteLwMutex",
     0x2F2C6046: "sceClibAbort",
@@ -88,6 +92,7 @@ KNOWN_IMPORTS = {
     0x1282C436: "sceRtcConvertUtcToLocalTime",
     0x23F79274: "sceRtcGetCurrentTick",
     0x3A332F81: "sceRtcSetTime_t",
+    0x46E7BE7B: "sceKernelLockLwMutex",
     0xCD89F464: "sceRtcSetTick",
     0xF2B238E2: "sceRtcGetTick",
 }
@@ -209,9 +214,14 @@ class Oracle:
         self.source_text_ptr = 0
         self.source_size = 0
         self.uc = Uc(UC_ARCH_ARM, UC_MODE_ARM | UC_MODE_LITTLE_ENDIAN)
+        self.uc.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_A9)
+        # Enable VFP/NEON coprocessors as the Vita Cortex-A9 runtime does.
+        self.uc.reg_write(UC_ARM_REG_C1_C0_2, 0x00F00000)  # CP10/CP11 full access
+        self.uc.reg_write(UC_ARM_REG_FPEXC, 1 << 30)       # FPEXC.EN
         self._map_image()
         self._install_trampolines()
         self.uc.hook_add(UC_HOOK_INTR, self._on_interrupt)
+        self._start_module()
 
     def _parse_exports(self) -> Dict[int, int]:
         out: Dict[int, int] = {}
@@ -246,7 +256,12 @@ class Oracle:
         self.uc.mem_map(STACK_BASE, STACK_SIZE)
         self.uc.mem_map(HEAP_BASE, HEAP_SIZE)
         self.uc.mem_map(TRAMP_BASE, TRAMP_SIZE)
+        self.uc.mem_map(TLS_BASE, TLS_SIZE)
         self.uc.reg_write(UC_ARM_REG_SP, STACK_BASE + STACK_SIZE - 0x1000)
+        # SceShaccCg uses TPIDRURO (MRC p15,c13,c0,3) for its per-thread state.
+        # A deterministic zeroed TLS block is sufficient for the single-threaded
+        # clean-room oracle and lets module_start populate its slots normally.
+        self.uc.reg_write(UC_ARM_REG_C13_C0_3, TLS_BASE)
 
         # Patch imports in memory only. Nothing is written back to the Sony ELF.
         for t in self.traps.values():
@@ -264,6 +279,15 @@ class Oracle:
         # Stop address for direct host->guest calls. emu_start() exits when the
         # PC reaches this address, so no SVC is needed here.
         self.uc.mem_write(RETURN_ADDR, arm_bx_lr())
+
+    def _start_module(self) -> None:
+        start_offset = int(self.imports.get("module", {}).get("start", 0))
+        text_vaddr = int(self.imports.get("text_vaddr", 0))
+        if not start_offset or not text_vaddr:
+            raise ValueError("oracle metadata has no module_start address")
+        rc = self.call(text_vaddr + start_offset, 0, 0)
+        if rc != 0:
+            raise RuntimeError(f"oracle module_start failed with {rc:#x}")
 
     def read(self, addr: int, size: int) -> bytes:
         return bytes(self.uc.mem_read(addr, size))
@@ -316,12 +340,15 @@ class Oracle:
         else:
             cpsr &= ~0x20
         self.uc.reg_write(UC_ARM_REG_CPSR, cpsr)
-        begin = addr & ~1
+        # Unicorn selects Thumb state from bit 0 of the emulation start address.
+        # Merely setting CPSR.T and passing an even PC leaves the decoder in ARM
+        # mode on current Unicorn releases, so preserve the interworking bit here.
+        begin = addr
         self.uc.emu_start(begin, RETURN_ADDR, count=max_insn)
         return self.uc.reg_read(UC_ARM_REG_R0) & 0xFFFFFFFF
 
-    def call_export(self, nid: int, *args: int) -> int:
-        return self.call(self.exports[nid], *args)
+    def call_export(self, nid: int, *args: int, max_insn: int = 50_000_000) -> int:
+        return self.call(self.exports[nid], *args, max_insn=max_insn)
 
     def _on_interrupt(self, uc, intno, _user_data):
         pc = uc.reg_read(UC_ARM_REG_PC)
@@ -412,6 +439,11 @@ class Oracle:
             self._ret(0); return
         if name == "sceKernelDeleteLwMutex":
             self._ret(0); return
+        if name in ("sceKernelLockLwMutex", "sceKernelUnlockLwMutex2"):
+            # The oracle is single-threaded, so there is no competing owner.
+            # Preserve the module's success path without fabricating scheduler
+            # state that cannot affect deterministic shader code generation.
+            self._ret(0); return
         if name == "sceKernelGetProcessTimeWide":
             # Deterministic monotonic-enough synthetic process time.
             self._ret(0); self.uc.reg_write(UC_ARM_REG_R1, 0); return
@@ -465,9 +497,10 @@ class Oracle:
 
         options = self.heap.malloc(0x68)
         self.write(options, b"\0" * 0x68)
-        rc = self.call_export(0x3B58AFA0, options)
-        if rc != 0:
-            raise RuntimeError(f"InitializeCompileOptions returned {rc:#x}")
+        # The 1.6.5 export leaves the default entry-point pointer in R0 even
+        # though public reconstructions commonly declare an int return. Treat
+        # the initialized structure as authoritative rather than requiring R0=0.
+        self.call_export(0x3B58AFA0, options)
         self.write_u32(options + 0x00, self.source_name_ptr)
         self.write_u32(options + 0x04, 1 if stage == "fragment" else 0)
         self.write_u32(options + 0x08, self.put_cstr(entry))
