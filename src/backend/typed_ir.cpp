@@ -534,20 +534,36 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         case TypedOpcode::FloatUnary: {
             const auto unary_op = static_cast<TypedFloatUnaryOp>(instruction.subop());
             if (instruction.dst.type() != TypedType::F32x4 || instruction.src0.type() != TypedType::F32x4 ||
-                unary_op > TypedFloatUnaryOp::Abs) {
-                error = "typed float unary currently supports F32x4 negate/absolute";
+                unary_op > TypedFloatUnaryOp::Saturate) {
+                error = "typed float unary currently supports F32x4 negate/absolute/saturate";
                 return false;
             }
             const auto src = lower_value(typed, instruction.src0, values, literals, machine);
-            const auto dst = machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp, 2);
             const auto zero = machine.physical(machine_immediate(0), MachineType::F32);
-            if (dst.kind() == MachineOperandKind::None || src.kind() == MachineOperandKind::None ||
-                !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Add),
-                    machine_vector_config(0xF, MachineVectorSwizzle::Identity,
-                        unary_op == TypedFloatUnaryOp::Neg, unary_op == TypedFloatUnaryOp::Abs),
-                    dst, src, zero)) {
-                error = "failed to lower typed float unary operation to Machine IR";
-                return false;
+            MachineOperand dst{};
+            if (unary_op==TypedFloatUnaryOp::Saturate) {
+                const auto clamped_low=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+                dst=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+                const auto one=machine.physical(machine_special(1),MachineType::F32);
+                if (src.kind()==MachineOperandKind::None || clamped_low.kind()==MachineOperandKind::None ||
+                    dst.kind()==MachineOperandKind::None ||
+                    !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Max),
+                        machine_vector_config(0xF),clamped_low,src,zero) ||
+                    !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Min),
+                        machine_vector_config(0xF,MachineVectorSwizzle::Source2YYYY),dst,clamped_low,one)) {
+                    error="failed to lower typed saturate to validated max/min Machine IR";
+                    return false;
+                }
+            } else {
+                dst = machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp, 2);
+                if (dst.kind() == MachineOperandKind::None || src.kind() == MachineOperandKind::None ||
+                    !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Add),
+                        machine_vector_config(0xF, MachineVectorSwizzle::Identity,
+                            unary_op == TypedFloatUnaryOp::Neg, unary_op == TypedFloatUnaryOp::Abs),
+                        dst, src, zero)) {
+                    error = "failed to lower typed float unary operation to Machine IR";
+                    return false;
+                }
             }
             values[instruction.dst.id()] = dst;
             value_types[instruction.dst.id()] = instruction.dst.type();

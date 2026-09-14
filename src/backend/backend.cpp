@@ -584,11 +584,11 @@ bool spirv_to_gxp(VscStage stage, const char *entrypoint,
         out.diagnostics.push_back({VSC_DIAG_ERROR,0x2201,0,0,ss.str()}); return false;
     }
 
+    std::string typed_why;
 #if defined(OPENSHACCG_ENABLE_SPIRV_CROSS)
     {
         backend::TypedShader typed(stage == VSC_STAGE_FRAGMENT ? backend::TypedStage::Fragment
                                                                : backend::TypedStage::Vertex);
-        std::string typed_why;
         if (spirv_cross_to_typed_shader(prepared.words, typed.stage(), wanted_name, typed, typed_why)) {
             backend::IrCompileResult lowered;
             if (backend::compile_typed_shader(typed, lowered)) {
@@ -610,9 +610,10 @@ bool spirv_to_gxp(VscStage stage, const char *entrypoint,
         lower_vertex_subset(words,word_count,selected->id,portable,why);
     if (!portable_ok) {
         const uint32_t code = stage == VSC_STAGE_FRAGMENT ? 0x2220 : 0x2210;
-        out.diagnostics.push_back({VSC_DIAG_ERROR,code,0,0,
-            std::string("unsupported ")+(stage==VSC_STAGE_FRAGMENT?"fragment":"vertex")+
-            " SPIR-V subset: "+why});
+        std::string message=std::string("unsupported ")+(stage==VSC_STAGE_FRAGMENT?"fragment":"vertex")+
+            " SPIR-V subset: "+why;
+        if (!typed_why.empty()) message += "; SPIRV-Cross Typed path: " + typed_why;
+        out.diagnostics.push_back({VSC_DIAG_ERROR,code,0,0,std::move(message)});
         return false;
     }
     backend::IrCompileResult lowered;

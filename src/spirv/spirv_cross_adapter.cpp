@@ -219,6 +219,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
         std::unordered_map<uint32_t, uint16_t> matrix_values;
         std::unordered_map<uint32_t, ExtractInfo> extracts;
         std::unordered_map<uint32_t, uint32_t> constants;
+        std::unordered_map<uint32_t, std::array<uint32_t,4>> float4_constants;
         std::unordered_set<uint32_t> float_ones;
         std::unordered_set<uint32_t> glsl450_imports;
         std::unordered_map<uint32_t, uint16_t> outputs;
@@ -366,14 +367,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     if (scalar==constants.end()) { resolved=false; break; }
                     bits[lane]=scalar->second;
                 }
-                if (resolved) {
-                    const auto value=program.literal_f32x4(bits);
-                    if (value.kind()==backend::TypedValueKind::None) {
-                        error="failed to create Typed float4 constant";
-                        return false;
-                    }
-                    values[args[1]]=value;
-                }
+                if (resolved) float4_constants[args[1]]=bits;
             }
             offset += count;
         }
@@ -689,6 +683,30 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         error = "failed to emit Typed IR min/max"; return false;
                     }
                     values[args[1]] = dst;
+                } else if (ext == GLSLstd450FClamp) {
+                    if (count != 8 || result_type != backend::TypedType::F32x4) {
+                        error="GLSL.std.450 FClamp is outside the validated float4 subset";
+                        return false;
+                    }
+                    const auto source=values.find(args[4]);
+                    const std::array<uint32_t,4> zero_bits={{0,0,0,0}};
+                    const std::array<uint32_t,4> one_bits={{0x3f800000u,0x3f800000u,0x3f800000u,0x3f800000u}};
+                    auto constant_bits=[&](uint32_t id, const std::array<uint32_t,4> &expected) {
+                        const auto it=float4_constants.find(id);
+                        return it!=float4_constants.end() && it->second==expected;
+                    };
+                    if (source==values.end() || source->second.type()!=result_type ||
+                        !constant_bits(args[5],zero_bits) || !constant_bits(args[6],one_bits)) {
+                        error="FClamp bounds are not the validated float4 zero/one constants";
+                        return false;
+                    }
+                    const auto dst=program.make_value(result_type);
+                    if (!program.emit<backend::TypedOpcode::FloatUnary>(
+                            static_cast<uint8_t>(backend::TypedFloatUnaryOp::Saturate),dst,source->second)) {
+                        error="failed to emit Typed IR saturate";
+                        return false;
+                    }
+                    values[args[1]]=dst;
                 } else {
                     error = "GLSL.std.450 instruction is not in the validated Typed IR subset";
                     return false;
@@ -967,7 +985,19 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         // Already materialized in each predecessor.
                     } else {
                         const auto output = outputs.find(args[0]);
-                        const auto value = values.find(args[1]);
+                        auto value = values.find(args[1]);
+                        if (value==values.end()) {
+                            const auto constant=float4_constants.find(args[1]);
+                            if (constant!=float4_constants.end()) {
+                                const auto literal=program.literal_f32x4(constant->second);
+                                if (literal.kind()==backend::TypedValueKind::None) {
+                                    error="failed to materialize fragment float4 output constant";
+                                    return false;
+                                }
+                                values[args[1]]=literal;
+                                value=values.find(args[1]);
+                            }
+                        }
                         if (output == outputs.end() || value == values.end()) {
                             error = "Typed IR adapter encountered a non-output store or unresolved value"; return false;
                         }

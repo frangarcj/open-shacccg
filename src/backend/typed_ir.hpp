@@ -100,6 +100,7 @@ enum class TypedFloatOp : uint8_t {
 enum class TypedFloatUnaryOp : uint8_t {
     Neg,
     Abs,
+    Saturate,
 };
 
 enum class TypedFloatSwizzleOp : uint8_t {

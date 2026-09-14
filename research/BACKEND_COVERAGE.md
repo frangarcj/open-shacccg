@@ -290,9 +290,21 @@ contiguous reachable float4 locations only. Standalone no-uniform arithmetic
 profiles use the oracle-observed SDK 1.6.5 metadata for one/two/three float4
 inputs, while the existing uniform-arithmetic profile is preserved.
 
-As a result, the `float4`/`half4` slice improves from 0/22 to 18/22 without a
-new USSE opcode. Add/sub/mul/min/max/abs/neg/mad/dot now compile end to end in
-both source spellings; only div and saturate remain unsupported in that slice.
+As a result, the `float4`/`half4` slice first improved from 0/22 to 18/22 without
+a new USSE opcode. Add/sub/mul/min/max/abs/neg/mad/dot compile end to end in both
+source spellings.
+
+`saturate` then raises that slice to 20/22 without adding a new hardware family:
+GLSL.std.450 `FClamp` is accepted only for the exact vector constants 0 and 1,
+then lowered as the already validated V32NMAD `MAX(x,0)` followed by
+`MIN(x,SPECIAL1.yyyy)`. The SPECIAL1.y constant is independently anchored by
+the public clear_v homogeneous-position path. Division is now the only missing
+operation in the float4/half4 ALU slice and is the first case that genuinely
+requires VCOMP coverage.
+
+Backend fallback diagnostics now retain the SPIRV-Cross Typed-path failure when
+the dependency-free parser also rejects a shader, so future oracle sweeps expose
+the actual higher-level coverage gap instead of only the final fallback error.
 Sony often selects V16NMAD/VMAD2 and tighter scheduling, whereas Open currently
 uses its validated V32NMAD path, so compilation coverage is the milestone here,
 not byte identity.

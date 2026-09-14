@@ -27,6 +27,8 @@ Implemented now:
   scalar/X splats and the validated F32x4 -> F16x4 VPCK conversion
 - generic fragment arithmetic now tracks only input locations reachable from the output expression,
   so one/two/three-input float4 graphs lower without being blocked by unused Cg/HLSL parameters
+- `saturate(float4)` lowers fail-closed from GLSL.std.450 FClamp with exact 0/1 bounds to
+  validated `MAX(x,0)` + `MIN(x,SPECIAL1.yyyy)` V32NMAD forms
 - oracle-exact fragment profiles for `wzyx` and the constant `float4(1,0,0,1)`,
   including swizzled VPCK, literal-table placement and the primary/interface overlap convention
 - oracle-exact standalone vertex profiles for float4 position passthrough,

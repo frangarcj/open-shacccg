@@ -136,6 +136,7 @@ static_assert(sizeof(MachineInstruction) == 16, "machine instructions must stay 
 enum class MachineVectorSwizzle : uint8_t {
     Identity,
     PositionXY11,
+    Source2YYYY,
 };
 
 constexpr uint8_t machine_pack_subop(usse::PackFormat src, usse::PackFormat dst) {
