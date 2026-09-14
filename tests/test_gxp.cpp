@@ -262,6 +262,36 @@ int test_gxp_writer() {
         }
     }
 
+    {
+        // Constant fragments use the oracle-observed primary/interface overlap:
+        // primary starts at 0x98+0x18, so the first qword occupies the tail of
+        // the interface record and zero-length secondary anchors at primary-4.
+        ProgramImage overlap{};
+        overlap.type=ProgramType::Fragment;
+        overlap.interface_block=interface_block;
+        overlap.interface_block_size=sizeof(interface_block);
+        overlap.primary_instructions=primary;
+        overlap.primary_instruction_count=2;
+        overlap.fragment_primary_overlaps_interface=true;
+        const size_t overlap_need=required_size(overlap);
+        std::vector<uint8_t> overlap_bytes(overlap_need);
+        if (!overlap_need || !write_program(overlap,overlap_bytes.data(),overlap_bytes.size())) {
+            failures += fail("fragment primary/interface overlap layout was rejected");
+        } else {
+            auto get_u32=[&](size_t off) {
+                uint32_t value=0;
+                std::memcpy(&value,overlap_bytes.data()+off,sizeof(value));
+                return value;
+            };
+            const size_t primary_off=0x40u+get_u32(0x40);
+            const size_t secondary_off=0x48u+get_u32(0x48);
+            if (primary_off!=0xb0 || secondary_off!=primary_off-4 || overlap_need!=0xc0)
+                failures += fail("fragment overlap pointers/size do not match oracle convention");
+            if (std::memcmp(overlap_bytes.data()+primary_off,primary,sizeof(primary))!=0)
+                failures += fail("overlapping primary stream was not written at oracle position");
+        }
+    }
+
 
     // Full independent texture_v reconstruction. Every operand-bearing USSE
     // instruction is assembled from semantic operands, then serialized from

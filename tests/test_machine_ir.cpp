@@ -71,6 +71,22 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        const uint8_t wzyx=static_cast<uint8_t>(3u | (2u<<2) | (1u<<4));
+        if (!program.emit_config<MachineOpcode::PackSwizzle>(wzyx,machine_pack_config(0xF,true,false),
+                program.physical(machine_fragment_output(0),MachineType::F16),
+                program.physical(machine_primary(0),MachineType::F32),
+                program.physical(machine_primary(1),MachineType::F32))) {
+            failures += fail("could not construct wzyx PackSwizzle Machine IR");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=1 ||
+                result.words[0]!=0x40800d7ea0024083ULL)
+                failures += fail("Machine PackSwizzle did not reproduce oracle wzyx VPCK");
+        }
+    }
+
+    {
+        MachineProgram program;
         const auto counter=program.make_value<MachineType::S32>();
         if (!program.emit<MachineOpcode::LoopCounterInit>(0,counter) ||
             !program.emit<MachineOpcode::LoopIncrement>(1,counter)) {

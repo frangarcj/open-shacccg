@@ -46,6 +46,8 @@ enum class FragmentMachineProfile : uint8_t {
     VaryingColor,
     Texture2D,
     TextureTint2D,
+    SwizzleWzyx,
+    ConstantRed,
 };
 
 bool compile_vertex_construct_position(const IrAttribute &position,

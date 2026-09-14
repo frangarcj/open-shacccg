@@ -217,6 +217,7 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
     uint8_t fragment_extension[8]{};
     std::vector<gxp::ParameterContainerDesc> containers;
     std::vector<gxp::ParameterDesc> parameters;
+    std::vector<gxp::LiteralDesc> literals;
 
     gxp::ProgramImage image{};
     image.type = gxp::ProgramType::Fragment;
@@ -349,6 +350,55 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
         image.secondary_register_count=2;
         image.compiler_version_raw=0;
         break;
+
+    case FragmentMachineProfile::SwizzleWzyx: {
+        if (!uniforms.empty() || !samplers.empty()) {
+            out.error="wzyx fragment profile takes no uniforms or samplers";
+            return false;
+        }
+        const uint8_t wzyx=static_cast<uint8_t>(3u | (2u<<2) | (1u<<4));
+        if (!primary.emit_config<MachineOpcode::PackSwizzle>(wzyx,machine_pack_config(0xF,true,false),
+                primary.physical(machine_fragment_output(0),MachineType::F16),
+                primary.physical(machine_primary(0),MachineType::F32),
+                primary.physical(machine_primary(1),MachineType::F32))) {
+            out.error="failed to build wzyx fragment Machine IR";
+            return false;
+        }
+        interface_block[10]=1; interface_block[11]=4; interface_block[12]=1; interface_block[16]=4;
+        interface_block[20]=0x0f; interface_block[22]=0xc0; interface_block[23]=0x0e; interface_block[28]=0x30;
+        image.program_flags=0x00081001;
+        image.sdk_version=0x0165;
+        image.primary_register_count=4;
+        image.secondary_register_count=0;
+        image.data_buffer_count=0;
+        image.compiler_version_raw=0x0002df30;
+        break;
+    }
+
+    case FragmentMachineProfile::ConstantRed:
+        if (!uniforms.empty() || !samplers.empty()) {
+            out.error="constant-red fragment profile takes no uniforms or samplers";
+            return false;
+        }
+        if (!primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F16),
+                machine_move_config(0x5,4),
+                primary.physical(machine_fragment_output(0),MachineType::F16),
+                primary.physical(machine_secondary(0),MachineType::F16))) {
+            out.error="failed to build constant-red fragment Machine IR";
+            return false;
+        }
+        interface_block[10]=1; interface_block[11]=4; interface_block[16]=4;
+        interface_block[29]=0x07; interface_block[30]=0x44; interface_block[31]=0xfa;
+        containers={{19,0,0,2}};
+        literals={{0,0x00003c00u},{1,0x3c000000u}};
+        image.program_flags=0x00080001;
+        image.sdk_version=0x0165;
+        image.primary_register_count=2;
+        image.secondary_register_count=2;
+        image.data_buffer_count=2;
+        image.compiler_version_raw=0x0002df30;
+        image.fragment_primary_overlaps_interface=true;
+        break;
     }
 
     MachineCompileResult primary_compiled, secondary_compiled;
@@ -362,6 +412,8 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
     image.container_count=containers.size();
     image.parameters=parameters.data();
     image.parameter_count=parameters.size();
+    image.literals=literals.data();
+    image.literal_count=literals.size();
 
     const size_t needed=gxp::required_size(image);
     if(!needed){out.error="GXP writer rejected fragment Machine profile";return false;}

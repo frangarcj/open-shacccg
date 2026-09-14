@@ -240,6 +240,22 @@ observable metadata exactly; instruction selection differs in the float body and
 extra state moves/branches. Decrementing loops use a different source profile and
 remain intentionally unsupported.
 
+## Oracle-exact swizzle and constant profiles
+
+Two small fragment probes now reproduce Sony byte-for-byte outside the two GUID
+fields. `fp-swizzle-wzyx` anchors F32->F16 VPCK component selectors `3,2,1,0`
+to `0x40800d7ea0024083`. `fp-constant-red` anchors the literal-backed F16 VMOV
+`0x38800422c5000000` and exposes an additional canonical GXP layout: with no
+fragment inputs, primary code begins at `interface+0x18`, so PHAS overlaps the
+last qword of the interface record and the zero-length secondary anchor is
+`primary-4`. The constant's two literal entries are `{0,0x00003c00}` and
+`{1,0x3c000000}` in container 19. Host tests cover the layout independently of
+the private oracle.
+
+Across the non-ALU small-feature probes (swizzle, constant, uniform, texture and
+basic vertex shapes), OpenShaccCg now compiles 5/8; the only compile failures are
+the three vertex probes (`vp-passthrough`, `vp-uniform-mul`, `vp-varying`).
+
 ## Next backend order
 
 1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, keeping the single Typed -> Machine lowering path fail-closed.

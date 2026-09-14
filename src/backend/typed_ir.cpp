@@ -183,6 +183,19 @@ TypedValue TypedProgram::literal_s32(int32_t value) {
     return TypedValue::literal(static_cast<uint32_t>(literals_.size() - 1), TypedType::S32);
 }
 
+TypedValue TypedProgram::literal_f32x4(const std::array<uint32_t,4> &bits) {
+    if (float4_literals_.size() >= std::numeric_limits<uint16_t>::max()) return {};
+    const auto dst=make_value(TypedType::F32x4);
+    if (dst.kind()==TypedValueKind::None) return {};
+    const uint16_t index=static_cast<uint16_t>(float4_literals_.size());
+    float4_literals_.push_back(bits);
+    if (!emit<TypedOpcode::FloatConstant>(0,dst,{},{},index)) {
+        float4_literals_.pop_back();
+        return {};
+    }
+    return dst;
+}
+
 TypedValue TypedProgram::input(TypedType type, uint16_t location) {
     auto dst = make_value(type);
     if (dst.kind() == TypedValueKind::None || !emit<TypedOpcode::Input>(0, dst, {}, {}, location)) return {};
@@ -540,6 +553,10 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             value_defined[instruction.dst.id()] = true;
             break;
         }
+        case TypedOpcode::FloatSwizzle:
+        case TypedOpcode::FloatConstant:
+            error="high-level float swizzle/constant requires compile_typed_shader";
+            return false;
         case TypedOpcode::FloatExtractX: {
             const auto components=typed_component_count(instruction.src0.type());
             if (instruction.dst.type()!=TypedType::F32 || !typed_is_float(instruction.src0.type()) ||
@@ -930,6 +947,24 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     if (root_def->opcode() == TypedOpcode::Sample2D) {
         return compile_fragment_machine_profile(FragmentMachineProfile::Texture2D,
                                                 fragment_uniforms,fragment_samplers,0,0,out);
+    }
+    if (root_def->opcode()==TypedOpcode::FloatSwizzle &&
+        root_def->subop()==static_cast<uint8_t>(TypedFloatSwizzleOp::Wzyx) &&
+        inputs.size()==1 && inputs[0]->index==0 && inputs[0]->type==TypedType::F32x4 &&
+        uniforms.empty() && samplers.empty()) {
+        return compile_fragment_machine_profile(FragmentMachineProfile::SwizzleWzyx,{}, {},0,0,out);
+    }
+    if (root_def->opcode()==TypedOpcode::FloatConstant && uniforms.empty() && samplers.empty() && inputs.empty()) {
+        if (root_def->aux>=program.float4_literals().size()) {
+            out.error="typed float constant index is out of range";
+            return false;
+        }
+        const std::array<uint32_t,4> red={{0x3f800000u,0u,0u,0x3f800000u}};
+        if (program.float4_literals()[root_def->aux]!=red) {
+            out.error="float4 constant is outside the oracle-validated red profile";
+            return false;
+        }
+        return compile_fragment_machine_profile(FragmentMachineProfile::ConstantRed,{}, {},0,0,out);
     }
     if (root_def->opcode() == TypedOpcode::FloatBinary &&
         root_def->subop() == static_cast<uint8_t>(TypedFloatOp::Mul)) {

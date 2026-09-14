@@ -25,6 +25,8 @@ Implemented now:
   including a zero-word dependent-sample pseudo-op that keeps texture-result lifetimes explicit
 - direct Typed IR -> Machine IR lowering for F32x4 multiply/add/sub/min/max, dot, negate/absolute,
   scalar/X splats and the validated F32x4 -> F16x4 VPCK conversion
+- oracle-exact fragment profiles for `wzyx` and the constant `float4(1,0,0,1)`,
+  including swizzled VPCK, literal-table placement and the primary/interface overlap convention
 - SPIRV-Cross lowering for `GLSL.std.450` FAbs/FMin/FMax, validated X-splat shuffles and `OpFConvert`
 - oracle-validated USSE BR encoding with signed 20-bit forward/backward offsets,
   compact Machine/Typed label tables and structured U32 conditional/unconditional branches

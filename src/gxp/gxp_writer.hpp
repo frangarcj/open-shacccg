@@ -75,6 +75,12 @@ struct ProgramImage {
     const uint8_t *fragment_interface_extension = nullptr;
     size_t fragment_interface_extension_size = 0;
 
+    // Oracle-observed constant-fragment layout: the first primary qword starts
+    // at interface+0x18 and therefore occupies the final 8 bytes of the
+    // 32-byte interface record. This is distinct from the normal no-secondary
+    // fragment layout, which reserves an 8-byte extension slot first.
+    bool fragment_primary_overlaps_interface = false;
+
     const uint64_t *secondary_instructions = nullptr;
     size_t secondary_instruction_count = 0;
     const uint64_t *primary_instructions = nullptr;

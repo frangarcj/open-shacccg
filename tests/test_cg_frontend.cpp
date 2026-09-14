@@ -237,6 +237,33 @@ bool compile_loop_gxp(const std::string &source, const char *name, uint8_t step)
     vsc_destroy_result(&request.allocator,&result);
     return ok;
 }
+
+bool compile_oracle_fragment_profile(const std::string &source, const char *name,
+                                     uint32_t expected_size, uint32_t expected_flags,
+                                     uint16_t pa, uint16_t sa, uint32_t literal_count,
+                                     const uint64_t *expected_words, size_t expected_word_count) {
+    VscCompileRequest request{};
+    request.source_name=name;
+    request.source=source.data();
+    request.source_size=source.size();
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_FRAGMENT;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+    if (ok) {
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        ok=view.valid() && view.logical_size()==expected_size && view.sdk_version()==0x0165 &&
+            view.flags()==expected_flags && view.primary_register_count()==pa &&
+            view.secondary_register_count()==sa && view.literal_count()==literal_count &&
+            view.primary_instruction_count()==expected_word_count;
+        const auto code=view.primary_program();
+        if (ok) ok=code.size==expected_word_count*sizeof(uint64_t) &&
+            std::memcmp(code.data,expected_words,code.size)==0;
+    }
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
 #endif
 #endif
 } // namespace
@@ -291,6 +318,20 @@ int test_cg_frontend() {
             std::fprintf(stderr,"test_cg_frontend: loop probe failed: %s\n",probe.name);
             ++failures;
         }
+    }
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-swizzle-wzyx.cg");
+        const uint64_t words[]={0xfa44070000000000ULL,0x40800d7ea0024083ULL};
+        if (source.empty() || !compile_oracle_fragment_profile(source,"fp-swizzle-wzyx.cg",
+                208,0x00081001,4,0,0,words,2))
+            failures += fail("Cg wzyx profile did not reproduce oracle metadata/VPCK");
+    }
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-constant-red.cg");
+        const uint64_t words[]={0xfa44070000000000ULL,0x38800422c5000000ULL};
+        if (source.empty() || !compile_oracle_fragment_profile(source,"fp-constant-red.cg",
+                216,0x00080001,2,2,2,words,2))
+            failures += fail("Cg constant-red profile did not reproduce oracle metadata/VMOV");
     }
 #endif
     return failures;

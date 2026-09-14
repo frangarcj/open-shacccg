@@ -350,6 +350,23 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 if (constant_type.basetype == spirv_cross::SPIRType::Float && constant_type.width == 32 &&
                     constant_type.vecsize == 1 && args[2] == 0x3f800000u)
                     float_ones.insert(args[1]);
+            } else if (op==spv::OpConstantComposite && count==7 &&
+                       typed_type(compiler.get_type(args[0]))==backend::TypedType::F32x4) {
+                std::array<uint32_t,4> bits{};
+                bool resolved=true;
+                for (uint8_t lane=0;lane<4;++lane) {
+                    auto scalar=constants.find(args[2+lane]);
+                    if (scalar==constants.end()) { resolved=false; break; }
+                    bits[lane]=scalar->second;
+                }
+                if (resolved) {
+                    const auto value=program.literal_f32x4(bits);
+                    if (value.kind()==backend::TypedValueKind::None) {
+                        error="failed to create Typed float4 constant";
+                        return false;
+                    }
+                    values[args[1]]=value;
+                }
             }
             offset += count;
         }
@@ -516,6 +533,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 }
                 const bool identity = args[4] == 0 && args[5] == 1 && args[6] == 2 && args[7] == 3;
                 const bool splat_x = args[4] == 0 && args[5] == 0 && args[6] == 0 && args[7] == 0;
+                const bool wzyx = args[4] == 3 && args[5] == 2 && args[6] == 1 && args[7] == 0;
                 if (identity) {
                     values[args[1]] = source->second;
                 } else if (splat_x) {
@@ -524,6 +542,14 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         error = "failed to emit Typed IR float4 X splat"; return false;
                     }
                     values[args[1]] = dst;
+                } else if (wzyx) {
+                    const auto dst=program.make_value<backend::TypedType::F32x4>();
+                    if (!program.emit<backend::TypedOpcode::FloatSwizzle>(
+                            static_cast<uint8_t>(backend::TypedFloatSwizzleOp::Wzyx),dst,source->second)) {
+                        error="failed to emit oracle-validated wzyx Typed swizzle";
+                        return false;
+                    }
+                    values[args[1]]=dst;
                 } else {
                     error = "vector shuffle pattern is not independently validated";
                     return false;

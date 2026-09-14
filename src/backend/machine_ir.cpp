@@ -346,7 +346,7 @@ MachineType pack_format_machine_type(usse::PackFormat format) {
 
 bool uses_instruction_config(MachineOpcode opcode) {
     return opcode == MachineOpcode::Move || opcode == MachineOpcode::MoveUpdate || opcode == MachineOpcode::Pack ||
-        opcode == MachineOpcode::PackValue || opcode == MachineOpcode::Vector ||
+        opcode == MachineOpcode::PackSwizzle || opcode == MachineOpcode::PackValue || opcode == MachineOpcode::Vector ||
         opcode == MachineOpcode::Vmad;
 }
 
@@ -817,6 +817,27 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             pack.no_schedule = (config & 0x0020u) != 0;
             pack.end = (config & 0x0040u) != 0;
             if (!builder.instruction(pack)) { out.error = "failed to encode machine VPCK"; return false; }
+            break;
+        }
+        case MachineOpcode::PackSwizzle: {
+            const uint16_t config=instruction.config();
+            if (config & ~0x007fu) { out.error="invalid machine pack-swizzle config"; return false; }
+            usse::VpckSemantic pack{};
+            if (!resolve_register_value(instruction.dst,MachineType::F16,out.value_registers,&pack.dst) ||
+                !resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&pack.src1) ||
+                !resolve_register_value(instruction.src1,MachineType::F32,out.value_registers,&pack.src2)) {
+                out.error="machine pack-swizzle requires F16 destination and F32 source pair";
+                return false;
+            }
+            pack.src_format=usse::PackFormat::F32;
+            pack.dst_format=usse::PackFormat::F16;
+            pack.dest_mask=static_cast<uint8_t>(config&0x0f);
+            pack.skip_invalid=(config&0x0010u)!=0;
+            pack.no_schedule=(config&0x0020u)!=0;
+            pack.end=(config&0x0040u)!=0;
+            for (uint8_t lane=0;lane<4;++lane)
+                pack.components[lane]=static_cast<uint8_t>((instruction.subop()>>(2*lane))&0x03u);
+            if (!builder.instruction(pack)) { out.error="failed to encode machine swizzled VPCK"; return false; }
             break;
         }
         case MachineOpcode::PackValue: {

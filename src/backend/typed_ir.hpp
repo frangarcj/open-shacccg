@@ -2,6 +2,7 @@
 
 #include "backend/machine_ir.hpp"
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -101,6 +102,10 @@ enum class TypedFloatUnaryOp : uint8_t {
     Abs,
 };
 
+enum class TypedFloatSwizzleOp : uint8_t {
+    Wzyx,
+};
+
 enum class TypedFloatConvertOp : uint8_t {
     F32x4ToF16x4,
 };
@@ -128,6 +133,7 @@ public:
     TypedValue make_predicate(bool inverted = false);
     TypedValue literal_u32(uint32_t value);
     TypedValue literal_s32(int32_t value);
+    TypedValue literal_f32x4(const std::array<uint32_t,4> &bits);
     TypedValue sampler(uint16_t binding);
 
     TypedValue input(TypedType type, uint16_t location);
@@ -161,6 +167,7 @@ public:
 
     const std::vector<TypedInstruction> &instructions() const { return instructions_; }
     const std::vector<uint32_t> &literals() const { return literals_; }
+    const std::vector<std::array<uint32_t,4>> &float4_literals() const { return float4_literals_; }
     const std::vector<uint32_t> &labels() const { return labels_; }
     uint32_t value_count() const { return next_value_; }
     uint16_t predicate_count() const { return next_predicate_; }
@@ -168,6 +175,7 @@ public:
 private:
     std::vector<TypedInstruction> instructions_;
     std::vector<uint32_t> literals_;
+    std::vector<std::array<uint32_t,4>> float4_literals_;
     std::vector<uint32_t> labels_;
     uint32_t next_value_ = 0;
     uint16_t next_predicate_ = 0;

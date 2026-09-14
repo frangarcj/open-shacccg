@@ -96,6 +96,10 @@ bool valid_desc(const ProgramImage &image) {
         return false;
     if (image.fragment_interface_extension && image.type != ProgramType::Fragment)
         return false;
+    if (image.fragment_primary_overlaps_interface &&
+        (image.type != ProgramType::Fragment || image.secondary_instruction_count != 0 ||
+         image.primary_instruction_count == 0))
+        return false;
     if (image.primary_instruction_count && !image.primary_instructions)
         return false;
     if (image.secondary_instruction_count && !image.secondary_instructions)
@@ -143,6 +147,7 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
     cursor = align_up(cursor, 8); if (!cursor) return false;
 
     size_t bytes = 0;
+    const bool primary_overlap=image.fragment_primary_overlaps_interface;
     if (image.type == ProgramType::Fragment && image.secondary_instruction_count) {
         // In the validated clear_f program the single secondary USSE2 word is
         // embedded in the final 12 bytes of the 32-byte fragment interface
@@ -153,6 +158,10 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
         if (image.secondary_instruction_count != 1) return false;
         l.secondary_off = l.interface_off + 20;
         l.secondary_end = l.secondary_off + sizeof(uint64_t);
+    } else if (primary_overlap) {
+        l.primary_off=l.interface_off+24;
+        l.secondary_off=l.primary_off-4;
+        l.secondary_end=l.secondary_off;
     } else {
         // Known-good v1.4 programs with no secondary stream use the word
         // immediately before the primary stream as the canonical anchor.
@@ -168,8 +177,11 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
         l.secondary_end = image.secondary_instruction_count ? cursor : l.secondary_off;
     }
 
-    l.primary_off = cursor;
-    if (!mul_size(image.primary_instruction_count, sizeof(uint64_t), bytes) || !add_size(cursor, bytes)) return false;
+    if (!primary_overlap) l.primary_off = cursor;
+    if (!mul_size(image.primary_instruction_count, sizeof(uint64_t), bytes)) return false;
+    if (primary_overlap) {
+        if (bytes < sizeof(uint64_t) || !add_size(cursor,bytes-sizeof(uint64_t))) return false;
+    } else if (!add_size(cursor,bytes)) return false;
     cursor = align_up(cursor, 4); if (!cursor) return false;
 
     l.literals_off = cursor;
