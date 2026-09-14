@@ -85,3 +85,39 @@ Do not commit or redistribute the input or patched ELF.
 5. Trace the two unresolved imports and identify them from call behavior.
 
 Once `sceShaccCgInitializeCompileOptions` and `sceShaccCgGetVersionString` execute, move to `sceShaccCgCompileProgram` with the callback bridge and capture GXP bytes.
+
+## Differential runner
+
+`oracle_diff.py` is the normal backend-research entry point now that the local
+Unicorn oracle can execute the original compiler. It runs selected clean Cg
+probes against Sony, optionally compiles the same source with OpenShaccCg, and
+compares observable GXP metadata plus primary/secondary USSE words and coarse
+instruction families. Sony GXP bytes are held in memory and temporary storage
+only; the repository stores the clean probe sources and derived facts.
+
+Build the OpenShaccCg host compiler with the complete frontend first:
+
+```sh
+cmake -S . -B build-full \
+  -DOPENSHACCG_ENABLE_GLSLANG=ON \
+  -DOPENSHACCG_ENABLE_SPIRV_TOOLS=ON \
+  -DOPENSHACCG_ENABLE_SPIRV_CROSS=ON
+cmake --build build-full --target openshacccg_compile
+```
+
+Then run focused differentials from a Python environment with Unicorn installed:
+
+```sh
+export OPENSHACCG_ORACLE_ELF=/private/libshacccg.elf
+python3 tools/oracle/oracle_diff.py oracle_corpus_v2 \
+  --name 'fp-cmp-*-big' --open-compiler build-full/openshacccg_compile
+
+python3 tools/oracle/oracle_diff.py oracle_corpus_v2 \
+  --name fp-loop --report /tmp/fp-loop-report.json
+```
+
+Use `--feature control`, repeated `--name` filters and `--limit` for quick
+experiments. `--strict-open` makes OpenShaccCg compile failures or any byte
+difference outside Sony's two GUID fields fail the command, which is useful for
+regressions that are expected to be byte-identical. Without it, backend gaps are
+reported but do not make a successful Sony-oracle run fail.

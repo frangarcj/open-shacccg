@@ -45,6 +45,7 @@ Implemented now:
 - dependency-free Vita ELF inspection, module import/export parsing, and PT_LOAD extraction tools
 - local Cortex-A9/Thumb/VFP/TLS Unicorn oracle runner for a user-supplied original SceShaccCg module,
   with in-memory import traps and direct `CompileProgram` GXP capture
+- differential `oracle_diff.py` workflow that runs clean probes against Sony and compares observable GXP metadata/USSE against OpenShaccCg without retaining Sony GXP files
 - expanded differential shader corpus generator (ALU, constants, uniforms, control flow, texture, matrix and interface cases)
 - external oracle corpus runner protocol
 - GXP structural inspector, semantic comparator, USSE-family inspector and raw binary diff tools
@@ -58,7 +59,6 @@ Not implemented yet:
 - exotic GXP auxiliary tables (literal/uniform-buffer/dependent-sampler tables)
 - full `SceShaccCg` reflection export surface
 - real-Vita validation of GXP produced by the canonical writer
-- execution of the private Sony oracle in this development environment (no ARM emulator dependency is installed here)
 
 ## Build on host
 

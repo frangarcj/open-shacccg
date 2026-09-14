@@ -86,6 +86,10 @@ else()
     add_library(openshacccg_abi STATIC src/abi/sce_shacccg.cpp)
     target_include_directories(openshacccg_abi PUBLIC include PRIVATE src)
     target_link_libraries(openshacccg_abi PUBLIC openshacccg_core)
+
+    add_executable(openshacccg_compile tools/openshacccg_compile.cpp)
+    target_link_libraries(openshacccg_compile PRIVATE openshacccg_core)
+    target_include_directories(openshacccg_compile PRIVATE include)
 endif()
 
 if(OPENSHACCG_BUILD_TESTS AND NOT OPENSHACCG_BUILD_VITA_STATIC)
@@ -110,4 +114,10 @@ if(OPENSHACCG_BUILD_TESTS AND NOT OPENSHACCG_BUILD_VITA_STATIC)
         $<$<BOOL:${OPENSHACCG_ENABLE_SPIRV_CROSS}>:OPENSHACCG_ENABLE_SPIRV_CROSS=1>
     )
     add_test(NAME openshacccg_tests COMMAND openshacccg_tests)
+
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME oracle_diff_tests
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_oracle_diff.py)
+    endif()
 endif()
