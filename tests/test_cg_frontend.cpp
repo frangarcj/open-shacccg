@@ -175,6 +175,23 @@ bool compile_control_flow_gxp(const std::string &source) {
     vsc_destroy_result(&request.allocator,&result);
     return ok;
 }
+
+bool compile_fragment_gxp(const std::string &source, const char *name) {
+    VscCompileRequest request{};
+    request.source_name=name;
+    request.source=source.data();
+    request.source_size=source.size();
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_FRAGMENT;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    const bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: %s backend diagnostic=%s\n",name,
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
 #endif
 #endif
 } // namespace
@@ -212,6 +229,15 @@ int test_cg_frontend() {
     const std::string control_source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-if-big.cg");
     if (control_source.empty() || !compile_control_flow_gxp(control_source))
         failures += fail("large Cg if/else did not compile through Typed/Machine BR to a control-flow GXP");
+    const std::string simple_if=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-if.cg");
+    if (simple_if.empty() || !compile_fragment_gxp(simple_if,"fp-if.cg"))
+        failures += fail("Cg early-return if with case-free OpSwitch did not compile end to end");
+    const std::string not_equal=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-cmp-ne-big.cg");
+    if (not_equal.empty() || !compile_fragment_gxp(not_equal,"fp-cmp-ne-big.cg"))
+        failures += fail("Cg unordered not-equal compare did not compile end to end");
+    const std::string ternary=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-ternary.cg");
+    if (ternary.empty() || !compile_fragment_gxp(ternary,"fp-ternary.cg"))
+        failures += fail("Cg float4 ternary did not lower through validated branch control flow");
 #endif
     return failures;
 #endif

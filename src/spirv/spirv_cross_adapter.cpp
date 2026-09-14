@@ -133,6 +133,10 @@ bool map_float_compare(uint16_t op, usse::CompareOp &mapped) {
     switch (static_cast<spv::Op>(op)) {
     case spv::OpFOrdEqual: mapped = usse::CompareOp::Equal; return true;
     case spv::OpFOrdNotEqual: mapped = usse::CompareOp::NotEqual; return true;
+    // glslang's HLSL frontend emits the Cg/HLSL `!=` operator as unordered
+    // not-equal. The Sony oracle probe fp-cmp-ne-big anchors this source-level
+    // operation to the same F32 VTST not-equal profile used by Typed IR.
+    case spv::OpFUnordNotEqual: mapped = usse::CompareOp::NotEqual; return true;
     case spv::OpFOrdLessThan: mapped = usse::CompareOp::Less; return true;
     case spv::OpFOrdLessThanEqual: mapped = usse::CompareOp::LessEqual; return true;
     case spv::OpFOrdGreaterThan: mapped = usse::CompareOp::Greater; return true;
@@ -198,6 +202,12 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             uint32_t label1 = 0;
             uint16_t output_resource = std::numeric_limits<uint16_t>::max();
         };
+        struct SelectSink {
+            uint32_t condition = 0;
+            uint32_t true_value = 0;
+            uint32_t false_value = 0;
+            uint16_t output_resource = std::numeric_limits<uint16_t>::max();
+        };
 
         std::unordered_map<uint32_t, backend::TypedValue> values;
         std::unordered_map<uint32_t, std::vector<UniformMember>> uniform_blocks;
@@ -210,6 +220,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
         std::unordered_set<uint32_t> glsl450_imports;
         std::unordered_map<uint32_t, uint16_t> outputs;
         std::unordered_map<uint32_t, PhiSink> phi_sinks;
+        std::unordered_map<uint32_t, SelectSink> select_sinks;
         std::unordered_map<uint32_t, uint16_t> block_labels;
 
         auto add_resource = [&](backend::TypedResourceKind kind, backend::TypedValue value,
@@ -360,7 +371,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 } else if (scan_function && op==spv::OpLabel && count==2) {
                     scan_label=args[0];
                     function_labels.push_back(scan_label);
-                } else if (scan_function && (op==spv::OpBranch || op==spv::OpBranchConditional)) {
+                } else if (scan_function && (op==spv::OpBranch || op==spv::OpBranchConditional || op==spv::OpSwitch)) {
                     has_control=true;
                 } else if (scan_function && op==spv::OpPhi) {
                     if (count!=7 || !scan_label) {
@@ -372,11 +383,21 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     phi.value0=args[2]; phi.label0=args[3];
                     phi.value1=args[4]; phi.label1=args[5];
                     phi_sinks[args[1]]=phi;
+                } else if (scan_function && op==spv::OpSelect) {
+                    if (count!=6) {
+                        error="only ordinary three-operand OpSelect is supported";
+                        return false;
+                    }
+                    select_sinks[args[1]]={args[2],args[3],args[4],std::numeric_limits<uint16_t>::max()};
+                    has_control=true;
                 } else if (scan_function && op==spv::OpStore && count>=3) {
                     const auto phi=phi_sinks.find(args[1]);
                     const auto output=outputs.find(args[0]);
                     if (phi!=phi_sinks.end() && output!=outputs.end())
                         phi->second.output_resource=output->second;
+                    const auto select=select_sinks.find(args[1]);
+                    if (select!=select_sinks.end() && output!=outputs.end())
+                        select->second.output_resource=output->second;
                 }
                 offset+=count;
             }
@@ -484,7 +505,20 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     return false;
                 }
             } else if (op == spv::OpCompositeConstruct && count >= 4) {
-                const auto result_type = typed_type(compiler.get_type(args[0]));
+                const auto &spirv_result_type=compiler.get_type(args[0]);
+                if (spirv_result_type.basetype==spirv_cross::SPIRType::Boolean &&
+                    spirv_result_type.vecsize==4 && count==7 &&
+                    args[2]==args[3] && args[2]==args[4] && args[2]==args[5]) {
+                    const auto predicate=values.find(args[2]);
+                    if (predicate==values.end() || predicate->second.kind()!=backend::TypedValueKind::Predicate) {
+                        error="boolean vector splat is not sourced by a Typed predicate";
+                        return false;
+                    }
+                    values[args[1]]=predicate->second;
+                    offset+=count;
+                    continue;
+                }
+                const auto result_type = typed_type(spirv_result_type);
                 if (result_type != backend::TypedType::F32x4) { error = "unsupported composite construct result type"; return false; }
                 if (count == 7 && args[2] == args[3] && args[2] == args[4] && args[2] == args[5]) {
                     const auto scalar = values.find(args[2]);
@@ -723,9 +757,39 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         return false;
                     }
                     // The corresponding stores were sunk into the predecessor blocks.
+                } else if (op == spv::OpSelect) {
+                    const auto select=select_sinks.find(args[1]);
+                    if (select==select_sinks.end() || select->second.output_resource==std::numeric_limits<uint16_t>::max()) {
+                        error="OpSelect is not a validated fragment-output selection";
+                        return false;
+                    }
+                    const auto predicate=values.find(select->second.condition);
+                    const auto true_value=values.find(select->second.true_value);
+                    const auto false_value=values.find(select->second.false_value);
+                    if (predicate==values.end() || predicate->second.kind()!=backend::TypedValueKind::Predicate ||
+                        true_value==values.end() || false_value==values.end() ||
+                        true_value->second.type()!=backend::TypedType::F32x4 ||
+                        false_value->second.type()!=backend::TypedType::F32x4) {
+                        error="OpSelect operands are outside the validated float4 fragment-output subset";
+                        return false;
+                    }
+                    const uint16_t true_label=program.make_label();
+                    const uint16_t merge_label=program.make_label();
+                    if (true_label==std::numeric_limits<uint16_t>::max() ||
+                        merge_label==std::numeric_limits<uint16_t>::max() ||
+                        !program.branch(true_label,predicate->second) ||
+                        !program.emit<backend::TypedOpcode::StoreOutput>(0,{},false_value->second,{},select->second.output_resource) ||
+                        !program.jump(merge_label) || !program.bind_label(true_label) ||
+                        !program.emit<backend::TypedOpcode::StoreOutput>(0,{},true_value->second,{},select->second.output_resource) ||
+                        !program.bind_label(merge_label)) {
+                        error="failed to lower fragment OpSelect to validated Typed control flow";
+                        return false;
+                    }
                 } else if (op == spv::OpStore && count >= 3) {
                     const auto phi=phi_sinks.find(args[1]);
-                    if (phi!=phi_sinks.end() && phi->second.output_resource!=std::numeric_limits<uint16_t>::max()) {
+                    const auto select=select_sinks.find(args[1]);
+                    if ((phi!=phi_sinks.end() && phi->second.output_resource!=std::numeric_limits<uint16_t>::max()) ||
+                        (select!=select_sinks.end() && select->second.output_resource!=std::numeric_limits<uint16_t>::max())) {
                         // Already materialized in each predecessor.
                     } else {
                         const auto output = outputs.find(args[0]);
@@ -738,8 +802,19 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         }
                     }
                 } else if (op == spv::OpSwitch) {
-                    error="OpSwitch control flow is not yet in the validated Typed shader subset";
-                    return false;
+                    // glslang wraps early-return HLSL/Cg functions in a
+                    // selection containing an OpSwitch with no case pairs.
+                    // With only selector + default operands this is exactly an
+                    // unconditional jump regardless of selector value.
+                    if (count!=3 || block_labels.empty()) {
+                        error="only case-free OpSwitch is validated for Typed shader control flow";
+                        return false;
+                    }
+                    const auto target=block_labels.find(args[1]);
+                    if (target==block_labels.end() || !program.jump(target->second)) {
+                        error="failed to emit case-free OpSwitch as Typed jump";
+                        return false;
+                    }
                 } else if (op != spv::OpReturn && op != spv::OpNop) {
                     error = "unsupported instruction in SPIRV-Cross Typed shader subset";
                     return false;

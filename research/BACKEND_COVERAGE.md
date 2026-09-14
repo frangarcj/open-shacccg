@@ -215,6 +215,17 @@ GXP`; the regression requires PA=12, the oracle control flags, the exact F32
 VTST anchor and decodable non-zero BR offsets. More general phi consumers and
 loop-carried values remain fail-closed.
 
+The differential control corpus currently compiles 12/12 cases with Sony and
+9/12 with OpenShaccCg. Three frontend/control compatibility gaps were closed
+without adding guessed machine families: glslang's case-free `OpSwitch` wrapper
+for early returns is treated as its exact unconditional-default jump semantics,
+`OpFUnordNotEqual` is mapped to the oracle-anchored Cg `!=` VTST profile, and a
+float4 `OpSelect` feeding COLOR0 is desugared into the already validated Typed
+BR/store CFG. Sony if-converts that ternary to a predicated in-place VMOV; Open
+currently favors the longer validated BR form. The three remaining control
+failures are the dynamic-loop cases and share scalar integer uniform/loop-value
+lowering rather than an unknown BR encoding.
+
 The dynamic-loop oracle case also identifies the integer control primitives
 around the back-edge. `for (int i=0; i<n; ++i)` uses a signed-32 VTST `<`
 profile (`0x48a8068130078000`) followed in the latch by an I32MAD2 update/feed
@@ -227,7 +238,7 @@ still intentionally unsupported.
 ## Next backend order
 
 1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, keeping the single Typed -> Machine lowering path fail-closed.
-2. **Complete structured control flow.** BR forward/backward offsets, six F32 VTST compares and the direct COLOR0 two-way phi merge are validated. Generalize phi consumers/loop-carried values and then loops beyond the current label/branch substrate.
+2. **Complete structured control flow.** BR forward/backward offsets, six F32 VTST compares, direct COLOR0 two-way phi merge and output `OpSelect` are validated. The control corpus is 9/12; next connect scalar integer uniforms and loop-carried values for the three dynamic-loop cases, then generalize remaining phi consumers.
 3. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
 4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
 5. **Common missing ALU families.** Prioritize VCOMP, VMAD2 and VDUAL based on real traces, then remaining instruction families by corpus frequency.
