@@ -130,7 +130,7 @@ The host build now has two independent optional stages before Vita lowering:
 - `OPENSHACCG_ENABLE_SPIRV_CROSS` parses the resulting module and performs
   entry-point/resource reflection. Its adapter now lowers scalar U32 control
   work plus float vectors, UBO members, samplers, dependent samples, float
-  multiply, position expansion, matrix transforms and output stores into the
+  arithmetic/negate, position expansion, matrix transforms and output stores into the
   compact Typed Vita IR.
 
 A regression exercises both the integer path `SPIR-V -> SPIRV-Tools ->
@@ -140,16 +140,53 @@ GXP`. The old dependency-free SPIR-V lowering remains a temporary fallback and
 the default Vita static build does not link host SPIRV-Tools/SPIRV-Cross
 libraries.
 
+## Bank-aware float Machine IR
+
+Machine IR now owns both the physical allocation policy and instruction-level
+representation used by the validated float paths. A compact 4-byte value
+descriptor plus 8-byte live range colors scalar TEMP values, paired F32/F16
+TEMP spans, the TEMP124..127 GPI aliases and the observed VMAD accumulator slot.
+The existing U32 Machine IR allocator uses the same core.
+
+The generic 16-byte Machine instruction now covers PHAS/NOP/EMIT, VMOV, VPCK,
+V32NMAD and the evidence-backed VMAD matrix profile. VMAD references its two
+virtual GPI values through one packed pair operand. A zero-word
+`DependentSample` pseudo-op models the validated texture-unit handoff so the
+coordinate GPI and resulting TEMP participate in normal lifetimes without
+inventing an SMP instruction that is absent from the public sample.
+
+The vertex, texture-tint and generic fragment arithmetic paths no longer carry
+their own TEMP/GPI free lists, direct register-bank selections or semantic USSE
+instruction construction in `vita_ir.cpp`. The public clear/color/texture vertex
+and fragment GXPs remain byte-identical after the migration.
+
+Typed IR now lowers F32x4 mul/add/sub/min/max, scalar dot, negate and absolute
+through the same Machine IR. SPIRV-Cross also recognizes `OpFNegate` without
+requiring SPIRV-Tools to canonicalize it first. Narrow float vectors and
+unvalidated config/swizzle forms are rejected rather than widened implicitly.
+
+The SPIRV-Cross path now also parses the validated `GLSL.std.450` FAbs/FMin/FMax
+forms, identity/X-splat vector shuffles, scalar-to-float4 splats and F32x4 to
+F16x4 `OpFConvert`. The latter lowers through a compact Machine IR `PackValue`
+operation that derives the second consecutive F32 source register from the
+logical float4 value and emits the known F32->F16 VPCK form. Y/Z/W shuffles,
+arbitrary permutations and reverse/other float conversions remain fail-closed.
+
+Generic fragment TypedShader arithmetic now lowers directly to Machine IR and
+uses the shared arithmetic GXP finalizer. `FragmentIr` remains the portable
+dependency-free SPIR-V fallback and the path for the canonical sample-shaped
+fragment operations, rather than an obligatory expression bridge for the
+SPIRV-Cross Typed path.
+
 ## Next backend order
 
-1. **Bank-aware F32/F16 allocation.** Public float/vector resources now flow through Typed Vita IR, but the final validated float paths still use the physical PA/SA/TEMP/OUTPUT/GPI choices in `vita_ir.cpp`. Move those choices into Machine IR descriptors/lifetimes without changing the seven public GXP regressions.
-2. **Broaden typed arithmetic/conversions.** Add the remaining F32/F16 unary/vector forms, conversions and swizzles directly to Typed/Machine IR so generic shaders no longer need the legacy fragment DAG bridge.
-3. **BR control flow.** Add raw and semantic BR only once branch offset/direction semantics are anchored by real words. Then lower structured `if/else`; loops come after branch back-edges are independently validated.
-4. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
-5. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
-6. **Common missing ALU families.** Prioritize VCOMP, VMAD2 and VDUAL based on real traces, then remaining instruction families by corpus frequency.
-7. **Resource/reflection generalization.** Derive register counts, parameter types, containers, uniform buffers, literals and dependent samplers from IR instead of current sample-shaped layouts.
-8. **Hardware gate.** Treat a capability as complete only after host regressions plus real-Vita `sceGxmProgramCheck`/render validation where possible.
+1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, then move the remaining canonical fragment/vertex TypedShader shapes off their compatibility IR bridges where that reduces duplication.
+2. **BR control flow.** Add raw and semantic BR only once branch offset/direction semantics are anchored by real words. Then lower structured `if/else`; loops come after branch back-edges are independently validated.
+3. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
+4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
+5. **Common missing ALU families.** Prioritize VCOMP, VMAD2 and VDUAL based on real traces, then remaining instruction families by corpus frequency.
+6. **Resource/reflection generalization.** Derive register counts, parameter types, containers, uniform buffers, literals and dependent samplers from IR instead of current sample-shaped layouts.
+7. **Hardware gate.** Treat a capability as complete only after host regressions plus real-Vita `sceGxmProgramCheck`/render validation where possible.
 
 ## Definition of progress
 
@@ -160,6 +197,7 @@ A new family is not considered implemented merely because decode/encode round-tr
 3. add raw bit-exact round-trip tests;
 4. add a semantic builder that reconstructs the real word;
 5. expose it through `ProgramBuilder`;
-6. lower a typed Vita IR operation through it;
-7. place the resulting stream in a generated GXP;
-8. validate on hardware.
+6. expose the validated form through compact Machine IR;
+7. lower a typed Vita IR operation through it;
+8. place the resulting stream in a generated GXP;
+9. validate on hardware.

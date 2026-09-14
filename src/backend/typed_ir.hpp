@@ -96,6 +96,15 @@ enum class TypedFloatOp : uint8_t {
     Dot,
 };
 
+enum class TypedFloatUnaryOp : uint8_t {
+    Neg,
+    Abs,
+};
+
+enum class TypedFloatConvertOp : uint8_t {
+    F32x4ToF16x4,
+};
+
 // Resource metadata is deliberately separate from the hot 16-byte instruction
 // stream. The value handle links data-bearing resources back to Typed IR while
 // name_index keeps strings out of every descriptor.

@@ -27,6 +27,159 @@ int test_machine_ir() {
     int failures = 0;
 
     {
+        const std::vector<MachineLiveRange> ranges = {
+            {0, 4, MachineType::F32, MachineRegisterClass::FloatTemp, MachineRegisterOrder::Low, 2},
+            {1, 3, MachineType::F32, MachineRegisterClass::FloatTemp, MachineRegisterOrder::Low, 2},
+            {4, 6, MachineType::F32, MachineRegisterClass::FloatTemp, MachineRegisterOrder::Low, 2},
+            {0, 6, MachineType::F32, MachineRegisterClass::Gpi, MachineRegisterOrder::Low, 1},
+            {0, 6, MachineType::F32, MachineRegisterClass::Gpi, MachineRegisterOrder::Low, 1},
+            {6, 8, MachineType::F32, MachineRegisterClass::FloatTemp, MachineRegisterOrder::High, 2},
+            {0, 6, MachineType::F32, MachineRegisterClass::VmadAccumulator, MachineRegisterOrder::Low, 1},
+            {8, 10, MachineType::F16, MachineRegisterClass::FloatTemp, MachineRegisterOrder::Low, 1},
+        };
+        std::vector<usse::RegisterRef> regs;
+        std::string error;
+        if (!allocate_machine_live_ranges(ranges, regs, error)) {
+            failures += fail("bank-aware float register allocation failed");
+        } else {
+            if (regs.size() != ranges.size() || regs[0].num != 4 || regs[1].num != 6 || regs[2].num != 4)
+                failures += fail("float TEMP pair allocation/reuse was not deterministic");
+            if (machine_gpi_index(regs[3]) != 0 || machine_gpi_index(regs[4]) != 1)
+                failures += fail("GPI aliases were not allocated from the validated TEMP124 range");
+            if (regs[5].num != 60) failures += fail("high float TEMP preference did not select TEMP60");
+            if (regs[6].num != 61) failures += fail("VMAD accumulator class did not select TEMP61");
+            if (regs[7].num != 4) failures += fail("F16 TEMP allocation did not use the float bank policy");
+        }
+    }
+
+    {
+        MachineProgram program;
+        const auto narrow = program.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,1);
+        const auto packed = program.make_value<MachineType::F16>(MachineRegisterClass::FloatTemp,1);
+        if (!program.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                machine_move_config(0xF),narrow,
+                program.physical<MachineType::F32>(usse::RegisterBank::PrimaryAttribute,0)) ||
+            !program.emit_config<MachineOpcode::PackValue>(
+                machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F16),
+                machine_pack_config(0xF,true,false),packed,narrow)) {
+            failures += fail("could not construct invalid narrow pack-value program");
+        } else {
+            MachineCompileResult result;
+            if (compile_machine_program(program,result))
+                failures += fail("pack-value accepted an F32 source without a register pair");
+        }
+    }
+
+    {
+        MachineProgram program;
+        const auto gpi0 = program.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
+        const auto sample = program.make_value<MachineType::F32>(
+            MachineRegisterClass::FloatTemp, 2, MachineRegisterOrder::High);
+        const auto tinted = program.make_value<MachineType::F32>(
+            MachineRegisterClass::FloatTemp, 2, MachineRegisterOrder::High);
+        if (!program.emit_config<MachineOpcode::Pack>(
+                machine_pack_subop(usse::PackFormat::F32, usse::PackFormat::F32),
+                machine_pack_config(0xF), gpi0,
+                program.physical(machine_primary(0), MachineType::F32),
+                program.physical(machine_primary(1), MachineType::F32)) ||
+            !program.emit<MachineOpcode::DependentSample>(0, sample, gpi0) ||
+            !program.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Mul),
+                machine_vector_config(0xF), tinted,
+                program.physical(machine_secondary(0), MachineType::F32), sample)) {
+            failures += fail("could not construct texture-tint Machine IR sequence");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(program, result)) {
+                failures += fail("texture-tint Machine IR sequence did not compile");
+            } else {
+                if (result.words.size() != 2 || result.words[1] != 0x08a44784cf04003cULL)
+                    failures += fail("machine V32NMAD did not reproduce texture-tint word");
+                if (result.value_registers.size()!=3 || machine_gpi_index(result.value_registers[0])!=0 ||
+                    result.value_registers[1].num!=60 || result.value_registers[2].num!=60)
+                    failures += fail("dependent sample/result lifetimes did not coalesce to validated registers");
+            }
+        }
+    }
+
+    {
+        MachineProgram program;
+        const auto dst = program.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp, 2);
+        if (!program.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Add),
+                0x1800, dst,
+                program.physical(machine_primary(0), MachineType::F32),
+                program.physical(machine_secondary(0), MachineType::F32))) {
+            failures += fail("invalid vector config was rejected before compile-time validation");
+        } else {
+            MachineCompileResult result;
+            if (compile_machine_program(program, result))
+                failures += fail("unsupported machine vector config was accepted");
+        }
+    }
+
+    {
+        MachineProgram program;
+        const auto a = program.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp, 2);
+        const auto b = program.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp, 2);
+        const auto pair = program.pair(a, b);
+        program.emit_config<MachineOpcode::Pack>(
+            machine_pack_subop(usse::PackFormat::F32, usse::PackFormat::F32), machine_pack_config(0xF),
+            a, program.physical(machine_primary(0), MachineType::F32),
+            program.physical(machine_primary(1), MachineType::F32));
+        program.emit_config<MachineOpcode::Pack>(
+            machine_pack_subop(usse::PackFormat::F32, usse::PackFormat::F32), machine_pack_config(0xF),
+            b, program.physical(machine_secondary(0), MachineType::F32),
+            program.physical(machine_secondary(1), MachineType::F32));
+        program.emit_config<MachineOpcode::Vmad>(0, machine_vmad_config(0xF),
+            program.physical(machine_vertex_output(0), MachineType::F32),
+            program.physical(machine_secondary(2), MachineType::F32), pair);
+        MachineCompileResult result;
+        if (compile_machine_program(program, result))
+            failures += fail("VMAD accepted a pair that was not allocated to GPI aliases");
+    }
+
+    {
+        MachineProgram program;
+        const auto gpi0 = program.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
+        const auto gpi1 = program.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
+        const auto pair = program.pair(gpi0, gpi1);
+        if (!program.emit_config<MachineOpcode::Pack>(
+                machine_pack_subop(usse::PackFormat::F32, usse::PackFormat::F32),
+                machine_pack_config(7), gpi0,
+                program.physical(machine_primary(0), MachineType::F32),
+                program.physical(machine_primary(1), MachineType::F32)) ||
+            !program.emit_config<MachineOpcode::Pack>(
+                machine_pack_subop(usse::PackFormat::F32, usse::PackFormat::F32),
+                machine_pack_config(15), gpi1,
+                program.physical(machine_secondary(6), MachineType::F32),
+                program.physical(machine_secondary(7), MachineType::F32))) {
+            failures += fail("could not construct VMAD GPI staging");
+        }
+        for (uint8_t lane=0; lane<4; ++lane) {
+            const auto dst = lane < 2 ?
+                program.make_value<MachineType::F32>(MachineRegisterClass::VmadAccumulator) :
+                program.physical(machine_vertex_output(static_cast<uint8_t>(lane-2)), MachineType::F32);
+            const uint8_t src = lane < 2 ? static_cast<uint8_t>(lane*2) : static_cast<uint8_t>(lane+2);
+            if (!program.emit_config<MachineOpcode::Vmad>(lane,
+                    machine_vmad_config(lane<2 ? 0xF : 0x3, lane<2), dst,
+                    program.physical(machine_secondary(src), MachineType::F32), pair))
+                failures += fail("could not construct VMAD Machine IR lane");
+        }
+        MachineCompileResult result;
+        const uint64_t expected[] = {
+            0x18b18f80cf411100ULL, 0x18b18f80cf451102ULL,
+            0x18b18181c0091104ULL, 0x18b18181c04ad105ULL,
+        };
+        if (!compile_machine_program(program, result)) {
+            failures += fail("VMAD Machine IR sequence did not compile");
+        } else if (result.words.size()!=6) {
+            failures += fail("VMAD Machine IR emitted wrong instruction count");
+        } else {
+            for (size_t i=0;i<4;++i)
+                if (result.words[i+2]!=expected[i]) failures += fail("machine VMAD word mismatch");
+        }
+    }
+
+    {
         MachineProgram program;
         const auto predicate = program.make_predicate();
         if (!append_compare_kill(program, predicate, 8)) {

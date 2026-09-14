@@ -7,6 +7,7 @@
 #include <unordered_set>
 
 #if defined(OPENSHACCG_ENABLE_SPIRV_CROSS)
+#include <spirv/unified1/GLSL.std.450.h>
 #include <spirv_cross/spirv_cross.hpp>
 #endif
 
@@ -122,6 +123,20 @@ bool map_compare(uint16_t op, usse::CompareOp &mapped) {
     }
 }
 
+std::string spirv_string(const uint32_t *words, size_t word_count) {
+    std::string out;
+    out.reserve(word_count * 4);
+    for (size_t i = 0; i < word_count; ++i) {
+        const uint32_t word = words[i];
+        for (unsigned shift = 0; shift < 32; shift += 8) {
+            const char c = static_cast<char>((word >> shift) & 0xffu);
+            if (!c) return out;
+            out.push_back(c);
+        }
+    }
+    return {};
+}
+
 } // namespace
 #endif
 
@@ -165,6 +180,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
         std::unordered_map<uint32_t, ExtractInfo> extracts;
         std::unordered_map<uint32_t, uint32_t> constants;
         std::unordered_set<uint32_t> float_ones;
+        std::unordered_set<uint32_t> glsl450_imports;
         std::unordered_map<uint32_t, uint16_t> outputs;
 
         auto add_resource = [&](backend::TypedResourceKind kind, backend::TypedValue value,
@@ -280,7 +296,10 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             const uint16_t op = static_cast<uint16_t>(first);
             if (!count || offset + count > words.size()) { error = "malformed SPIR-V instruction stream"; return false; }
             const uint32_t *args = words.data() + offset + 1;
-            if (op == spv::OpConstant && count >= 4) {
+            if (op == spv::OpExtInstImport && count >= 3) {
+                if (spirv_string(args + 1, count - 2) == "GLSL.std.450")
+                    glsl450_imports.insert(args[0]);
+            } else if (op == spv::OpConstant && count >= 4) {
                 constants[args[1]] = args[2];
                 const auto &constant_type = compiler.get_type(args[0]);
                 if (constant_type.basetype == spirv_cross::SPIRType::Float && constant_type.width == 32 &&
@@ -328,9 +347,43 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 auto source = values.find(args[2]);
                 if (source == values.end()) { error = "Typed IR adapter could not resolve composite extract source"; return false; }
                 extracts[args[1]] = {source->second, args[3]};
+            } else if (op == spv::OpVectorShuffle && count == 9) {
+                const auto result_type = typed_type(compiler.get_type(args[0]));
+                const auto source = values.find(args[2]);
+                if (result_type != backend::TypedType::F32x4 || source == values.end() ||
+                    source->second.type() != backend::TypedType::F32x4) {
+                    error = "vector shuffle is outside the validated float4 subset";
+                    return false;
+                }
+                const bool identity = args[4] == 0 && args[5] == 1 && args[6] == 2 && args[7] == 3;
+                const bool splat_x = args[4] == 0 && args[5] == 0 && args[6] == 0 && args[7] == 0;
+                if (identity) {
+                    values[args[1]] = source->second;
+                } else if (splat_x) {
+                    const auto dst = program.make_value<backend::TypedType::F32x4>();
+                    if (!program.emit<backend::TypedOpcode::FloatSplat>(0, dst, source->second)) {
+                        error = "failed to emit Typed IR float4 X splat"; return false;
+                    }
+                    values[args[1]] = dst;
+                } else {
+                    error = "vector shuffle pattern is not independently validated";
+                    return false;
+                }
             } else if (op == spv::OpCompositeConstruct && count >= 4) {
                 const auto result_type = typed_type(compiler.get_type(args[0]));
                 if (result_type != backend::TypedType::F32x4) { error = "unsupported composite construct result type"; return false; }
+                if (count == 7 && args[2] == args[3] && args[2] == args[4] && args[2] == args[5]) {
+                    const auto scalar = values.find(args[2]);
+                    if (scalar != values.end() && scalar->second.type() == backend::TypedType::F32) {
+                        const auto dst = program.make_value<backend::TypedType::F32x4>();
+                        if (!program.emit<backend::TypedOpcode::FloatSplat>(0, dst, scalar->second)) {
+                            error = "failed to emit Typed IR scalar splat"; return false;
+                        }
+                        values[args[1]] = dst;
+                        offset += count;
+                        continue;
+                    }
+                }
                 backend::TypedValue source{};
                 uint8_t extracted = 0;
                 bool valid = true;
@@ -384,6 +437,83 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 const auto dst = program.make_value<backend::TypedType::F32x4>();
                 if (!program.emit<backend::TypedOpcode::Sample2D>(0, dst, sampled->second, coordinate->second)) {
                     error = "failed to emit Typed IR sample2D"; return false;
+                }
+                values[args[1]] = dst;
+            } else if (op == spv::OpExtInst) {
+                if (count < 6 || !glsl450_imports.count(args[2])) {
+                    error = "unsupported extended instruction set";
+                    return false;
+                }
+                const auto result_type = typed_type(compiler.get_type(args[0]));
+                const uint32_t ext = args[3];
+                if (ext == GLSLstd450FAbs) {
+                    if (count != 6 || result_type != backend::TypedType::F32x4) {
+                        error = "GLSL.std.450 FAbs is outside the validated float4 subset";
+                        return false;
+                    }
+                    const auto source = values.find(args[4]);
+                    if (source == values.end() || source->second.type() != result_type) {
+                        error = "unresolved GLSL.std.450 FAbs operand";
+                        return false;
+                    }
+                    const auto dst = program.make_value(result_type);
+                    if (!program.emit<backend::TypedOpcode::FloatUnary>(
+                            static_cast<uint8_t>(backend::TypedFloatUnaryOp::Abs), dst, source->second)) {
+                        error = "failed to emit Typed IR FAbs"; return false;
+                    }
+                    values[args[1]] = dst;
+                } else if (ext == GLSLstd450FMin || ext == GLSLstd450FMax) {
+                    if (count != 7 || result_type != backend::TypedType::F32x4) {
+                        error = "GLSL.std.450 min/max is outside the validated float4 subset";
+                        return false;
+                    }
+                    const auto lhs = values.find(args[4]);
+                    const auto rhs = values.find(args[5]);
+                    if (lhs == values.end() || rhs == values.end() ||
+                        lhs->second.type() != result_type || rhs->second.type() != result_type) {
+                        error = "unresolved GLSL.std.450 min/max operand";
+                        return false;
+                    }
+                    const auto dst = program.make_value(result_type);
+                    const auto float_op = ext == GLSLstd450FMin ?
+                        backend::TypedFloatOp::Min : backend::TypedFloatOp::Max;
+                    if (!program.emit<backend::TypedOpcode::FloatBinary>(
+                            static_cast<uint8_t>(float_op), dst, lhs->second, rhs->second)) {
+                        error = "failed to emit Typed IR min/max"; return false;
+                    }
+                    values[args[1]] = dst;
+                } else {
+                    error = "GLSL.std.450 instruction is not in the validated Typed IR subset";
+                    return false;
+                }
+            } else if (op == spv::OpFConvert) {
+                if (count != 4) { error = "invalid floating conversion instruction"; return false; }
+                const auto source = values.find(args[2]);
+                const auto result_type = typed_type(compiler.get_type(args[0]));
+                if (source == values.end() || source->second.type() != backend::TypedType::F32x4 ||
+                    result_type != backend::TypedType::F16x4) {
+                    error = "floating conversion is outside the validated F32x4 to F16x4 subset";
+                    return false;
+                }
+                const auto dst = program.make_value<backend::TypedType::F16x4>();
+                if (!program.emit<backend::TypedOpcode::FloatConvert>(
+                        static_cast<uint8_t>(backend::TypedFloatConvertOp::F32x4ToF16x4),
+                        dst, source->second)) {
+                    error = "failed to emit Typed IR float conversion"; return false;
+                }
+                values[args[1]] = dst;
+            } else if (op == spv::OpFNegate) {
+                if (count != 4) { error = "invalid floating unary instruction"; return false; }
+                const auto source = values.find(args[2]);
+                const auto result_type = typed_type(compiler.get_type(args[0]));
+                if (source == values.end() || result_type == backend::TypedType::Invalid ||
+                    source->second.type() != result_type || !backend::typed_is_float(result_type)) {
+                    error = "floating unary operand is unresolved or mismatched"; return false;
+                }
+                const auto dst = program.make_value(result_type);
+                if (!program.emit<backend::TypedOpcode::FloatUnary>(
+                        static_cast<uint8_t>(backend::TypedFloatUnaryOp::Neg), dst, source->second)) {
+                    error = "failed to emit Typed IR float unary operation"; return false;
                 }
                 values[args[1]] = dst;
             } else if (op == spv::OpFMul || op == spv::OpFAdd || op == spv::OpFSub) {

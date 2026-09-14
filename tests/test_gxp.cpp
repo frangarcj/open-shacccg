@@ -159,6 +159,50 @@ int test_gxp() {
     }
 
     {
+        vsc::backend::FragmentIr ordered;
+        ordered.op = vsc::backend::FragmentOpKind::Arithmetic;
+        ordered.uniforms = {{"uScale",0},{"uBias",4}};
+        ordered.expressions = {
+            {vsc::backend::FragmentExprKind::Varying,0,0,4},
+            {vsc::backend::FragmentExprKind::Uniform,0,0,4},
+            {vsc::backend::FragmentExprKind::Mul,0,1,4},
+            {vsc::backend::FragmentExprKind::Uniform,1,0,4},
+            {vsc::backend::FragmentExprKind::Add,2,3,4},
+        };
+        ordered.root_expression = 4;
+
+        vsc::backend::FragmentIr shuffled = ordered;
+        shuffled.expressions = {
+            {vsc::backend::FragmentExprKind::Add,1,4,4},
+            {vsc::backend::FragmentExprKind::Mul,2,3,4},
+            {vsc::backend::FragmentExprKind::Varying,0,0,4},
+            {vsc::backend::FragmentExprKind::Uniform,0,0,4},
+            {vsc::backend::FragmentExprKind::Uniform,1,0,4},
+        };
+        shuffled.root_expression = 0;
+
+        vsc::backend::IrCompileResult a, b;
+        if (!vsc::backend::compile_fragment_ir(ordered,a) ||
+            !vsc::backend::compile_fragment_ir(shuffled,b)) {
+            failures += fail("arithmetic DAG allocation depends on topological storage order");
+        } else if (a.gxp != b.gxp) {
+            failures += fail("arithmetic DAG register allocation changed for equivalent node ordering");
+        }
+
+        vsc::backend::FragmentIr cyclic;
+        cyclic.op = vsc::backend::FragmentOpKind::Arithmetic;
+        cyclic.uniforms = {{"uBias",0}};
+        cyclic.expressions = {
+            {vsc::backend::FragmentExprKind::Add,0,1,4},
+            {vsc::backend::FragmentExprKind::Uniform,0,0,4},
+        };
+        cyclic.root_expression = 0;
+        vsc::backend::IrCompileResult rejected;
+        if (vsc::backend::compile_fragment_ir(cyclic,rejected))
+            failures += fail("cyclic arithmetic DAG was accepted");
+    }
+
+    {
         uint8_t bad[ProgramView::kHeaderSize] = {};
         ProgramView view(bad, sizeof(bad));
         if (view.valid()) failures += fail("invalid magic accepted");

@@ -6,6 +6,8 @@
 
 namespace vsc::backend {
 
+class MachineProgram;
+
 struct IrAttribute {
     std::string name;
     uint8_t components = 4; // logical source width (GXP reflection remains vec4)
@@ -96,5 +98,9 @@ struct FragmentIr {
 
 bool compile_vertex_ir(const VertexIr &ir, IrCompileResult &out);
 bool compile_fragment_ir(const FragmentIr &ir, IrCompileResult &out);
+bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
+                                         const std::vector<IrUniformVec4> &uniforms,
+                                         uint32_t binary_guid, uint32_t source_guid,
+                                         IrCompileResult &out);
 
 } // namespace vsc::backend

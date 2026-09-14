@@ -18,7 +18,14 @@ Implemented now:
 - dependency-free SPIR-V reader/lowerer remains the portable fallback
 - optional SPIRV-Tools `-O`-style optimization and SPIRV-Cross parsing/reflection before Vita lowering
 - SPIRV-Cross -> compact Typed Vita IR for scalar U32 control work plus F32/F16 vector resources,
-  dependent texture sampling, float multiply, homogeneous position construction and mat4 transforms
+  dependent texture sampling, float arithmetic/negate, homogeneous position construction and mat4 transforms
+- shared bank-aware Machine IR live-range allocation for scalar TEMP values, F32/F16 TEMP spans,
+  validated GPI aliases and the public VMAD accumulator convention
+- compact Machine IR emission for PHAS/NOP/EMIT, VMOV, VPCK, V32NMAD and the validated VMAD matrix form,
+  including a zero-word dependent-sample pseudo-op that keeps texture-result lifetimes explicit
+- direct Typed IR -> Machine IR lowering for F32x4 multiply/add/sub/min/max, dot, negate/absolute,
+  scalar/X splats and the validated F32x4 -> F16x4 VPCK conversion
+- SPIRV-Cross lowering for `GLSL.std.450` FAbs/FMin/FMax, validated X-splat shuffles and `OpFConvert`
 - all seven public libvita2d Cg shaders now pass through the Typed Vita IR path; generated GXPs are
   byte-identical to the preserved public samples except for Sony's two 32-bit GUID fields
 - frontend -> SPIR-V and SPIR-V -> Vita IR -> USSE/GXP boundaries
@@ -37,7 +44,6 @@ Implemented now:
 Not implemented yet:
 
 - complete Cg compatibility beyond the glslang HLSL-compatible subset (callback includes, option defines, profile quirks and remaining Cg-only syntax)
-- replace the remaining F32/GPI physical-register choices in `vita_ir.cpp` with bank-aware Machine IR allocation
 - derive Sony-compatible binary/source GUIDs instead of currently emitting zero for newly compiled shaders
 - field-level USSE instruction encoding
 - exotic GXP auxiliary tables (literal/uniform-buffer/dependent-sampler tables)
@@ -332,9 +338,30 @@ Predicate registers are allocated dynamically from virtual lifetimes. Reads and
 writes use separate positions inside an instruction, allowing the real USSE
 pattern `!p0 CMP -> p0` to reuse the same hardware predicate when the old value
 dies at that instruction. The first machine path lowers U32 compare + discard to
-`VTST` + `KILL` and reproduces observed instruction words exactly. Physical
-value allocation remains deliberately fail-closed until the typed value
-allocator is introduced.
+`VTST` + `KILL` and reproduces observed instruction words exactly.
+
+Value allocation uses compact 4-byte value descriptors and 8-byte live ranges.
+The allocator knows the validated scalar TEMP set, paired float TEMP range,
+TEMP124..127 GPI aliases and the public VMAD accumulator slot, with deterministic
+low/high preferences and overlap checks.
+
+The same 16-byte instruction record now carries the validated float backend too:
+`VMOV`, `VPCK` and `V32NMAD` pack their small semantic controls into `subop` plus
+the otherwise-free control bits, while VMAD uses a compact virtual-pair operand
+for its two GPI inputs. A zero-word dependent-sample pseudo-op connects the
+coordinate GPI lifetime to the asynchronously produced texture TEMP. As a
+result, `vita_ir.cpp` no longer constructs USSE semantic instruction structs or
+performs a second lifetime pass. The seven public libvita2d GXP regressions
+remain byte-identical.
+
+Typed IR can also lower validated F32x4 arithmetic directly to Machine IR:
+multiply, add, subtract-as-negated-add, min/max, dot, negate and absolute. The
+SPIRV-Cross adapter recognizes `OpFNegate`, `GLSL.std.450` FAbs/FMin/FMax,
+identity/X-splat `OpVectorShuffle`, scalar splats and F32x4 -> F16x4 `OpFConvert`.
+The conversion uses a dedicated compact `PackValue` machine opcode so a logical
+float4 source contributes both consecutive F32 registers to one validated
+F32->F16 VPCK. Other vector widths, shuffle patterns and float conversions still
+fail closed.
 
 ## Vita IR lowering milestone
 
@@ -468,7 +495,7 @@ single float4 uniform, then lowers through the same IR path. Unsupported variant
 
 ## Generic SPIR-V arithmetic DAG milestone
 
-The fragment SPIR-V lowerer now has a generic expression-DAG fallback in addition to the seven canonical vita2d shape paths. The canonical paths are intentionally preserved so their byte-identical public-corpus regressions do not change.
+The dependency-free fragment SPIR-V lowerer still has a generic expression-DAG fallback in addition to the seven canonical vita2d shape paths. The canonical paths are intentionally preserved so their byte-identical public-corpus regressions do not change.
 
 The initial DAG supports float4 Location 0 varying leaves, multiple float4 uniform leaves, `OpFMul`, `OpFAdd`, `OpDot`, and scalar splats represented by `OpCompositeConstruct`. Binary arithmetic nodes are assigned temporary USSE registers deterministically and lowered through semantic V32NMAD operations. A multiply followed by add therefore works as a general MAD expression today, but is deliberately emitted as separate MUL + ADD instructions; it is not fused to VMAD until GPI allocation/scheduling rules are independently validated.
 
@@ -477,16 +504,17 @@ New non-corpus regressions compile `vColor * uScale + uBias` and `dot(vColor, uW
 
 ### Generic arithmetic DAG checkpoint
 
-The generic fragment fallback now has liveness-based TEMP reuse instead of
-monotonically consuming temporary register pairs. DAG use counts pin values
-until their last consumer and then recycle TEMP pairs deterministically.
+The dependency-free DAG keeps its liveness-based TEMP reuse path for portable
+fallback builds. When SPIRV-Cross is enabled, generic fragment arithmetic no
+longer round-trips through `FragmentIr`: TypedShader lowers its SSA values
+directly into Machine IR, appends the validated output VPCK, and shares only the
+final arithmetic GXP layout serializer with the legacy fallback. This direct
+path includes `Sub`, `Neg`, `Min`, `Max`, `Abs`, dot and splat operations.
 
-The arithmetic IR also includes `Sub`, `Neg`, `Min`, `Max`, and `Abs` nodes.
-The SPIR-V subset currently recognizes standard `OpFSub` and `OpFNegate`
-directly; `Min`/`Max`/`Abs` are available at the IR/USSE lowering boundary
-pending GLSL.std.450 extended-instruction parsing. Subtraction lowers through
-V32NMAD ADD with a negated source, while unary negate/absolute use the same
-validated V32NMAD source-modifier encoding and an immediate-zero add.
+`GLSL.std.450` FMin/FMax/FAbs are parsed directly by the SPIRV-Cross adapter.
+Subtraction still lowers through V32NMAD ADD with a negated source, while unary
+negate/absolute use the validated V32NMAD source-modifier encoding and an
+immediate-zero add.
 
 A new non-corpus regression compiles `vColor - (-uBias)` from SPIR-V through
 the generic DAG. Existing seven vita2d canonical paths remain unchanged and
