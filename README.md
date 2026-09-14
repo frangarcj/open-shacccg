@@ -1,5 +1,7 @@
 # open-shacccg
 
+[![CI](https://github.com/frangarcj/open-shacccg/actions/workflows/ci.yml/badge.svg)](https://github.com/frangarcj/open-shacccg/actions/workflows/ci.yml)
+
 MIT-licensed, clean implementation of a runtime shader compiler for PlayStation Vita with a compatibility layer for the public `SceShaccCg` API.
 
 ## Status
