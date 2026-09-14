@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <functional>
 #include <limits>
 #include <unordered_map>
 
@@ -1017,9 +1018,39 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     }
 
     if (!samplers.empty()) { out.error = "typed generic arithmetic path does not support samplers"; return false; }
-    if (inputs.size()!=1 || inputs[0]->index!=0 || inputs[0]->type!=TypedType::F32x4) {
-        out.error = "typed generic arithmetic path requires float4 input Location 0";
+    std::vector<uint8_t> reachable(program.value_count(),0);
+    std::vector<uint16_t> used_input_locations;
+    std::function<void(TypedValue)> collect_inputs=[&](TypedValue value) {
+        if (value.kind()!=TypedValueKind::Value || value.id()>=reachable.size() || reachable[value.id()]) return;
+        reachable[value.id()]=1;
+        if (const auto *resource=resource_for_value(value); resource && resource->kind==TypedResourceKind::Input) {
+            used_input_locations.push_back(resource->index);
+            return;
+        }
+        const auto *def=definition(value);
+        if (!def) return;
+        collect_inputs(def->src0);
+        collect_inputs(def->src1);
+    };
+    collect_inputs(root);
+    std::sort(used_input_locations.begin(),used_input_locations.end());
+    used_input_locations.erase(std::unique(used_input_locations.begin(),used_input_locations.end()),used_input_locations.end());
+    if (used_input_locations.empty() || used_input_locations.size()>3) {
+        out.error="typed generic arithmetic path requires one to three reachable float4 inputs";
         return false;
+    }
+    for (size_t i=0;i<used_input_locations.size();++i) {
+        if (used_input_locations[i]!=i) {
+            out.error="typed generic arithmetic inputs must occupy contiguous locations from zero";
+            return false;
+        }
+        const auto found=std::find_if(inputs.begin(),inputs.end(),[&](const TypedResource *resource) {
+            return resource->index==i;
+        });
+        if (found==inputs.end() || (*found)->type!=TypedType::F32x4) {
+            out.error="typed generic arithmetic reachable input is not float4";
+            return false;
+        }
     }
     for (size_t i=0;i<uniforms.size();++i) {
         if (uniforms[i]->index != i*4u) {
@@ -1060,7 +1091,8 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         out.error = "failed to append typed arithmetic output pack";
         return false;
     }
-    return compile_fragment_arithmetic_machine(primary,fragment_uniforms,0,0,out);
+    return compile_fragment_arithmetic_machine(primary,fragment_uniforms,
+                                               static_cast<uint8_t>(used_input_locations.size()),0,0,out);
 }
 
 } // namespace vsc::backend

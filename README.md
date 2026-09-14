@@ -25,6 +25,8 @@ Implemented now:
   including a zero-word dependent-sample pseudo-op that keeps texture-result lifetimes explicit
 - direct Typed IR -> Machine IR lowering for F32x4 multiply/add/sub/min/max, dot, negate/absolute,
   scalar/X splats and the validated F32x4 -> F16x4 VPCK conversion
+- generic fragment arithmetic now tracks only input locations reachable from the output expression,
+  so one/two/three-input float4 graphs lower without being blocked by unused Cg/HLSL parameters
 - oracle-exact fragment profiles for `wzyx` and the constant `float4(1,0,0,1)`,
   including swizzled VPCK, literal-table placement and the primary/interface overlap convention
 - oracle-exact standalone vertex profiles for float4 position passthrough,

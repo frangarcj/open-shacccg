@@ -279,6 +279,24 @@ libvita2d matrix VMADs use 1, while this repeated external-mode mat4 profile use
 0. The raw/semantic codec therefore exposes the observed bit explicitly while
 retaining 1 as the default for existing public regressions.
 
+## Multi-input vector arithmetic gate
+
+The 77-case ALU oracle sweep exposed a frontend/profile bottleneck before any
+new arithmetic family was needed: Cg probes declare three parameters even when
+only one or two survive into the optimized expression graph. Typed arithmetic
+previously counted all reflected inputs and therefore rejected every ALU probe.
+The lowering now walks dependencies from the stored output and derives the
+contiguous reachable float4 locations only. Standalone no-uniform arithmetic
+profiles use the oracle-observed SDK 1.6.5 metadata for one/two/three float4
+inputs, while the existing uniform-arithmetic profile is preserved.
+
+As a result, the `float4`/`half4` slice improves from 0/22 to 18/22 without a
+new USSE opcode. Add/sub/mul/min/max/abs/neg/mad/dot now compile end to end in
+both source spellings; only div and saturate remain unsupported in that slice.
+Sony often selects V16NMAD/VMAD2 and tighter scheduling, whereas Open currently
+uses its validated V32NMAD path, so compilation coverage is the milestone here,
+not byte identity.
+
 ## Next backend order
 
 1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, keeping the single Typed -> Machine lowering path fail-closed.

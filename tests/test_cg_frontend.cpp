@@ -398,6 +398,21 @@ int test_cg_frontend() {
                 249,8,0,params,2,words,3))
             failures += fail("Cg vertex position/uv passthrough did not reproduce oracle profile");
     }
+    {
+        const char *alu_probes[]={
+            "fp-add-float4","fp-sub-float4","fp-mul-float4","fp-min-float4","fp-max-float4",
+            "fp-abs-float4","fp-neg-float4","fp-mad-float4","fp-dot-float4",
+            "fp-add-half4","fp-sub-half4","fp-mul-half4","fp-min-half4","fp-max-half4",
+            "fp-abs-half4","fp-neg-half4","fp-mad-half4","fp-dot-half4",
+        };
+        for (const char *probe:alu_probes) {
+            const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/"+probe+".cg");
+            if (source.empty() || !compile_fragment_gxp(source,probe)) {
+                std::fprintf(stderr,"test_cg_frontend: vector4 ALU probe failed: %s\n",probe);
+                ++failures;
+            }
+        }
+    }
 #endif
     return failures;
 #endif
