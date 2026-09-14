@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <sstream>
 #include <unordered_map>
 #include <vector>
@@ -100,6 +101,16 @@ static uint8_t vector_components(const std::vector<TypeInfo> &types, uint32_t ty
     return 0;
 }
 
+static backend::TypedType typed_f32(uint8_t components) {
+    switch (components) {
+    case 1: return backend::TypedType::F32;
+    case 2: return backend::TypedType::F32x2;
+    case 3: return backend::TypedType::F32x3;
+    case 4: return backend::TypedType::F32x4;
+    default: return backend::TypedType::Invalid;
+    }
+}
+
 static uint32_t loaded_variable(const std::vector<ValueInfo> &values, uint32_t id) {
     if (id >= values.size() || values[id].kind != ValueInfo::Kind::Load) return 0;
     return values[id].a;
@@ -110,8 +121,9 @@ static bool is_one(const std::vector<ValueInfo> &values, uint32_t id) {
 }
 
 bool lower_vertex_subset(const uint32_t *words, size_t word_count,
-                         uint32_t entry_function, backend::VertexIr &ir,
+                         uint32_t entry_function, backend::TypedShader &typed,
                          std::string &why) {
+    typed = backend::TypedShader(backend::TypedStage::Vertex);
     if (!words || word_count < 5 || words[3] == 0) { why = "invalid SPIR-V module"; return false; }
     const uint32_t bound = words[3];
     std::vector<TypeInfo> types(bound);
@@ -203,9 +215,21 @@ bool lower_vertex_subset(const uint32_t *words, size_t word_count,
     }
     std::sort(inputs.begin(),inputs.end(),[](const InputRef&a,const InputRef&b){return a.location<b.location;});
     if (inputs.empty()) { why="no located vertex inputs"; return false; }
+    auto &program = typed.program();
+    std::vector<backend::TypedValue> input_values;
+    input_values.reserve(inputs.size());
     for (const auto &in: inputs) {
         if (in.location > 31) { why="input location is too large for initial allocator"; return false; }
-        ir.attributes.push_back({in.name.empty() ? ("attr"+std::to_string(in.location)) : in.name, in.components, in.location*4});
+        const auto type=typed_f32(in.components);
+        if (type==backend::TypedType::Invalid) { why="input has unsupported float width"; return false; }
+        const auto value=program.input(type,static_cast<uint16_t>(in.location));
+        const std::string input_name=in.name.empty() ? ("attr"+std::to_string(in.location)) : in.name;
+        if (value.kind()==backend::TypedValueKind::None ||
+            typed.add_resource(backend::TypedResourceKind::Input,value,type,input_name,
+                               static_cast<uint16_t>(in.location))==std::numeric_limits<uint16_t>::max()) {
+            why="failed to create portable Typed vertex input"; return false;
+        }
+        input_values.push_back(value);
     }
     auto attr_index_for_var = [&inputs](uint32_t var)->int {
         for(size_t i=0;i<inputs.size();++i) if(inputs[i].var==var) return static_cast<int>(i); return -1;
@@ -222,13 +246,23 @@ bool lower_vertex_subset(const uint32_t *words, size_t word_count,
     }
     if (!position_store) { why="no BuiltIn Position store found"; return false; }
 
+    const std::string position_name=names[position_store->pointer].empty()?"position":names[position_store->pointer];
+    const uint16_t position_output=typed.add_resource(backend::TypedResourceKind::Output,{},backend::TypedType::F32x4,
+                                                       position_name,0,backend::TypedSemantic::Position,0);
+    if (position_output==std::numeric_limits<uint16_t>::max()) { why="failed to create position output resource"; return false; }
+
     const ValueInfo &pv = position_store->object<bound ? values[position_store->object] : ValueInfo{};
     if (pv.kind == ValueInfo::Kind::Composite) {
         // Validated clear_v shape: vec4(load float2, 1.0, 1.0).
         if (pv.constituents.size()!=3 || !is_one(values,pv.constituents[1]) || !is_one(values,pv.constituents[2])) { why="unsupported constructed position"; return false; }
         const uint32_t posvar=loaded_variable(values,pv.constituents[0]); const int ai=attr_index_for_var(posvar);
         if (ai<0 || inputs[ai].components!=2 || inputs.size()!=1 || uniform_var || varying_store) { why="constructed position does not match validated clear_v shape"; return false; }
-        ir.ops.push_back({backend::IrOpKind::ConstructPosition,static_cast<uint32_t>(ai),0,backend::IrVaryingSemantic::TexCoord});
+        const auto position=program.make_value<backend::TypedType::F32x4>();
+        if (position.kind()==backend::TypedValueKind::None ||
+            !program.emit<backend::TypedOpcode::ConstructPosition>(0,position,input_values[ai]) ||
+            !program.emit<backend::TypedOpcode::StoreOutput>(0,{},position,{},position_output)) {
+            why="failed to emit portable Typed constructed position"; return false;
+        }
         return true;
     }
 
@@ -251,15 +285,36 @@ bool lower_vertex_subset(const uint32_t *words, size_t word_count,
 
     const uint32_t mtype=pointee_type(types,vars[uniform_var].type);
     if (mtype>=types.size() || types[mtype].kind!=TypeInfo::Kind::Matrix || types[mtype].count!=4 || vector_components(types,types[mtype].element)!=4) { why="uniform is not mat4"; return false; }
-    ir.matrices.push_back({names[uniform_var].empty()?"wvp":names[uniform_var],0});
-    ir.ops.push_back({backend::IrOpKind::TransformPosition,static_cast<uint32_t>(posai),0,semantic});
-    ir.ops.push_back({backend::IrOpKind::CopyVarying,static_cast<uint32_t>(passai),0,semantic});
+    const std::string matrix_name=names[uniform_var].empty()?"wvp":names[uniform_var];
+    const uint16_t matrix_resource=typed.add_resource(backend::TypedResourceKind::Matrix4,{},backend::TypedType::F32x4,
+                                                       matrix_name,0);
+    const auto constructed=program.make_value<backend::TypedType::F32x4>();
+    const auto transformed=program.make_value<backend::TypedType::F32x4>();
+    if (matrix_resource==std::numeric_limits<uint16_t>::max() ||
+        constructed.kind()==backend::TypedValueKind::None || transformed.kind()==backend::TypedValueKind::None ||
+        !program.emit<backend::TypedOpcode::ConstructPosition>(0,constructed,input_values[posai]) ||
+        !program.emit<backend::TypedOpcode::TransformPosition>(0,transformed,constructed,{},matrix_resource) ||
+        !program.emit<backend::TypedOpcode::StoreOutput>(0,{},transformed,{},position_output)) {
+        why="failed to emit portable Typed matrix position"; return false;
+    }
+
+    const auto typed_semantic=semantic==backend::IrVaryingSemantic::Color ?
+        backend::TypedSemantic::Color : backend::TypedSemantic::TexCoord;
+    const auto pass_type=typed_f32(inputs[passai].components);
+    const std::string output_name=names[varying_store->pointer].empty()?inputs[passai].name:names[varying_store->pointer];
+    const uint16_t varying_output=typed.add_resource(backend::TypedResourceKind::Output,{},pass_type,
+                                                      output_name,0,typed_semantic,0);
+    if (varying_output==std::numeric_limits<uint16_t>::max() ||
+        !program.emit<backend::TypedOpcode::StoreOutput>(0,{},input_values[passai],{},varying_output)) {
+        why="failed to emit portable Typed varying store"; return false;
+    }
     return true;
 }
 
 bool lower_fragment_subset(const uint32_t *words, size_t word_count,
-                           uint32_t entry_function, backend::FragmentIr &ir,
+                           uint32_t entry_function, backend::TypedShader &typed,
                            std::string &why) {
+    typed = backend::TypedShader(backend::TypedStage::Fragment);
     if (!words || word_count < 5) { why="short module"; return false; }
     const uint32_t bound=words[3];
     if (bound<2 || bound>(1u<<20)) { why="unreasonable id bound"; return false; }
@@ -341,13 +396,12 @@ bool lower_fragment_subset(const uint32_t *words, size_t word_count,
         cursor+=wc;
     }
 
-    uint32_t uniform_var=0, sampler_var=0, output_var=0;
+    uint32_t sampler_var=0, output_var=0;
     std::vector<uint32_t> uniform_vars;
     std::vector<uint32_t> input_vars;
     for(uint32_t id=1;id<bound;++id) {
         if(vars[id].storage==kStorageUniform) {
             uniform_vars.push_back(id);
-            if(!uniform_var) uniform_var=id;
         } else if(vars[id].storage==kStorageUniformConstant) {
             const uint32_t pt=pointee_type(types,vars[id].type);
             if(pt && pt<types.size() && types[pt].kind==TypeInfo::Kind::SampledImage) {
@@ -366,104 +420,138 @@ bool lower_fragment_subset(const uint32_t *words, size_t word_count,
     if(vector_components(types,output_type)!=4) { why="fragment output must be float4"; return false; }
 
     const StoreInfo *color_store=nullptr;
-    for(const auto &st:stores) if(st.pointer==output_var) { if(color_store){why="multiple fragment color stores unsupported";return false;} color_store=&st; }
+    for(const auto &st:stores) if(st.pointer==output_var) {
+        if(color_store){why="multiple fragment color stores unsupported";return false;}
+        color_store=&st;
+    }
     if(!color_store || color_store->object>=bound) { why="fragment output store missing"; return false; }
-    const ValueInfo &color=values[color_store->object];
 
-    if(color.kind==ValueInfo::Kind::Load) {
-        const uint32_t srcvar=color.a;
-        if(srcvar==uniform_var && uniform_vars.size()==1) {
-            const uint32_t uniform_type=pointee_type(types,vars[uniform_var].type);
-            if(vector_components(types,uniform_type)!=4) { why="fragment uniform must be float4"; return false; }
-            if(!input_vars.empty() || sampler_var) { why="uniform-color fragment has unexpected inputs/sampler"; return false; }
-            ir.op=backend::FragmentOpKind::UniformColor;
-            ir.uniforms.push_back({names[uniform_var].empty()?"uColor":names[uniform_var],0});
-            return true;
+    auto &program=typed.program();
+    std::unordered_map<uint32_t,backend::TypedValue> resources;
+    std::sort(input_vars.begin(),input_vars.end(),[&](uint32_t a,uint32_t b){return decorations[a].location<decorations[b].location;});
+    for(uint32_t var:input_vars) {
+        const uint8_t components=vector_components(types,pointee_type(types,vars[var].type));
+        const auto type=typed_f32(components);
+        if(type==backend::TypedType::Invalid || decorations[var].location>31) { why="fragment input is outside portable float subset"; return false; }
+        const auto value=program.input(type,static_cast<uint16_t>(decorations[var].location));
+        const std::string resource_name=names[var].empty()?("input"+std::to_string(decorations[var].location)):names[var];
+        if(value.kind()==backend::TypedValueKind::None ||
+           typed.add_resource(backend::TypedResourceKind::Input,value,type,resource_name,
+                              static_cast<uint16_t>(decorations[var].location))==std::numeric_limits<uint16_t>::max()) {
+            why="failed to create portable Typed fragment input"; return false;
         }
-        if(vars[srcvar].storage==kStorageInput && decorations[srcvar].has_location && decorations[srcvar].location==0 &&
-           vector_components(types,pointee_type(types,vars[srcvar].type))==4 && !uniform_var && !sampler_var && input_vars.size()==1) {
-            ir.op=backend::FragmentOpKind::VaryingColor;
-            return true;
+        resources[var]=value;
+    }
+    for(size_t i=0;i<uniform_vars.size();++i) {
+        const uint32_t var=uniform_vars[i];
+        if(vector_components(types,pointee_type(types,vars[var].type))!=4) { why="portable fragment uniforms must be float4"; return false; }
+        const uint16_t index=static_cast<uint16_t>(i*4u);
+        const auto value=program.uniform<backend::TypedType::F32x4>(index);
+        const std::string resource_name=names[var].empty()?("u"+std::to_string(i)):names[var];
+        if(value.kind()==backend::TypedValueKind::None ||
+           typed.add_resource(backend::TypedResourceKind::Uniform,value,backend::TypedType::F32x4,
+                              resource_name,index)==std::numeric_limits<uint16_t>::max()) {
+            why="failed to create portable Typed fragment uniform"; return false;
         }
-        why="direct fragment color load is not a supported uniform/varying"; return false;
+        resources[var]=value;
     }
+    if(sampler_var) {
+        const auto value=program.sampler(0);
+        const std::string resource_name=names[sampler_var].empty()?"tex":names[sampler_var];
+        if(value.kind()==backend::TypedValueKind::None ||
+           typed.add_resource(backend::TypedResourceKind::Sampler2D,value,backend::TypedType::Sampler2D,
+                              resource_name,0)==std::numeric_limits<uint16_t>::max()) {
+            why="failed to create portable Typed fragment sampler"; return false;
+        }
+        resources[sampler_var]=value;
+    }
+    const std::string output_name=names[output_var].empty()?"color":names[output_var];
+    const uint16_t output_resource=typed.add_resource(backend::TypedResourceKind::Output,{},backend::TypedType::F32x4,
+                                                       output_name,0,backend::TypedSemantic::Color,0);
+    if(output_resource==std::numeric_limits<uint16_t>::max()) { why="failed to create portable Typed fragment output"; return false; }
 
-    if(color.kind==ValueInfo::Kind::FMul) {
-        if(!sampler_var || uniform_vars.size()!=1 || input_vars.size()!=1) { why="texture-tint fragment requires one sampler, one uniform and one input"; return false; }
-        uint32_t sample_id=0, tint_load_id=0;
-        if(color.a<bound && values[color.a].kind==ValueInfo::Kind::ImageSample && color.b<bound && values[color.b].kind==ValueInfo::Kind::Load) { sample_id=color.a; tint_load_id=color.b; }
-        else if(color.b<bound && values[color.b].kind==ValueInfo::Kind::ImageSample && color.a<bound && values[color.a].kind==ValueInfo::Kind::Load) { sample_id=color.b; tint_load_id=color.a; }
-        else { why="fragment multiply must be texture sample * uniform float4"; return false; }
-        if(loaded_variable(values,tint_load_id)!=uniform_var) { why="fragment multiply operand is not the supported tint uniform"; return false; }
-        const uint32_t uniform_type=pointee_type(types,vars[uniform_var].type);
-        if(vector_components(types,uniform_type)!=4) { why="texture tint uniform must be float4"; return false; }
-        const ValueInfo &sample=values[sample_id];
-        const uint32_t sampled_var=loaded_variable(values,sample.a);
-        const uint32_t coord_var=loaded_variable(values,sample.b);
-        const uint32_t in=input_vars[0];
-        if(sampled_var!=sampler_var || coord_var!=in || decorations[in].location!=0 ||
-           vector_components(types,pointee_type(types,vars[in].type))!=2) { why="texture-tint sample must use sampler0 and float2 Location 0 coordinates"; return false; }
-        ir.op=backend::FragmentOpKind::TextureTint2D;
-        ir.uniforms.push_back({names[uniform_var].empty()?"uTintColor":names[uniform_var],0});
-        ir.samplers.push_back({names[sampler_var].empty()?"tex":names[sampler_var],0});
-        return true;
-    }
-
-    if(color.kind==ValueInfo::Kind::ImageSample) {
-        if(!sampler_var || !uniform_vars.empty() || input_vars.size()!=1) { why="texture fragment requires one sampler and one input"; return false; }
-        const uint32_t sampled_var=loaded_variable(values,color.a);
-        const uint32_t coord_var=loaded_variable(values,color.b);
-        const uint32_t in=input_vars[0];
-        if(sampled_var!=sampler_var || coord_var!=in || decorations[in].location!=0 ||
-           vector_components(types,pointee_type(types,vars[in].type))!=2) { why="texture sample must use sampler0 and float2 Location 0 coordinates"; return false; }
-        ir.op=backend::FragmentOpKind::Texture2D;
-        ir.samplers.push_back({names[sampler_var].empty()?"tex":names[sampler_var],0});
-        return true;
-    }
-
-    // Generic arithmetic fallback. Preserve all canonical shape-specific
-    // paths above; only previously unsupported expression trees use this DAG.
-    if (sampler_var) { why="generic arithmetic fallback does not yet mix samplers"; return false; }
-    if (input_vars.size()>1) { why="generic arithmetic fallback supports at most one located varying"; return false; }
-    for (uint32_t u : uniform_vars) {
-        const uint32_t ut=pointee_type(types,vars[u].type);
-        if(vector_components(types,ut)!=4) { why="generic arithmetic uniforms must be float4"; return false; }
-        ir.uniforms.push_back({names[u].empty()?("u"+std::to_string(ir.uniforms.size())):names[u],static_cast<uint32_t>(ir.uniforms.size()*4)});
-    }
-    std::unordered_map<uint32_t,uint32_t> uniform_index;
-    for(size_t i=0;i<uniform_vars.size();++i) uniform_index[uniform_vars[i]]=static_cast<uint32_t>(i);
-    std::unordered_map<uint32_t,uint32_t> memo;
-    std::function<bool(uint32_t,uint32_t&)> build_expr = [&](uint32_t id,uint32_t &node)->bool {
-        if(auto it=memo.find(id);it!=memo.end()){node=it->second;return true;}
-        if(id>=bound){why="expression id out of range";return false;}
-        const auto &v=values[id]; backend::FragmentExprNode n{};
+    std::unordered_map<uint32_t,backend::TypedValue> memo;
+    std::function<bool(uint32_t,backend::TypedValue&)> build_value = [&](uint32_t id,backend::TypedValue &out_value)->bool {
+        if(auto it=memo.find(id);it!=memo.end()){out_value=it->second;return true;}
+        if(id>=bound){why="fragment expression id out of range";return false;}
+        const auto &v=values[id];
+        backend::TypedValue result{};
         if(v.kind==ValueInfo::Kind::Load) {
-            const uint32_t var=v.a;
-            if(auto it=uniform_index.find(var);it!=uniform_index.end()) { n.kind=backend::FragmentExprKind::Uniform; n.a=it->second; n.components=4; }
-            else if(!input_vars.empty() && var==input_vars[0] && decorations[var].location==0 && vector_components(types,pointee_type(types,vars[var].type))==4) { n.kind=backend::FragmentExprKind::Varying; n.a=0; n.components=4; }
-            else { why="generic arithmetic leaf is not float4 uniform or Location 0 varying"; return false; }
+            auto it=resources.find(v.a);
+            if(it==resources.end()) { why="fragment load does not reference a supported resource"; return false; }
+            result=it->second;
+        } else if(v.kind==ValueInfo::Kind::ImageSample) {
+            backend::TypedValue sampled{},coord{};
+            if(!build_value(v.a,sampled)||!build_value(v.b,coord) || sampled.type()!=backend::TypedType::Sampler2D ||
+               coord.type()!=backend::TypedType::F32x2 || vector_components(types,v.type)!=4) {
+                why="portable texture sample operands are unsupported"; return false;
+            }
+            result=program.make_value<backend::TypedType::F32x4>();
+            if(result.kind()==backend::TypedValueKind::None ||
+               !program.emit<backend::TypedOpcode::Sample2D>(0,result,sampled,coord)) {
+                why="failed to emit portable Typed sample2D"; return false;
+            }
         } else if(v.kind==ValueInfo::Kind::Composite) {
-            if(v.constituents.size()!=4 || v.constituents[0]!=v.constituents[1] || v.constituents[0]!=v.constituents[2] || v.constituents[0]!=v.constituents[3]) { why="generic arithmetic composite must currently be a scalar splat"; return false; }
-            uint32_t a=0; if(!build_expr(v.constituents[0],a)) return false;
-            n.kind=backend::FragmentExprKind::Splat; n.a=a; n.components=4;
+            if(v.constituents.size()!=4 || v.constituents[0]!=v.constituents[1] ||
+               v.constituents[0]!=v.constituents[2] || v.constituents[0]!=v.constituents[3]) {
+                why="portable fragment composite must be a scalar splat"; return false;
+            }
+            backend::TypedValue scalar{};
+            if(!build_value(v.constituents[0],scalar) || scalar.type()!=backend::TypedType::F32) {
+                why="portable fragment splat source must be F32"; return false;
+            }
+            result=program.make_value<backend::TypedType::F32x4>();
+            if(result.kind()==backend::TypedValueKind::None ||
+               !program.emit<backend::TypedOpcode::FloatSplat>(0,result,scalar)) {
+                why="failed to emit portable Typed float splat"; return false;
+            }
         } else if(v.kind==ValueInfo::Kind::FNegate) {
-            uint32_t a=0; if(!build_expr(v.a,a)) return false;
-            n.kind=backend::FragmentExprKind::Neg; n.a=a; n.components=4;
-        } else if(v.kind==ValueInfo::Kind::FMul || v.kind==ValueInfo::Kind::FAdd || v.kind==ValueInfo::Kind::FSub || v.kind==ValueInfo::Kind::Dot) {
-            uint32_t a=0,b=0; if(!build_expr(v.a,a)||!build_expr(v.b,b)) return false;
-            n.a=a; n.b=b;
-            if(v.kind==ValueInfo::Kind::FMul) n.kind=backend::FragmentExprKind::Mul;
-            else if(v.kind==ValueInfo::Kind::FAdd) n.kind=backend::FragmentExprKind::Add;
-            else if(v.kind==ValueInfo::Kind::FSub) n.kind=backend::FragmentExprKind::Sub;
-            else n.kind=backend::FragmentExprKind::Dot;
-            n.components=static_cast<uint8_t>(v.kind==ValueInfo::Kind::Dot?1:4);
-        } else { why="generic arithmetic expression contains unsupported opcode"; return false; }
-        node=static_cast<uint32_t>(ir.expressions.size()); ir.expressions.push_back(n); memo[id]=node; return true;
+            backend::TypedValue source{};
+            if(!build_value(v.a,source) || source.type()!=backend::TypedType::F32x4) {
+                why="portable negate requires float4"; return false;
+            }
+            result=program.make_value<backend::TypedType::F32x4>();
+            if(result.kind()==backend::TypedValueKind::None ||
+               !program.emit<backend::TypedOpcode::FloatUnary>(static_cast<uint8_t>(backend::TypedFloatUnaryOp::Neg),
+                                                               result,source)) {
+                why="failed to emit portable Typed negate"; return false;
+            }
+        } else if(v.kind==ValueInfo::Kind::FMul || v.kind==ValueInfo::Kind::FAdd ||
+                  v.kind==ValueInfo::Kind::FSub || v.kind==ValueInfo::Kind::Dot) {
+            backend::TypedValue a{},b{};
+            if(!build_value(v.a,a)||!build_value(v.b,b) || a.type()!=backend::TypedType::F32x4 ||
+               b.type()!=backend::TypedType::F32x4) {
+                why="portable float arithmetic requires float4 operands"; return false;
+            }
+            backend::TypedFloatOp op;
+            backend::TypedType result_type=backend::TypedType::F32x4;
+            if(v.kind==ValueInfo::Kind::FMul) op=backend::TypedFloatOp::Mul;
+            else if(v.kind==ValueInfo::Kind::FAdd) op=backend::TypedFloatOp::Add;
+            else if(v.kind==ValueInfo::Kind::FSub) op=backend::TypedFloatOp::Sub;
+            else { op=backend::TypedFloatOp::Dot; result_type=backend::TypedType::F32; }
+            result=program.make_value(result_type);
+            if(result.kind()==backend::TypedValueKind::None ||
+               !program.emit<backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(op),result,a,b)) {
+                why="failed to emit portable Typed float arithmetic"; return false;
+            }
+        } else {
+            why="portable fragment expression contains unsupported opcode"; return false;
+        }
+        memo[id]=result;
+        out_value=result;
+        return true;
     };
-    uint32_t root=0;
-    if(!build_expr(color_store->object,root)) return false;
-    if(ir.expressions[root].components!=4) { why="generic fragment arithmetic root must be float4"; return false; }
-    ir.root_expression=root; ir.op=backend::FragmentOpKind::Arithmetic; return true;
+
+    backend::TypedValue root{};
+    if(!build_value(color_store->object,root) || root.type()!=backend::TypedType::F32x4) {
+        if(why.empty()) why="portable fragment root must be float4";
+        return false;
+    }
+    if(!program.emit<backend::TypedOpcode::StoreOutput>(0,{},root,{},output_resource)) {
+        why="failed to emit portable Typed output store";
+        return false;
+    }
+    return true;
 }
 }
 
@@ -514,26 +602,24 @@ bool spirv_to_gxp(VscStage stage, const char *entrypoint,
         // path until the fallback can be removed completely.
     }
 #endif
-    if (stage == VSC_STAGE_FRAGMENT) {
-        backend::FragmentIr ir; std::string why;
-        if (!lower_fragment_subset(words,word_count,selected->id,ir,why)) {
-            out.diagnostics.push_back({VSC_DIAG_ERROR,0x2220,0,0,"unsupported fragment SPIR-V subset: "+why}); return false;
-        }
-        backend::IrCompileResult lowered;
-        if (!backend::compile_fragment_ir(ir,lowered)) {
-            out.diagnostics.push_back({VSC_DIAG_ERROR,0x2221,0,0,"fragment Vita IR lowering failed: "+lowered.error}); return false;
-        }
-        out.gxp=std::move(lowered.gxp);
-        return true;
-    }
-
-    backend::VertexIr ir; std::string why;
-    if (!lower_vertex_subset(words,word_count,selected->id,ir,why)) {
-        out.diagnostics.push_back({VSC_DIAG_ERROR,0x2210,0,0,"unsupported vertex SPIR-V subset: "+why}); return false;
+    backend::TypedShader portable(stage == VSC_STAGE_FRAGMENT ? backend::TypedStage::Fragment
+                                                              : backend::TypedStage::Vertex);
+    std::string why;
+    const bool portable_ok = stage == VSC_STAGE_FRAGMENT ?
+        lower_fragment_subset(words,word_count,selected->id,portable,why) :
+        lower_vertex_subset(words,word_count,selected->id,portable,why);
+    if (!portable_ok) {
+        const uint32_t code = stage == VSC_STAGE_FRAGMENT ? 0x2220 : 0x2210;
+        out.diagnostics.push_back({VSC_DIAG_ERROR,code,0,0,
+            std::string("unsupported ")+(stage==VSC_STAGE_FRAGMENT?"fragment":"vertex")+
+            " SPIR-V subset: "+why});
+        return false;
     }
     backend::IrCompileResult lowered;
-    if (!backend::compile_vertex_ir(ir,lowered)) {
-        out.diagnostics.push_back({VSC_DIAG_ERROR,0x2211,0,0,"Vita IR lowering failed: "+lowered.error}); return false;
+    if (!backend::compile_typed_shader(portable,lowered)) {
+        const uint32_t code = stage == VSC_STAGE_FRAGMENT ? 0x2221 : 0x2211;
+        out.diagnostics.push_back({VSC_DIAG_ERROR,code,0,0,"Typed Vita IR lowering failed: "+lowered.error});
+        return false;
     }
     out.gxp=std::move(lowered.gxp);
     return true;
