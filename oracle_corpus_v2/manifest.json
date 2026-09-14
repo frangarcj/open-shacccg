@@ -720,6 +720,14 @@
     "op": "or"
   },
   {
+    "name": "fp-s32-to-f32",
+    "file": "fp-s32-to-f32.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "integer",
+    "type": "int",
+    "op": "s32-to-f32"
+  },
+  {
     "name": "fp-if",
     "file": "fp-if.cg",
     "profile": "sce_fp_psp2",

@@ -396,6 +396,22 @@ int test_usse() {
             !decode_vpck_s32x2_color_semantic(word,&decoded) || decoded.phase!=phase)
             failures += fail("oracle S32x2 COLOR VPCK phase mismatch");
     }
+    const uint64_t s32_to_f32_pack_words[]={0x40810786a0c00081ULL,0x40810786a0800080ULL};
+    for (uint8_t phase=0;phase<2;++phase) {
+        VpckS32ToF32Semantic pack{phase};
+        uint64_t word=0;
+        VpckS32ToF32Semantic decoded{};
+        if (!encode_vpck_s32_to_f32_semantic(pack,&word) || word!=s32_to_f32_pack_words[phase] ||
+            !decode_vpck_s32_to_f32_semantic(word,&decoded) || decoded.phase!=phase)
+            failures += fail("oracle S32->F32 VPCK phase mismatch");
+    }
+    {
+        uint64_t word=0;
+        Vmad2S32ToF32Semantic decoded{};
+        if (!encode_vmad2_s32_to_f32_semantic({},&word) || word!=0x00800086a0403042ULL ||
+            !decode_vmad2_s32_to_f32_semantic(word,&decoded))
+            failures += fail("oracle S32->F32 VMAD2 core mismatch");
+    }
 
     // Semantic VMAD: reconstruct the complete four-instruction matrix path.
     const uint64_t matrix_words[] = {
@@ -546,6 +562,16 @@ int test_usse() {
     if (!encode_vbw_semantic(bw_or,&bw_word) || !decode_vbw_semantic(bw_word,&bw_dec) ||
         bw_dec.immediate!=0x00ff0000u)
         failures += fail("semantic VBW rotated immediate roundtrip mismatch");
+
+    VbwSemantic bw_end{};
+    bw_end.op=BitwiseOp::Or;
+    bw_end.dst={RegisterBank::PrimaryAttribute,0};
+    bw_end.src1={RegisterBank::PrimaryAttribute,0};
+    bw_end.src2={RegisterBank::PrimaryAttribute,2};
+    bw_end.end=true;
+    if (!encode_vbw_semantic(bw_end,&bw_word) || bw_word!=0x5084000aa0000002ULL ||
+        !decode_vbw_semantic(bw_word,&bw_dec) || !bw_dec.end)
+        failures += fail("semantic VBW END form mismatch");
 
     // Scalar S32 uniform profiles isolate VBW from attribute conversion. These
     // words are emitted by Sony 1.6.5 for the clean integer oracle probes.

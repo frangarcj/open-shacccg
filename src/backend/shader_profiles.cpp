@@ -688,6 +688,69 @@ bool compile_fragment_f32_to_s32_machine(const MachineProgram &primary,
     return true;
 }
 
+bool compile_fragment_s32_to_f32_machine(const MachineProgram &primary, const MachineProgram &secondary,
+                                         const IrUniformS32 &uniform,
+                                         uint32_t binary_guid, uint32_t source_guid,
+                                         IrCompileResult &out) {
+    out={};
+    if (uniform.name.empty() || uniform.resource_index!=0) {
+        out.error="S32->F32 fragment profile requires one S32 uniform at resource 0";
+        return false;
+    }
+    MachineCompileResult primary_compiled,secondary_compiled;
+    if (!compile_words(primary,primary_compiled,out,"S32->F32 primary Machine IR lowering failed") ||
+        !compile_words(secondary,secondary_compiled,out,"S32->F32 secondary Machine IR lowering failed"))
+        return false;
+    if (primary_compiled.words.size()!=2 || secondary_compiled.words.size()!=9) {
+        out.error="S32->F32 fragment profile requires the oracle 2/9-word streams";
+        return false;
+    }
+
+    const uint8_t interface_block[32]={
+        0,0,0,0,0,0,0,0,0,0,1,4,0,0,0,0,4,0,0,0,0x1f,0x00,0x80,0xa0,
+        0x0a,0x00,0x81,0x68,0x04,0xc0,0x20,0xa0,
+    };
+    const gxp::LiteralDesc literals[]={{0,0x477fff00u},{1,1u}};
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,2},{19,0,2,2}};
+    const gxp::ParameterDesc parameter{uniform.name.c_str(),1,4,1,14,0,0,1,0};
+
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Fragment;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00080000;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=1;
+    image.secondary_register_count=7;
+    image.primary_phase_count=1;
+    image.data_buffer_count=2;
+    image.default_uniform_buffer_count=2;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.secondary_instructions=secondary_compiled.words.data();
+    image.secondary_instruction_count=secondary_compiled.words.size();
+    image.primary_instructions=primary_compiled.words.data();
+    image.primary_instruction_count=primary_compiled.words.size();
+    image.containers=containers;
+    image.container_count=2;
+    image.parameters=&parameter;
+    image.parameter_count=1;
+    image.literals=literals;
+    image.literal_count=2;
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected S32->F32 fragment profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear();
+        out.error="GXP writer failed for S32->F32 fragment profile";
+        return false;
+    }
+    return true;
+}
+
 bool compile_fragment_s32x2_machine(const MachineProgram &primary, const MachineProgram &secondary,
                                     const std::vector<IrUniformS32> &uniforms,
                                     uint32_t binary_guid, uint32_t source_guid,

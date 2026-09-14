@@ -682,6 +682,9 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         case TypedOpcode::FloatToS32:
             error="typed F32->S32 conversion requires compile_typed_shader oracle profile";
             return false;
+        case TypedOpcode::S32ToFloat:
+            error="typed S32->F32 conversion requires compile_typed_shader oracle profile";
+            return false;
         case TypedOpcode::Bitwise: {
             const bool integer=(instruction.dst.type()==TypedType::U32 || instruction.dst.type()==TypedType::S32) &&
                 instruction.src0.type()==instruction.dst.type() && instruction.src1.type()==instruction.dst.type();
@@ -1232,6 +1235,37 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
 
     const auto *root_def = definition(root);
     if (!root_def) { out.error = "typed fragment root has no defining operation"; return false; }
+    if (root_def->opcode()==TypedOpcode::S32ToFloat) {
+        const auto *source=resource_for_value(root_def->src0);
+        if (root.type()!=TypedType::F32 || !source || source->kind!=TypedResourceKind::Uniform ||
+            source->type!=TypedType::S32 || source->index!=0 || inputs.size()!=0 ||
+            uniforms.size()!=1 || fragment_s32_uniforms.size()!=1 || !fragment_uniforms.empty() ||
+            !samplers.empty() || store->aux>=resources.size() ||
+            resources[store->aux].kind!=TypedResourceKind::Output || resources[store->aux].index!=0 ||
+            resources[store->aux].type!=TypedType::F32) {
+            out.error="typed S32->F32 profile requires one S32 uniform and scalar F32 COLOR0 output";
+            return false;
+        }
+
+        MachineProgram primary,secondary;
+        if (!secondary.emit<MachineOpcode::S32ToF32Scalar>(0,
+                secondary.physical(machine_primary(0),MachineType::F32),
+                secondary.physical(machine_primary(0),MachineType::S32))) {
+            out.error="failed to build oracle S32->F32 secondary conversion";
+            return false;
+        }
+        if (!primary.emit<MachineOpcode::Phase>() ||
+            !primary.emit_config<MachineOpcode::Pack>(
+                machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F16),
+                machine_pack_config(1,true,false,false),
+                primary.physical(machine_fragment_output(0),MachineType::F16),
+                primary.physical(machine_secondary(0),MachineType::F32),
+                primary.physical(machine_immediate(0),MachineType::F32))) {
+            out.error="failed to build oracle S32->F32 primary output pack";
+            return false;
+        }
+        return compile_fragment_s32_to_f32_machine(primary,secondary,fragment_s32_uniforms[0],0,0,out);
+    }
     if (root_def->opcode() == TypedOpcode::Sample2D) {
         return compile_fragment_machine_profile(FragmentMachineProfile::Texture2D,
                                                 fragment_uniforms,fragment_samplers,0,0,out);

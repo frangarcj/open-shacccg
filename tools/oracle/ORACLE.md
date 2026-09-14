@@ -166,12 +166,15 @@ two-qword stream ends four bytes beyond it and primary code resumes at the next
 conversion is a separate pair of probes: `int` attribute passthrough and explicit
 `(int)float` compile to the same primary stream
 `PHAS, 0x40810d46a0000000, 0x10a40084a0042000, 0x10a400a620041000`.
-Open reproduces both exactly outside GUIDs. S32->F32 and vector/bitcast cases remain
-separate oracle milestones.
+Open reproduces both exactly outside GUIDs. Scalar S32->F32 is now a separate exact
+probe as well: Sony emits nine secondary words plus PHAS/F32->F16 in primary. The
+conversion anchors two U16->F32 VPCK words (`0x40810786a0c00081`,
+`0x40810786a0800080`), VMAD2 `0x00800086a0403042`, and a final VBW END form.
+Vector conversions and bitcasts remain separate oracle milestones.
 
 `uniform int2` is the first vector-integer milestone. Passthrough uses secondary
 VPCK words `0x408106caa0000080` / `0x4085094ea0010000`; OR first emits
 `0x5080000aa0200181` / `0x5080000aa0000100`. Both GXPs are exact outside GUIDs.
 The writer therefore accepts the observed four-word secondary stream; int4 probes
 have additionally demonstrated five- and eight-word layouts, but their instruction
-profiles are not enabled yet. `--feature integer` currently contains ten exact cases.
+profiles are not enabled yet. `--feature integer` currently contains eleven exact cases.

@@ -73,6 +73,8 @@ def main():
          "uniform int2 x; int2 main() : COLOR0 { return x; }", "integer", type="int2", op="pass")
     emit(root, manifest, "fp-s32x2-uniform-or", "sce_fp_psp2",
          "uniform int2 x; uniform int2 y; int2 main() : COLOR0 { return x | y; }", "integer", type="int2", op="or")
+    emit(root, manifest, "fp-s32-to-f32", "sce_fp_psp2",
+         "uniform int x; float main() : COLOR0 { return (float)x; }", "integer", type="int", op="s32-to-f32")
     emit(root, manifest, "fp-if", "sce_fp_psp2",
          "float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1):COLOR0 { if (a.x > b.x) return a; return b; }", "control")
     emit(root, manifest, "fp-ternary", "sce_fp_psp2",

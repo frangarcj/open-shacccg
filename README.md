@@ -49,6 +49,9 @@ Implemented now:
   `U32xN` Typed slots as bit containers (signedness is irrelevant to bitwise lanes), avoiding
   any expansion of the 4-bit TypedType field; the int2 COLOR path uses two fixed VPCK words
   and up to four observed secondary instructions
+- oracle-exact scalar `uniform int -> float` conversion. `OpConvertSToF` lowers to a compact
+  nine-word secondary Machine pseudo-op built from validated VBW/I32MAD2 pieces plus two fixed
+  integer-unpack VPCK phases and one fixed VMAD2 core, followed by the canonical F32->F16 COLOR pack
 - oracle-exact fragment profiles for `wzyx` and the constant `float4(1,0,0,1)`,
   including swizzled VPCK, literal-table placement and the primary/interface overlap convention
 - oracle-exact standalone vertex profiles for float4 position passthrough,

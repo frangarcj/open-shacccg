@@ -753,6 +753,7 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             words=(components>=1 && components<=4) ? static_cast<uint32_t>(components+2) : 1;
         } else if (program.instructions()[i].opcode()==MachineOpcode::DotSplatF32) words=3;
         else if (program.instructions()[i].opcode()==MachineOpcode::F32ToS32Color) words=3;
+        else if (program.instructions()[i].opcode()==MachineOpcode::S32ToF32Scalar) words=9;
         else if (program.instructions()[i].opcode()==MachineOpcode::S32x2ColorPack) words=2;
         word_positions[i + 1] = word_positions[i] + words;
     }
@@ -1045,6 +1046,65 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 !builder.instruction(usse::V16NmadF32ToS32Semantic{0}) ||
                 !builder.instruction(usse::V16NmadF32ToS32Semantic{1})) {
                 out.error="failed to encode oracle F32->S32 COLOR sequence";
+                return false;
+            }
+            break;
+        }
+        case MachineOpcode::S32ToF32Scalar: {
+            usse::RegisterRef dst{},src{};
+            if (guard!=usse::Predicate::Always || instruction.subop()!=0 ||
+                !resolve_register_value(instruction.dst,MachineType::F32,out.value_registers,&dst) ||
+                !resolve_register_value(instruction.src0,MachineType::S32,out.value_registers,&src) ||
+                dst.bank!=usse::RegisterBank::PrimaryAttribute || dst.num!=0 ||
+                src.bank!=usse::RegisterBank::PrimaryAttribute || src.num!=0) {
+                out.error="S32->F32 scalar profile requires PA0 source/destination";
+                return false;
+            }
+
+            usse::VbwSemantic sign{};
+            sign.op=usse::BitwiseOp::ArithmeticShiftRight;
+            sign.dst={usse::RegisterBank::PrimaryAttribute,4};
+            sign.src1={usse::RegisterBank::PrimaryAttribute,0};
+            sign.src2_is_immediate=true;
+            sign.immediate=31;
+
+            usse::I32Mad2Semantic stage0{};
+            stage0.dst={usse::RegisterBank::PrimaryAttribute,1};
+            stage0.src0={usse::RegisterBank::PrimaryAttribute,3};
+            stage0.src1={usse::RegisterBank::PrimaryAttribute,0};
+            stage0.src2={usse::RegisterBank::PrimaryAttribute,4};
+            stage0.sn=0;
+            usse::I32Mad2Semantic stage1=stage0;
+            stage1.src2={usse::RegisterBank::PrimaryAttribute,1};
+            stage1.sn=1;
+
+            usse::VbwSemantic magnitude{};
+            magnitude.op=usse::BitwiseOp::Xor;
+            magnitude.dst={usse::RegisterBank::PrimaryAttribute,1};
+            magnitude.src1={usse::RegisterBank::PrimaryAttribute,1};
+            magnitude.src2={usse::RegisterBank::PrimaryAttribute,4};
+
+            usse::VbwSemantic sign_bit{};
+            sign_bit.op=usse::BitwiseOp::And;
+            sign_bit.dst={usse::RegisterBank::PrimaryAttribute,0};
+            sign_bit.src1={usse::RegisterBank::PrimaryAttribute,0};
+            sign_bit.src2_is_immediate=true;
+            sign_bit.immediate=0x80000000u;
+
+            usse::VbwSemantic combine{};
+            combine.op=usse::BitwiseOp::Or;
+            combine.dst={usse::RegisterBank::PrimaryAttribute,0};
+            combine.src1={usse::RegisterBank::PrimaryAttribute,0};
+            combine.src2={usse::RegisterBank::PrimaryAttribute,2};
+            combine.end=true;
+
+            if (!builder.instruction(sign) || !builder.instruction(stage0) ||
+                !builder.instruction(stage1) || !builder.instruction(magnitude) ||
+                !builder.instruction(usse::VpckS32ToF32Semantic{0}) ||
+                !builder.instruction(usse::VpckS32ToF32Semantic{1}) ||
+                !builder.instruction(usse::Vmad2S32ToF32Semantic{}) ||
+                !builder.instruction(sign_bit) || !builder.instruction(combine)) {
+                out.error="failed to encode oracle S32->F32 scalar conversion sequence";
                 return false;
             }
             break;

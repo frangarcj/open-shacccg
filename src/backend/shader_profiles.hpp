@@ -79,6 +79,10 @@ bool compile_fragment_s32_machine(const MachineProgram &primary, const MachinePr
 bool compile_fragment_f32_to_s32_machine(const MachineProgram &primary,
                                          uint32_t binary_guid, uint32_t source_guid,
                                          IrCompileResult &out);
+bool compile_fragment_s32_to_f32_machine(const MachineProgram &primary, const MachineProgram &secondary,
+                                         const IrUniformS32 &uniform,
+                                         uint32_t binary_guid, uint32_t source_guid,
+                                         IrCompileResult &out);
 bool compile_fragment_s32x2_machine(const MachineProgram &primary, const MachineProgram &secondary,
                                     const std::vector<IrUniformS32> &uniforms,
                                     uint32_t binary_guid, uint32_t source_guid,

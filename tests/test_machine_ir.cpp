@@ -223,6 +223,26 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        if (!program.emit<MachineOpcode::S32ToF32Scalar>(0,
+                program.physical(machine_primary(0),MachineType::F32),
+                program.physical(machine_primary(0),MachineType::S32))) {
+            failures += fail("could not construct oracle S32->F32 scalar Machine profile");
+        } else {
+            MachineCompileResult result;
+            const uint64_t expected[]={
+                0x6881000aa080001fULL,0xd0800006a020c004ULL,0xd0900006a020c001ULL,
+                0x58800002a0200084ULL,0x40810786a0c00081ULL,0x40810786a0800080ULL,
+                0x00800086a0403042ULL,0x50810422a0000000ULL,0x5084000aa0000002ULL,
+            };
+            if (!compile_machine_program(program,result) || result.words.size()!=std::size(expected))
+                failures += fail("oracle S32->F32 scalar Machine profile did not compile");
+            else for (size_t i=0;i<std::size(expected);++i)
+                if (result.words[i]!=expected[i]) failures += fail("oracle S32->F32 scalar Machine word mismatch");
+        }
+    }
+
+    {
+        MachineProgram program;
         if (!program.emit<MachineOpcode::S32x2ColorPack>()) {
             failures += fail("could not construct oracle S32x2 COLOR pack Machine profile");
         } else {

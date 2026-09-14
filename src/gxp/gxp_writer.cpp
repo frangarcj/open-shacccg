@@ -164,9 +164,10 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
         // extends four bytes beyond the interface and primary code resumes at
         // the next 8-byte boundary.
         // Integer-vector oracle probes extend this same layout to 4/5/8 words;
-        // keep the observed upper bound fail-closed until a larger legal stream
+        // scalar S32->F32 conversion independently anchors a 9-word stream.
+        // Keep the observed upper bound fail-closed until a larger legal stream
         // is captured.
-        if (image.secondary_instruction_count > 8) return false;
+        if (image.secondary_instruction_count > 9) return false;
         l.secondary_off = l.interface_off + 20;
         if (!mul_size(image.secondary_instruction_count,sizeof(uint64_t),bytes)) return false;
         l.secondary_end = l.secondary_off + bytes;

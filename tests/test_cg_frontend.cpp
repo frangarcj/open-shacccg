@@ -381,6 +381,47 @@ bool compile_oracle_s32x2_profile(const std::string &source, const char *name,
     vsc_destroy_result(&request.allocator,&result);
     return ok;
 }
+
+bool compile_oracle_s32_to_f32_profile(const std::string &source, const char *name) {
+    VscCompileRequest request{};
+    request.source_name=name;
+    request.source=source.data();
+    request.source_size=source.size();
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_FRAGMENT;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+    if (ok) {
+        const uint64_t primary_words[]={0xfa44070000000000ULL,0x40810d46e0000000ULL};
+        const uint64_t secondary_words[]={
+            0x6881000aa080001fULL,0xd0800006a020c004ULL,0xd0900006a020c001ULL,
+            0x58800002a0200084ULL,0x40810786a0c00081ULL,0x40810786a0800080ULL,
+            0x00800086a0403042ULL,0x50810422a0000000ULL,0x5084000aa0000002ULL,
+        };
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        vsc::gxp::ParameterView parameter{};
+        ok=view.valid() && view.logical_size()==314 && view.sdk_version()==0x0165 &&
+            view.flags()==0x00080001 && view.primary_register_count()==1 &&
+            view.secondary_register_count()==7 && view.literal_count()==2 &&
+            view.container_count()==2 && view.compiler_version_raw()==0x0002df30 &&
+            view.parameter_count()==1 && view.parameter(0,parameter) && parameter.name=="x" &&
+            parameter.category==1 && parameter.type==4 && parameter.component_count==1 &&
+            parameter.container_index==14 && parameter.resource_index==0 &&
+            view.primary_instruction_count()==2 && view.secondary_instruction_count()==9;
+        const auto primary=view.primary_program();
+        const auto secondary=view.secondary_program();
+        if (ok) ok=primary.size==sizeof(primary_words) &&
+            std::memcmp(primary.data,primary_words,sizeof(primary_words))==0 &&
+            secondary.size==sizeof(secondary_words) &&
+            std::memcmp(secondary.data,secondary_words,sizeof(secondary_words))==0;
+    }
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: %s S32->F32 diagnostic=%s\n",name,
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
 #endif
 #endif
 } // namespace
@@ -646,6 +687,12 @@ int test_cg_frontend() {
                 ++failures;
             }
         }
+    }
+    {
+        const char *probe="fp-s32-to-f32";
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/"+probe+".cg");
+        if (source.empty() || !compile_oracle_s32_to_f32_profile(source,probe))
+            failures += fail("Cg scalar S32->F32 conversion did not reproduce oracle profile");
     }
 #endif
     return failures;

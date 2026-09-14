@@ -492,6 +492,32 @@ bool decode_vpck_s32x2_color_semantic(uint64_t word, VpckS32x2ColorSemantic *i) 
     return true;
 }
 
+bool encode_vpck_s32_to_f32_semantic(const VpckS32ToF32Semantic &i, uint64_t *word) {
+    if (!word) return false;
+    if (i.phase==0) *word=0x40810786a0c00081ULL;
+    else if (i.phase==1) *word=0x40810786a0800080ULL;
+    else return false;
+    return true;
+}
+
+bool decode_vpck_s32_to_f32_semantic(uint64_t word, VpckS32ToF32Semantic *i) {
+    if (!i) return false;
+    if (word==0x40810786a0c00081ULL) i->phase=0;
+    else if (word==0x40810786a0800080ULL) i->phase=1;
+    else return false;
+    return true;
+}
+
+bool encode_vmad2_s32_to_f32_semantic(const Vmad2S32ToF32Semantic &, uint64_t *word) {
+    if (!word) return false;
+    *word=0x00800086a0403042ULL;
+    return true;
+}
+
+bool decode_vmad2_s32_to_f32_semantic(uint64_t word, Vmad2S32ToF32Semantic *i) {
+    return i && word==0x00800086a0403042ULL;
+}
+
 bool encode_vmad_semantic(const VmadSemantic &i, uint64_t *word) {
     if (!word || i.dst.num>=64 || i.src1.num>=64 || i.gpi0>=4 || i.gpi1>=4 || i.write_mask>=16 || i.repeat_count>=4) return false;
     VmadFields f{};
@@ -809,6 +835,7 @@ bool encode_vbw_semantic(const VbwSemantic &i, uint64_t *word) {
     f.pred=static_cast<uint8_t>(i.predicate);
     f.skip_invalid=i.skip_invalid;
     f.no_schedule=i.no_schedule;
+    f.end=i.end;
     f.repeat_count=i.repeat_count;
     f.dest_num=i.dst.num;
     f.src1_num=i.src1.num;
@@ -825,7 +852,7 @@ bool encode_vbw_semantic(const VbwSemantic &i, uint64_t *word) {
 bool decode_vbw_semantic(uint64_t word, VbwSemantic *i) {
     if (!i) return false;
     VbwFields f{};
-    if (!decode_vbw(word,&f) || f.partial || f.repeat_select || f.sync_start || f.end)
+    if (!decode_vbw(word,&f) || f.partial || f.repeat_select || f.sync_start)
         return false;
     if (!decode_vbw_op(f.op1,f.op2,&i->op) ||
         !decode_dest_bank(f.dest_bank,f.dest_ext,&i->dst.bank) ||
@@ -836,6 +863,7 @@ bool decode_vbw_semantic(uint64_t word, VbwSemantic *i) {
     i->repeat_count=f.repeat_count;
     i->skip_invalid=f.skip_invalid;
     i->no_schedule=f.no_schedule;
+    i->end=f.end;
     RegisterBank src2_bank=RegisterBank::Invalid;
     if (!decode_src1_bank(f.src2_bank,f.src2_ext,&src2_bank)) return false;
     i->src2_is_immediate=src2_bank==RegisterBank::Immediate;
