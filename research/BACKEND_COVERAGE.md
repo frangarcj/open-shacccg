@@ -339,10 +339,20 @@ one PA register per location, float3 uses two. Output VPCK uses matching `xy` or
 
 The GXP interface writer also generalizes the additional-input descriptors:
 float2 uses component signature `0x40`/tail `0x10`, while float3 shares the
-`0xc0`/`0x30` signature observed for float4. Differential probes confirm 27/33
-cases across `float2`, `float3` and `half2`; add/sub/mul/min/max/saturate/abs/neg/mad
-all compile in Sony and Open. Only narrow dot/div remain intentionally fail-closed.
-Together with the 22/22 vector4 slice, Open now compiles 49/77 ALU corpus cases.
+`0xc0`/`0x30` signature observed for float4.
+
+Narrow division and dot are now anchored too. F32x2 division exposes the odd-PA
+half-register VCOMP selector (`...81/...82` for PA1.xy); F32x3 reuses the even-PA
+VCOMP lane profile. Width-specific numerator staging plus fixed V16NMAD combines
+reproduce Sony exactly. Dot-splat float2 uses a semantic V32NMAD multiply/stage
+pair plus the observed V16 reduction, while float3 stages both vectors through
+VPCK before its V16 reduction. `fp-div-float2`, `fp-dot-float2`, `fp-div-float3`
+and `fp-dot-float3` are byte-identical outside GUIDs.
+
+Differential probes therefore compile 33/33 across `float2`, `float3` and
+`half2`. Half precision still arrives as F32 from glslang and intentionally uses
+the F32 profiles. Together with the 22/22 vector4 slice, Open now compiles 55/77
+ALU corpus cases; the remaining 22 are scalar float/half probes.
 
 Backend fallback diagnostics now retain the SPIRV-Cross Typed-path failure when
 the dependency-free parser also rejects a shader, so future oracle sweeps expose
@@ -357,7 +367,7 @@ not byte identity.
 2. **Complete structured control flow.** BR forward/backward offsets, six F32 VTST compares, direct COLOR0 two-way phi merge, output `OpSelect` and positive-step dynamic loops are validated; the control corpus is 12/12. Next generalize remaining phi consumers and derive decrement/other loop-update profiles from oracle probes.
 3. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
 4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
-5. **Common missing ALU families.** VCOMP now covers oracle-exact F32x4 division. Next extend width-aware dot/div and then prioritize VMAD2/VDUAL based on real traces.
+5. **Common missing ALU families.** VCOMP now covers oracle-exact F32 vector division and narrow dot-splat reductions are anchored. Next close scalar ALU packing/component selection, then prioritize VMAD2/VDUAL based on real traces.
 6. **Resource/reflection generalization.** Derive register counts, parameter types, containers, uniform buffers, literals and dependent samplers from IR instead of current sample-shaped layouts.
 7. **Hardware gate.** Treat a capability as complete only after host regressions plus real-Vita `sceGxmProgramCheck`/render validation where possible.
 

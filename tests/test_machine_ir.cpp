@@ -70,23 +70,62 @@ int test_machine_ir() {
     }
 
     {
-        MachineProgram program;
-        if (!program.emit<MachineOpcode::DivF32x4>(0,
-                program.physical(machine_fragment_output(0),MachineType::F16),
-                program.physical(machine_primary(0),MachineType::F32),
-                program.physical(machine_primary(2),MachineType::F32))) {
-            failures += fail("could not construct oracle F32x4 division Machine IR");
-        } else {
+        const uint64_t expected2[]={
+            0x308008008f800081ULL,0x308008088f800082ULL,
+            0x3880052083f40000ULL,0x10a4418600040f7cULL,
+        };
+        const uint64_t expected3[]={
+            0x308008008f800101ULL,0x308008088f800102ULL,0x308008008f800184ULL,
+            0x40800d9cafa18002ULL,0x10a4438600040f7cULL,
+        };
+        const uint64_t expected4[]={
+            0x308008008f800101ULL,0x308008088f800102ULL,
+            0x308008008f800184ULL,0x308008088f800188ULL,
+            0x40800dbcafb98002ULL,0x10a4478600040f7cULL,
+        };
+        for (uint8_t components=2;components<=4;++components) {
+            MachineProgram program;
+            const uint8_t rhs=components==2 ? 1 : 2;
+            if (!program.emit<MachineOpcode::DivF32>(components,
+                    program.physical(machine_fragment_output(0),MachineType::F16),
+                    program.physical(machine_primary(0),MachineType::F32),
+                    program.physical(machine_primary(rhs),MachineType::F32))) {
+                failures += fail("could not construct oracle F32 division Machine IR");
+                continue;
+            }
             MachineCompileResult result;
-            const uint64_t expected[]={
-                0x308008008f800101ULL,0x308008088f800102ULL,
-                0x308008008f800184ULL,0x308008088f800188ULL,
-                0x40800dbcafb98002ULL,0x10a4478600040f7cULL,
-            };
-            if (!compile_machine_program(program,result) || result.words.size()!=6)
-                failures += fail("oracle F32x4 division Machine IR did not compile");
-            else for (size_t i=0;i<6;++i)
-                if (result.words[i]!=expected[i]) failures += fail("oracle F32x4 division Machine word mismatch");
+            const uint64_t *expected=components==2 ? expected2 : (components==3 ? expected3 : expected4);
+            const size_t count=static_cast<size_t>(components+2);
+            if (!compile_machine_program(program,result) || result.words.size()!=count)
+                failures += fail("oracle F32 division Machine IR did not compile");
+            else for (size_t i=0;i<count;++i)
+                if (result.words[i]!=expected[i]) failures += fail("oracle F32 division Machine word mismatch");
+        }
+    }
+
+    {
+        const uint64_t expected2[]={
+            0x08c11f889f040041ULL,0x3880052083f40000ULL,0x10c0418a00047f7cULL,
+        };
+        const uint64_t expected3[]={
+            0x40c00d9caf818002ULL,0x40800d9cafa18206ULL,0x10c0f38600047f3dULL,
+        };
+        for (uint8_t components=2;components<=3;++components) {
+            MachineProgram program;
+            const uint8_t rhs=components==2 ? 1 : 2;
+            if (!program.emit<MachineOpcode::DotSplatF32>(components,
+                    program.physical(machine_fragment_output(0),MachineType::F16),
+                    program.physical(machine_primary(0),MachineType::F32),
+                    program.physical(machine_primary(rhs),MachineType::F32))) {
+                failures += fail("could not construct oracle narrow dot-splat Machine IR");
+                continue;
+            }
+            MachineCompileResult result;
+            const uint64_t *expected=components==2 ? expected2 : expected3;
+            if (!compile_machine_program(program,result) || result.words.size()!=3)
+                failures += fail("oracle narrow dot-splat Machine IR did not compile");
+            else for (size_t i=0;i<3;++i)
+                if (result.words[i]!=expected[i]) failures += fail("oracle narrow dot-splat Machine word mismatch");
         }
     }
 

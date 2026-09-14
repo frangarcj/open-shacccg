@@ -415,7 +415,7 @@ int test_cg_frontend() {
     }
     {
         const char *narrow_types[]={"float2","float3","half2"};
-        const char *narrow_ops[]={"add","sub","mul","min","max","sat","abs","neg","mad"};
+        const char *narrow_ops[]={"add","sub","mul","div","min","max","sat","abs","neg","mad","dot"};
         for (const char *type:narrow_types) {
             for (const char *op:narrow_ops) {
                 const std::string probe=std::string("fp-")+op+"-"+type;
@@ -426,6 +426,48 @@ int test_cg_frontend() {
                 }
             }
         }
+    }
+    {
+        const std::string div2=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-div-float2.cg");
+        const uint64_t words[]={
+            0xfa44070000000000ULL,0xf800094000000000ULL,
+            0x308008008f800081ULL,0x308008088f800082ULL,
+            0x3880052083f40000ULL,0x10a4418600040f7cULL,
+        };
+        if (div2.empty() || !compile_oracle_fragment_profile(div2,"fp-div-float2.cg",
+                256,0x00081005,4,0,0,words,6))
+            failures += fail("Cg F32x2 division did not reproduce oracle profile");
+    }
+    {
+        const std::string dot2=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-dot-float2.cg");
+        const uint64_t words[]={
+            0xfa44070000000000ULL,0xf800094000000000ULL,
+            0x08c11f889f040041ULL,0x3880052083f40000ULL,0x10c0418a00047f7cULL,
+        };
+        if (dot2.empty() || !compile_oracle_fragment_profile(dot2,"fp-dot-float2.cg",
+                248,0x00081005,4,0,0,words,5))
+            failures += fail("Cg F32x2 dot-splat did not reproduce oracle profile");
+    }
+    {
+        const std::string div3=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-div-float3.cg");
+        const uint64_t words[]={
+            0xfa44070000000000ULL,0xf800094000000000ULL,
+            0x308008008f800101ULL,0x308008088f800102ULL,0x308008008f800184ULL,
+            0x40800d9cafa18002ULL,0x10a4438600040f7cULL,
+        };
+        if (div3.empty() || !compile_oracle_fragment_profile(div3,"fp-div-float3.cg",
+                264,0x00081005,8,0,0,words,7))
+            failures += fail("Cg F32x3 division did not reproduce oracle profile");
+    }
+    {
+        const std::string dot3=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-dot-float3.cg");
+        const uint64_t words[]={
+            0xfa44070000000000ULL,0xf800094000000000ULL,
+            0x40c00d9caf818002ULL,0x40800d9cafa18206ULL,0x10c0f38600047f3dULL,
+        };
+        if (dot3.empty() || !compile_oracle_fragment_profile(dot3,"fp-dot-float3.cg",
+                248,0x00081005,8,0,0,words,5))
+            failures += fail("Cg F32x3 dot-splat did not reproduce oracle profile");
     }
     {
         const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-div-float4.cg");

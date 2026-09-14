@@ -732,7 +732,10 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
         uint32_t words=1;
         if (program.instructions()[i].opcode()==MachineOpcode::DependentSample) words=0;
         else if (program.instructions()[i].opcode()==MachineOpcode::LoopIncrement) words=2;
-        else if (program.instructions()[i].opcode()==MachineOpcode::DivF32x4) words=6;
+        else if (program.instructions()[i].opcode()==MachineOpcode::DivF32) {
+            const uint8_t components=program.instructions()[i].subop();
+            words=(components>=2 && components<=4) ? static_cast<uint32_t>(components+2) : 1;
+        } else if (program.instructions()[i].opcode()==MachineOpcode::DotSplatF32) words=3;
         word_positions[i + 1] = word_positions[i] + words;
     }
     for (uint32_t position : program.labels()) {
@@ -918,9 +921,10 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             if (!builder.instruction(op)) { out.error = "failed to encode machine V32NMAD"; return false; }
             break;
         }
-        case MachineOpcode::DivF32x4: {
-            if (instruction.subop()!=0 || guard!=usse::Predicate::Always) {
-                out.error="F32x4 division pseudo-op does not accept subops/guards";
+        case MachineOpcode::DivF32: {
+            const uint8_t components=instruction.subop();
+            if (components<2 || components>4 || guard!=usse::Predicate::Always) {
+                out.error="F32 division pseudo-op requires width 2..4 and no guard";
                 return false;
             }
             usse::RegisterRef dst{},numerator{},denominator{};
@@ -928,30 +932,110 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 !resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&numerator) ||
                 !resolve_register_value(instruction.src1,MachineType::F32,out.value_registers,&denominator) ||
                 dst.bank!=usse::RegisterBank::PrimaryAttribute || dst.num!=0 ||
-                numerator.bank!=usse::RegisterBank::PrimaryAttribute || (numerator.num&1u) ||
-                denominator.bank!=usse::RegisterBank::PrimaryAttribute || (denominator.num&1u)) {
-                out.error="F32x4 division requires fragment output0 and even PA float4 inputs";
+                numerator.bank!=usse::RegisterBank::PrimaryAttribute || denominator.bank!=usse::RegisterBank::PrimaryAttribute) {
+                out.error="F32 division requires fragment output0 and direct PA inputs";
                 return false;
             }
-            for (uint8_t lane=0;lane<4;++lane) {
+            const uint8_t expected_rhs=components==2 ? 1 : 2;
+            if (numerator.num!=0 || denominator.num!=expected_rhs) {
+                out.error="F32 division currently covers direct Location0 / Location1 inputs only";
+                return false;
+            }
+            for (uint8_t lane=0;lane<components;++lane) {
                 usse::VcompRcpF32Semantic reciprocal{denominator,lane};
                 if (!builder.instruction(reciprocal)) {
-                    out.error="failed to encode F32x4 division reciprocal VCOMP";
+                    out.error="failed to encode F32 division reciprocal VCOMP";
                     return false;
                 }
             }
-            usse::VpckSemantic stage{};
-            stage.dst={usse::RegisterBank::Temp,125};
-            stage.src1=numerator;
-            stage.src2={numerator.bank,static_cast<uint8_t>(numerator.num+1)};
-            stage.src_format=usse::PackFormat::F32;
-            stage.dst_format=usse::PackFormat::F32;
-            stage.dest_mask=0xF;
-            stage.skip_invalid=true;
-            stage.no_schedule=false;
-            usse::V16NmadDivF32x4Semantic combine{};
-            if (!builder.instruction(stage) || !builder.instruction(combine)) {
-                out.error="failed to encode F32x4 division stage/combine";
+            bool staged=false;
+            if (components==2) {
+                usse::VmovSemantic stage{};
+                stage.dst={usse::RegisterBank::Temp,61};
+                stage.src=numerator;
+                stage.data_type=usse::DataType::F32;
+                stage.dest_mask=0x3;
+                stage.swizzle=4;
+                stage.skip_invalid=true;
+                stage.no_schedule=false;
+                staged=builder.instruction(stage);
+            } else {
+                usse::VpckSemantic stage{};
+                stage.dst={usse::RegisterBank::Temp,125};
+                stage.src1=numerator;
+                stage.src2={numerator.bank,static_cast<uint8_t>(numerator.num+1)};
+                stage.src_format=usse::PackFormat::F32;
+                stage.dst_format=usse::PackFormat::F32;
+                stage.dest_mask=components==3 ? 0x7 : 0xF;
+                if (components==3) {
+                    stage.components[0]=0; stage.components[1]=1;
+                    stage.components[2]=2; stage.components[3]=0;
+                }
+                stage.skip_invalid=true;
+                stage.no_schedule=false;
+                staged=builder.instruction(stage);
+            }
+            usse::V16NmadDivF32Semantic combine{components};
+            if (!staged || !builder.instruction(combine)) {
+                out.error="failed to encode F32 division stage/combine";
+                return false;
+            }
+            break;
+        }
+        case MachineOpcode::DotSplatF32: {
+            const uint8_t components=instruction.subop();
+            if ((components!=2 && components!=3) || guard!=usse::Predicate::Always) {
+                out.error="narrow F32 dot-splat pseudo-op requires width 2/3 and no guard";
+                return false;
+            }
+            usse::RegisterRef dst{},lhs{},rhs{};
+            if (!resolve_register_value(instruction.dst,MachineType::F16,out.value_registers,&dst) ||
+                !resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&lhs) ||
+                !resolve_register_value(instruction.src1,MachineType::F32,out.value_registers,&rhs) ||
+                dst.bank!=usse::RegisterBank::PrimaryAttribute || dst.num!=0 ||
+                lhs.bank!=usse::RegisterBank::PrimaryAttribute || rhs.bank!=usse::RegisterBank::PrimaryAttribute ||
+                lhs.num!=0 || rhs.num!=(components==2 ? 1 : 2)) {
+                out.error="narrow F32 dot-splat currently covers direct Location0 / Location1 inputs only";
+                return false;
+            }
+            bool staged=false;
+            if (components==2) {
+                usse::V32NmadSemantic mul{};
+                mul.dst={usse::RegisterBank::Temp,60};
+                mul.src1=rhs;
+                mul.src2={usse::RegisterBank::Special,1};
+                mul.op=usse::VectorOp::Mul;
+                mul.dest_mask=0xF;
+                mul.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                                   usse::SwizzleChannel::Zero,usse::SwizzleChannel::Zero}};
+                mul.src2_swizzle={{usse::SwizzleChannel::Y,usse::SwizzleChannel::Y,
+                                   usse::SwizzleChannel::Y,usse::SwizzleChannel::Y}};
+                mul.skip_invalid=true;
+                mul.no_schedule=true;
+                usse::VmovSemantic move{};
+                move.dst={usse::RegisterBank::Temp,61};
+                move.src=lhs;
+                move.data_type=usse::DataType::F32;
+                move.dest_mask=0x3;
+                move.swizzle=4;
+                move.skip_invalid=true;
+                move.no_schedule=false;
+                staged=builder.instruction(mul) && builder.instruction(move);
+            } else {
+                usse::VpckSemantic a{};
+                a.dst={usse::RegisterBank::Temp,124};
+                a.src1=lhs; a.src2={lhs.bank,static_cast<uint8_t>(lhs.num+1)};
+                a.src_format=usse::PackFormat::F32; a.dst_format=usse::PackFormat::F32;
+                a.dest_mask=0x7; a.components[3]=0; a.skip_invalid=true; a.no_schedule=true;
+                usse::VpckSemantic b=a;
+                b.dst={usse::RegisterBank::Temp,125};
+                b.src1=rhs; b.src2={rhs.bank,static_cast<uint8_t>(rhs.num+1)};
+                b.no_schedule=false;
+                staged=builder.instruction(a) && builder.instruction(b);
+            }
+            usse::V16NmadDotSplatF32Semantic combine{components};
+            if (!staged || !builder.instruction(combine)) {
+                out.error="failed to encode narrow F32 dot-splat stage/reduction";
                 return false;
             }
             break;

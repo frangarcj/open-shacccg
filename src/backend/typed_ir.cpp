@@ -1027,34 +1027,76 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     if (root_def->opcode()==TypedOpcode::FloatBinary &&
         root_def->subop()==static_cast<uint8_t>(TypedFloatOp::Div)) {
         if (!uniforms.empty() || !samplers.empty()) {
-            out.error="typed direct F32x4 division profile does not accept uniforms/samplers";
+            out.error="typed direct F32 division profile does not accept uniforms/samplers";
+            return false;
+        }
+        const TypedType div_type=root.type();
+        const uint8_t components=typed_component_count(div_type);
+        if ((div_type!=TypedType::F32x2 && div_type!=TypedType::F32x3 && div_type!=TypedType::F32x4) ||
+            components<2 || components>4) {
+            out.error="typed direct F32 division requires vector width 2..4";
             return false;
         }
         const auto *numerator=resource_for_value(root_def->src0);
         const auto *denominator=resource_for_value(root_def->src1);
         if (!numerator || !denominator || numerator->kind!=TypedResourceKind::Input ||
-            denominator->kind!=TypedResourceKind::Input || numerator->type!=TypedType::F32x4 ||
-            denominator->type!=TypedType::F32x4 || numerator->index>2 || denominator->index>2 ||
+            denominator->kind!=TypedResourceKind::Input || numerator->type!=div_type ||
+            denominator->type!=div_type || numerator->index>2 || denominator->index>2 ||
             numerator->index==denominator->index) {
-            out.error="typed F32x4 division currently requires two distinct direct float4 inputs";
+            out.error="typed F32 division currently requires two distinct direct matching inputs";
             return false;
         }
         if (store->aux>=resources.size() || resources[store->aux].kind!=TypedResourceKind::Output ||
-            resources[store->aux].index!=0 || resources[store->aux].type!=TypedType::F32x4) {
-            out.error="typed F32x4 division output must be float4 Location 0";
+            resources[store->aux].index!=0 || resources[store->aux].type!=div_type) {
+            out.error="typed F32 division output must match the vector result at Location 0";
             return false;
         }
         const uint8_t input_count=static_cast<uint8_t>(std::max(numerator->index,denominator->index)+1);
+        auto pa_base=[&](uint16_t location) {
+            return static_cast<uint8_t>(components==2 ? location : location*2u);
+        };
         MachineProgram primary;
         if (!primary.emit<MachineOpcode::Phase>() || !primary.emit<MachineOpcode::Nop>() ||
-            !primary.emit<MachineOpcode::DivF32x4>(0,
+            !primary.emit<MachineOpcode::DivF32>(components,
                 primary.physical(machine_fragment_output(0),MachineType::F16),
-                primary.physical(machine_primary(static_cast<uint8_t>(numerator->index*2)),MachineType::F32),
-                primary.physical(machine_primary(static_cast<uint8_t>(denominator->index*2)),MachineType::F32))) {
-            out.error="failed to build oracle F32x4 division Machine profile";
+                primary.physical(machine_primary(pa_base(numerator->index)),MachineType::F32),
+                primary.physical(machine_primary(pa_base(denominator->index)),MachineType::F32))) {
+            out.error="failed to build oracle F32 division Machine profile";
             return false;
         }
-        return compile_fragment_arithmetic_machine(primary,{},input_count,4,0,0,out);
+        return compile_fragment_arithmetic_machine(primary,{},input_count,components,0,0,out);
+    }
+    if (root_def->opcode()==TypedOpcode::FloatSplat &&
+        (root.type()==TypedType::F32x2 || root.type()==TypedType::F32x3)) {
+        const auto *dot=definition(root_def->src0);
+        if (dot && dot->opcode()==TypedOpcode::FloatBinary &&
+            dot->subop()==static_cast<uint8_t>(TypedFloatOp::Dot)) {
+            if (!uniforms.empty() || !samplers.empty()) {
+                out.error="typed narrow dot-splat profile does not accept uniforms/samplers";
+                return false;
+            }
+            const uint8_t components=typed_component_count(root.type());
+            const auto *lhs=resource_for_value(dot->src0);
+            const auto *rhs=resource_for_value(dot->src1);
+            if (!lhs || !rhs || lhs->kind!=TypedResourceKind::Input || rhs->kind!=TypedResourceKind::Input ||
+                lhs->type!=root.type() || rhs->type!=root.type() || lhs->index!=0 || rhs->index!=1 ||
+                store->aux>=resources.size() || resources[store->aux].kind!=TypedResourceKind::Output ||
+                resources[store->aux].index!=0 || resources[store->aux].type!=root.type()) {
+                out.error="typed narrow dot-splat requires direct Location0/1 inputs and matching output";
+                return false;
+            }
+            const uint8_t rhs_pa=components==2 ? 1 : 2;
+            MachineProgram primary;
+            if (!primary.emit<MachineOpcode::Phase>() || !primary.emit<MachineOpcode::Nop>() ||
+                !primary.emit<MachineOpcode::DotSplatF32>(components,
+                    primary.physical(machine_fragment_output(0),MachineType::F16),
+                    primary.physical(machine_primary(0),MachineType::F32),
+                    primary.physical(machine_primary(rhs_pa),MachineType::F32))) {
+                out.error="failed to build oracle narrow dot-splat Machine profile";
+                return false;
+            }
+            return compile_fragment_arithmetic_machine(primary,{},2,components,0,0,out);
+        }
     }
     if (root_def->opcode()==TypedOpcode::FloatSwizzle &&
         root_def->subop()==static_cast<uint8_t>(TypedFloatSwizzleOp::Wzyx) &&

@@ -577,11 +577,18 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     continue;
                 }
                 const auto result_type = typed_type(spirv_result_type);
-                if (result_type != backend::TypedType::F32x4) { error = "unsupported composite construct result type"; return false; }
-                if (count == 7 && args[2] == args[3] && args[2] == args[4] && args[2] == args[5]) {
+                const uint8_t result_components=backend::typed_component_count(result_type);
+                const bool splat_vector=result_type==backend::TypedType::F32x2 ||
+                    result_type==backend::TypedType::F32x3 || result_type==backend::TypedType::F32x4;
+                bool repeated=splat_vector && count==static_cast<uint16_t>(result_components+3u);
+                if (repeated) {
+                    for (uint8_t lane=1;lane<result_components;++lane)
+                        repeated = repeated && args[2+lane]==args[2];
+                }
+                if (repeated) {
                     const auto scalar = values.find(args[2]);
                     if (scalar != values.end() && scalar->second.type() == backend::TypedType::F32) {
-                        const auto dst = program.make_value<backend::TypedType::F32x4>();
+                        const auto dst = program.make_value(result_type);
                         if (!program.emit<backend::TypedOpcode::FloatSplat>(0, dst, scalar->second)) {
                             error = "failed to emit Typed IR scalar splat"; return false;
                         }
@@ -590,6 +597,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         continue;
                     }
                 }
+                if (result_type != backend::TypedType::F32x4) { error = "unsupported composite construct result type"; return false; }
                 backend::TypedValue source{};
                 uint8_t extracted = 0;
                 bool valid = true;
@@ -809,6 +817,27 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     const auto dst=program.make_predicate();
                     if (!program.emit<backend::TypedOpcode::Compare>(static_cast<uint8_t>(compare),dst,lhs,rhs)) {
                         error="failed to emit Typed IR F32 compare";
+                        return false;
+                    }
+                    values[args[1]]=dst;
+                } else if (op == spv::OpDot) {
+                    if (count!=5 || typed_type(compiler.get_type(args[0]))!=backend::TypedType::F32) {
+                        error="OpDot result is outside the validated scalar F32 subset";
+                        return false;
+                    }
+                    const auto lhs=values.find(args[2]);
+                    const auto rhs=values.find(args[3]);
+                    if (lhs==values.end() || rhs==values.end() || lhs->second.type()!=rhs->second.type() ||
+                        (lhs->second.type()!=backend::TypedType::F32x2 &&
+                         lhs->second.type()!=backend::TypedType::F32x3 &&
+                         lhs->second.type()!=backend::TypedType::F32x4)) {
+                        error="OpDot operands are outside the validated F32 vector subset";
+                        return false;
+                    }
+                    const auto dst=program.make_value<backend::TypedType::F32>();
+                    if (!program.emit<backend::TypedOpcode::FloatBinary>(
+                            static_cast<uint8_t>(backend::TypedFloatOp::Dot),dst,lhs->second,rhs->second)) {
+                        error="failed to emit Typed IR dot";
                         return false;
                     }
                     values[args[1]]=dst;

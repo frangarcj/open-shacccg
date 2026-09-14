@@ -105,17 +105,20 @@ struct V32NmadSemantic {
 struct VcompRcpF32Fields {
     uint8_t source_pair = 0;
     uint8_t component = 0;
+    bool source_odd = false;
 };
 
 struct VcompRcpF32Semantic {
-    RegisterRef src{}; // even-numbered PrimaryAttribute base of a float4
+    RegisterRef src{}; // PrimaryAttribute vector base; odd PA is validated for float2 xy
     uint8_t component = 0;
 };
 
-// Fixed F32x4 division combine form observed after four reciprocal VCOMPs and
-// numerator staging into GPI1. Kept as a narrow semantic profile until the
-// general V16NMAD field layout is independently anchored.
-struct V16NmadDivF32x4Semantic {};
+// Fixed F32 division combine forms observed after reciprocal VCOMPs and
+// numerator staging. Kept narrow until the general V16NMAD layout is anchored.
+struct V16NmadDivF32Semantic { uint8_t components = 4; };
+
+// Fixed final reductions for the oracle dot-splat float2/float3 profiles.
+struct V16NmadDotSplatF32Semantic { uint8_t components = 2; };
 
 enum class RepeatMode : uint8_t { External=0, Internal=1, Both=2, Slmsi=3 };
 
@@ -498,8 +501,10 @@ bool encode_v32nmad_semantic(const V32NmadSemantic &instruction, uint64_t *word)
 bool decode_v32nmad_semantic(uint64_t word, V32NmadSemantic *instruction);
 bool encode_vcomp_rcp_f32_semantic(const VcompRcpF32Semantic &instruction, uint64_t *word);
 bool decode_vcomp_rcp_f32_semantic(uint64_t word, VcompRcpF32Semantic *instruction);
-bool encode_v16nmad_div_f32x4_semantic(const V16NmadDivF32x4Semantic &, uint64_t *word);
-bool decode_v16nmad_div_f32x4_semantic(uint64_t word, V16NmadDivF32x4Semantic *instruction);
+bool encode_v16nmad_div_f32_semantic(const V16NmadDivF32Semantic &, uint64_t *word);
+bool decode_v16nmad_div_f32_semantic(uint64_t word, V16NmadDivF32Semantic *instruction);
+bool encode_v16nmad_dot_splat_f32_semantic(const V16NmadDotSplatF32Semantic &, uint64_t *word);
+bool decode_v16nmad_dot_splat_f32_semantic(uint64_t word, V16NmadDotSplatF32Semantic *instruction);
 bool encode_vmad_semantic(const VmadSemantic &instruction, uint64_t *word);
 bool decode_vmad_semantic(uint64_t word, VmadSemantic *instruction);
 bool encode_vtst_semantic(const VtstSemantic &instruction, uint64_t *word);
@@ -521,7 +526,8 @@ inline bool encode_semantic(const VmovSemantic &i, uint64_t *word) { return enco
 inline bool encode_semantic(const VpckSemantic &i, uint64_t *word) { return encode_vpck_semantic(i, word); }
 inline bool encode_semantic(const V32NmadSemantic &i, uint64_t *word) { return encode_v32nmad_semantic(i, word); }
 inline bool encode_semantic(const VcompRcpF32Semantic &i, uint64_t *word) { return encode_vcomp_rcp_f32_semantic(i, word); }
-inline bool encode_semantic(const V16NmadDivF32x4Semantic &i, uint64_t *word) { return encode_v16nmad_div_f32x4_semantic(i, word); }
+inline bool encode_semantic(const V16NmadDivF32Semantic &i, uint64_t *word) { return encode_v16nmad_div_f32_semantic(i, word); }
+inline bool encode_semantic(const V16NmadDotSplatF32Semantic &i, uint64_t *word) { return encode_v16nmad_dot_splat_f32_semantic(i, word); }
 inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return encode_vmad_semantic(i, word); }
 inline bool encode_semantic(const VtstSemantic &i, uint64_t *word) { return encode_vtst_semantic(i, word); }
 inline bool encode_semantic(const VtstF32Semantic &i, uint64_t *word) { return encode_vtst_f32_semantic(i, word); }

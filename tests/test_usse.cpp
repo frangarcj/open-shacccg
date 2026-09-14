@@ -332,11 +332,41 @@ int test_usse() {
                 failures += fail("semantic F32 reciprocal VCOMP oracle word mismatch");
         }
     }
-    V16NmadDivF32x4Semantic div_combine{};
-    uint64_t div_combine_word=0;
-    if (!encode_v16nmad_div_f32x4_semantic(div_combine,&div_combine_word) ||
-        div_combine_word!=0x10a4478600040f7cULL)
-        failures += fail("oracle F32x4 division V16NMAD combine mismatch");
+    const uint64_t vcomp_pa1[]={0x308008008f800081ULL,0x308008088f800082ULL};
+    for (uint8_t lane=0;lane<2;++lane) {
+        VcompRcpF32Fields raw{0,lane,true};
+        uint64_t word=0;
+        if (!encode_vcomp_rcp_f32(raw,&word) || word!=vcomp_pa1[lane])
+            failures += fail("raw packed-float2 reciprocal VCOMP oracle word mismatch");
+        VcompRcpF32Semantic semantic{{RegisterBank::PrimaryAttribute,1},lane};
+        if (!encode_vcomp_rcp_f32_semantic(semantic,&word) || word!=vcomp_pa1[lane])
+            failures += fail("semantic packed-float2 reciprocal VCOMP oracle word mismatch");
+        VcompRcpF32Semantic decoded{};
+        if (!decode_vcomp_rcp_f32_semantic(word,&decoded) || decoded.src.num!=1 || decoded.component!=lane)
+            failures += fail("semantic packed-float2 reciprocal VCOMP decode mismatch");
+    }
+    const uint64_t div_combine_words[]={
+        0x10a4418600040f7cULL,0x10a4438600040f7cULL,0x10a4478600040f7cULL,
+    };
+    for (uint8_t components=2;components<=4;++components) {
+        V16NmadDivF32Semantic div_combine{components};
+        uint64_t word=0;
+        V16NmadDivF32Semantic decoded{};
+        if (!encode_v16nmad_div_f32_semantic(div_combine,&word) ||
+            word!=div_combine_words[components-2] ||
+            !decode_v16nmad_div_f32_semantic(word,&decoded) || decoded.components!=components)
+            failures += fail("oracle F32 division V16NMAD combine mismatch");
+    }
+    const uint64_t dot_combine_words[]={0x10c0418a00047f7cULL,0x10c0f38600047f3dULL};
+    for (uint8_t components=2;components<=3;++components) {
+        V16NmadDotSplatF32Semantic dot{components};
+        uint64_t word=0;
+        V16NmadDotSplatF32Semantic decoded{};
+        if (!encode_v16nmad_dot_splat_f32_semantic(dot,&word) ||
+            word!=dot_combine_words[components-2] ||
+            !decode_v16nmad_dot_splat_f32_semantic(word,&decoded) || decoded.components!=components)
+            failures += fail("oracle narrow dot V16NMAD reduction mismatch");
+    }
 
     // Semantic VMAD: reconstruct the complete four-instruction matrix path.
     const uint64_t matrix_words[] = {

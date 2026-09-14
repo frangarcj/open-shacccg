@@ -136,3 +136,9 @@ normal 8-byte no-secondary anchor before primary code. Two-input and three-input
 probes independently confirm the Location-1 (`0x10`) and Location-2 (`0x20`)
 records. The width signature is `0x40`/`0x10` for float2 and `0xc0`/`0x30` for
 float3/float4.
+
+The narrow division probes also anchor VCOMP's packed float2 source selector:
+PA1.x/y encode as reciprocal words ending `...81`/`...82`, while float3 uses the
+same even-PA lane encodings as float4. F32 float2/float3 division and dot-splat
+profiles are exact outside GUIDs; half2 is compiled through the F32 path because
+glslang HLSL does not preserve half precision in the emitted SPIR-V.
