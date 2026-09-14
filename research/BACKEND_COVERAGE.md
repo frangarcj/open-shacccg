@@ -253,8 +253,31 @@ last qword of the interface record and the zero-length secondary anchor is
 the private oracle.
 
 Across the non-ALU small-feature probes (swizzle, constant, uniform, texture and
-basic vertex shapes), OpenShaccCg now compiles 5/8; the only compile failures are
-the three vertex probes (`vp-passthrough`, `vp-uniform-mul`, `vp-varying`).
+basic vertex shapes), OpenShaccCg now compiles 8/8. Five of those probes are
+byte-identical to Sony outside the two GUID fields: `fp-swizzle-wzyx`,
+`fp-constant-red`, `vp-passthrough`, `vp-uniform-mul` and `vp-varying`.
+
+## Oracle-exact standalone vertex profiles
+
+The three small vertex probes exposed a glslang HLSL compatibility quirk and two
+new binary facts. HLSL `: POSITION` can arrive as plain Location 0 with no
+UserSemantic/BuiltIn decoration; when a vertex has no BuiltIn Position output,
+that Location-0 return is treated as the oracle-backed position slot. Sony SDK
+1.6.5 standalone vertex GXPs also reserve one 32-bit word between the 32-byte
+interface and primary code (`primary=0xbc`, zero-secondary anchor `0xb8`), unlike
+the preserved libvita2d vertex binaries which use the no-gap convention.
+
+The resulting profiles are exact outside GUIDs:
+
+- `vp-passthrough`: PHAS + repeated VMOV `0x3880152183000000` + EMIT;
+- `vp-varying`: PHAS + repeat-2 VMOV `0x3880252183000000` + EMIT;
+- `vp-uniform-mul`: PHAS + NOP + F32 VPCK `0x40800dbcaf998002` + repeated VMAD
+  `0x18903081c011a200` + EMIT.
+
+The last word proves VMAD control bit 53 is not a fixed opcode bit: the public
+libvita2d matrix VMADs use 1, while this repeated external-mode mat4 profile uses
+0. The raw/semantic codec therefore exposes the observed bit explicitly while
+retaining 1 as the default for existing public regressions.
 
 ## Next backend order
 

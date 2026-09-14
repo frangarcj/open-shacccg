@@ -27,6 +27,9 @@ Implemented now:
   scalar/X splats and the validated F32x4 -> F16x4 VPCK conversion
 - oracle-exact fragment profiles for `wzyx` and the constant `float4(1,0,0,1)`,
   including swizzled VPCK, literal-table placement and the primary/interface overlap convention
+- oracle-exact standalone vertex profiles for float4 position passthrough,
+  float4 position + float2 TEXCOORD passthrough, and `mat4 * float4`, including the SDK 1.6.5
+  vertex padding-word layout and the repeated external-mode VMAD form
 - SPIRV-Cross lowering for `GLSL.std.450` FAbs/FMin/FMax, validated X-splat shuffles and `OpFConvert`
 - oracle-validated USSE BR encoding with signed 20-bit forward/backward offsets,
   compact Machine/Typed label tables and structured U32 conditional/unconditional branches

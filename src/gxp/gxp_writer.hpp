@@ -81,6 +81,12 @@ struct ProgramImage {
     // fragment layout, which reserves an 8-byte extension slot first.
     bool fragment_primary_overlaps_interface = false;
 
+    // Oracle-observed SDK 1.6.5 vertex layout for the compact standalone
+    // profiles: reserve one 32-bit word after the interface before primary
+    // code. Public libvita2d vertex GXPs use the older no-gap convention, so
+    // this remains opt-in per profile.
+    bool vertex_primary_padding_word = false;
+
     const uint64_t *secondary_instructions = nullptr;
     size_t secondary_instruction_count = 0;
     const uint64_t *primary_instructions = nullptr;

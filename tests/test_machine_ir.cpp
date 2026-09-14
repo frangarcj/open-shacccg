@@ -71,6 +71,26 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        const auto gpi0=program.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
+        if (!program.emit_config<MachineOpcode::Pack>(
+                machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F32),
+                machine_pack_config(0xF,true,false),gpi0,
+                program.physical(machine_primary(0),MachineType::F32),
+                program.physical(machine_primary(1),MachineType::F32)) ||
+            !program.emit<MachineOpcode::VmadUniformMat4>(0,
+                program.physical(machine_vertex_output(0),MachineType::F32),gpi0)) {
+            failures += fail("could not construct oracle uniform-mat4 Machine sequence");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=2 ||
+                result.words[0]!=0x40800dbcaf998002ULL ||
+                result.words[1]!=0x18903081c011a200ULL)
+                failures += fail("uniform-mat4 Machine sequence did not reproduce oracle words");
+        }
+    }
+
+    {
+        MachineProgram program;
         const uint8_t wzyx=static_cast<uint8_t>(3u | (2u<<2) | (1u<<4));
         if (!program.emit_config<MachineOpcode::PackSwizzle>(wzyx,machine_pack_config(0xF,true,false),
                 program.physical(machine_fragment_output(0),MachineType::F16),

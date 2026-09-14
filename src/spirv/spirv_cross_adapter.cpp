@@ -249,7 +249,14 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             const auto value = program.input(type, static_cast<uint16_t>(location));
             if (value.kind() == backend::TypedValueKind::None) { error = "failed to create Typed IR input"; return false; }
             uint8_t semantic_index = 0;
-            const auto semantic = reflected_semantic(compiler, resource.id, resource.name, semantic_index);
+            auto semantic = reflected_semantic(compiler, resource.id, resource.name, semantic_index);
+            // Glslang's HLSL path used by the Cg compatibility frontend can
+            // lower a return value declared `: POSITION` to Location 0 without
+            // retaining UserSemantic/BuiltIn decorations. A Vita vertex must
+            // have a position output; in this no-BuiltIn form Location 0 is the
+            // oracle-backed position slot for the differential vertex probes.
+            if (stage==backend::TypedStage::Vertex && semantic==backend::TypedSemantic::None && location==0)
+                semantic=backend::TypedSemantic::Position;
             uint16_t resource_id = 0;
             if (!add_resource(backend::TypedResourceKind::Input, value, type, resource.name,
                               static_cast<uint16_t>(location), semantic, semantic_index, resource_id)) return false;
@@ -608,11 +615,13 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     error = "failed to emit Typed IR position construct"; return false;
                 }
                 values[args[1]] = dst;
-            } else if (op == spv::OpMatrixTimesVector && count == 5) {
-                const auto matrix = matrix_values.find(args[2]);
-                const auto vector = values.find(args[3]);
+            } else if ((op == spv::OpMatrixTimesVector || op == spv::OpVectorTimesMatrix) && count == 5) {
+                const uint32_t matrix_id = op == spv::OpMatrixTimesVector ? args[2] : args[3];
+                const uint32_t vector_id = op == spv::OpMatrixTimesVector ? args[3] : args[2];
+                const auto matrix = matrix_values.find(matrix_id);
+                const auto vector = values.find(vector_id);
                 if (matrix == matrix_values.end() || vector == values.end()) {
-                    error = "matrix-times-vector operands are unresolved"; return false;
+                    error = "matrix/vector multiply operands are unresolved"; return false;
                 }
                 const auto dst_type = typed_type(compiler.get_type(args[0]));
                 if (dst_type != backend::TypedType::F32x4 || vector->second.type() != backend::TypedType::F32x4) {

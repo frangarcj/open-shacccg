@@ -350,7 +350,8 @@ bool encode_vmad_semantic(const VmadSemantic &i, uint64_t *word) {
     VmadFields f{};
     if (!encode_dest_bank(i.dst.bank,&f.dest_bank,&f.dest_bank_ext) || !encode_src1_bank(i.src1.bank,&f.src1_bank,&f.src1_bank_ext)) return false;
     uint8_t g0=0,g1=0,s1=0; if (!encode_std_swizzle(i.gpi0_swizzle,&g0) || !encode_std_swizzle(i.gpi1_swizzle,&g1) || !encode_std_swizzle(i.src1_swizzle,&s1)) return false;
-    f.pred=static_cast<uint8_t>(i.predicate); f.skip_invalid=i.skip_invalid; f.opcode2=i.vec4; f.repeat_mode=static_cast<uint8_t>(i.repeat_mode); f.repeat_count=i.repeat_count;
+    f.pred=static_cast<uint8_t>(i.predicate); f.skip_invalid=i.skip_invalid; f.control_bit_53=i.control_bit_53;
+    f.opcode2=i.vec4; f.repeat_mode=static_cast<uint8_t>(i.repeat_mode); f.repeat_count=i.repeat_count;
     f.no_schedule=i.no_schedule; f.write_mask=i.write_mask; f.dest_num=i.dst.num; f.src1_num=i.src1.num; f.gpi0_num=i.gpi0; f.gpi1_num=i.gpi1;
     f.gpi0_swizzle=g0; f.gpi1_swizzle=g1; f.src1_swizzle=s1;
     return encode_vmad(f,word);
@@ -363,7 +364,8 @@ bool decode_vmad_semantic(uint64_t word, VmadSemantic *i) {
     if (!decode_dest_bank(f.dest_bank,f.dest_bank_ext,&i->dst.bank) || !decode_src1_bank(f.src1_bank,f.src1_bank_ext,&i->src1.bank)) return false;
     i->dst.num=f.dest_num; i->src1.num=f.src1_num; i->predicate=static_cast<Predicate>(f.pred); i->gpi0=f.gpi0_num; i->gpi1=f.gpi1_num; i->write_mask=f.write_mask;
     i->gpi0_swizzle=decode_std_swizzle(f.gpi0_swizzle); i->gpi1_swizzle=decode_std_swizzle(f.gpi1_swizzle); i->src1_swizzle=decode_std_swizzle(f.src1_swizzle);
-    i->vec4=f.opcode2; i->repeat_mode=static_cast<RepeatMode>(f.repeat_mode); i->repeat_count=f.repeat_count; i->skip_invalid=f.skip_invalid; i->no_schedule=f.no_schedule;
+    i->vec4=f.opcode2; i->control_bit_53=f.control_bit_53; i->repeat_mode=static_cast<RepeatMode>(f.repeat_mode);
+    i->repeat_count=f.repeat_count; i->skip_invalid=f.skip_invalid; i->no_schedule=f.no_schedule;
     return true;
 }
 

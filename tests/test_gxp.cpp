@@ -292,6 +292,36 @@ int test_gxp_writer() {
         }
     }
 
+    {
+        // SDK 1.6.5 standalone vertex profiles reserve one 32-bit word after
+        // the interface before primary code; public libvita2d profiles keep
+        // the older no-gap layout, so this must remain explicitly opt-in.
+        ProgramImage padded{};
+        padded.type=ProgramType::Vertex;
+        padded.interface_block=interface_block;
+        padded.interface_block_size=sizeof(interface_block);
+        padded.primary_instructions=primary;
+        padded.primary_instruction_count=2;
+        padded.vertex_primary_padding_word=true;
+        const size_t padded_need=required_size(padded);
+        std::vector<uint8_t> padded_bytes(padded_need);
+        if (!padded_need || !write_program(padded,padded_bytes.data(),padded_bytes.size())) {
+            failures += fail("vertex primary padding-word layout was rejected");
+        } else {
+            auto get_u32=[&](size_t off) {
+                uint32_t value=0;
+                std::memcpy(&value,padded_bytes.data()+off,sizeof(value));
+                return value;
+            };
+            const size_t primary_off=0x40u+get_u32(0x40);
+            const size_t secondary_off=0x48u+get_u32(0x48);
+            if (primary_off!=0xbc || secondary_off!=0xb8)
+                failures += fail("vertex padding-word primary/secondary anchors mismatch oracle layout");
+            if (std::memcmp(padded_bytes.data()+primary_off,primary,sizeof(primary))!=0)
+                failures += fail("padded vertex primary stream was not serialized at oracle position");
+        }
+    }
+
 
     // Full independent texture_v reconstruction. Every operand-bearing USSE
     // instruction is assembled from semantic operands, then serialized from

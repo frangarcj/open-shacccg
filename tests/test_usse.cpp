@@ -331,6 +331,25 @@ int test_usse() {
             failures += fail("semantic VMAD decode mismatch");
     }
 
+    // The standalone mvp*p oracle profile proves VMAD bit 53 is not fixed:
+    // libvita2d uses 1, while this repeated external-mode VMAD uses 0.
+    VmadSemantic uniform_mad{};
+    uniform_mad.dst={RegisterBank::Output,0};
+    uniform_mad.src1={RegisterBank::SecondaryAttribute,0};
+    uniform_mad.gpi0=0; uniform_mad.gpi1=2; uniform_mad.write_mask=1;
+    uniform_mad.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}};
+    uniform_mad.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}};
+    uniform_mad.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}};
+    uniform_mad.vec4=true; uniform_mad.control_bit_53=false;
+    uniform_mad.repeat_mode=RepeatMode::External; uniform_mad.repeat_count=3;
+    uint64_t uniform_mad_word=0;
+    if (!encode_vmad_semantic(uniform_mad,&uniform_mad_word) || uniform_mad_word!=0x18903081c011a200ULL)
+        failures += fail("oracle repeated VMAD semantic builder mismatch");
+    VmadSemantic uniform_mad_dec{};
+    if (!decode_vmad_semantic(uniform_mad_word,&uniform_mad_dec) || uniform_mad_dec.control_bit_53 ||
+        uniform_mad_dec.repeat_mode!=RepeatMode::External || uniform_mad_dec.repeat_count!=3)
+        failures += fail("oracle repeated VMAD semantic decode mismatch");
+
     // Semantic VTST: PA0.x == SA6.x -> P1. This exact word is independently
     // observed in a real shader trace and anchors the U32 compare form.
     VtstSemantic cmp{};

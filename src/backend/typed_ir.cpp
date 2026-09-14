@@ -758,6 +758,7 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         }
 
         bool position_written = false;
+        bool passthrough_position = false;
         bool constructed_position = false;
         bool transformed_position = false;
         uint32_t position_attribute = 0;
@@ -777,7 +778,15 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 if (position_written) { out.error = "typed vertex shader writes position twice"; return false; }
                 const auto *def = definition(instruction.src0);
                 if (!def) { out.error = "typed vertex position has no defining operation"; return false; }
-                if (def->opcode() == TypedOpcode::ConstructPosition) {
+                if (def->opcode()==TypedOpcode::Input && instruction.src0.type()==TypedType::F32x4) {
+                    const auto it=attribute_for_value.find(instruction.src0.id());
+                    if (it==attribute_for_value.end()) {
+                        out.error="typed passthrough position is not a vertex input";
+                        return false;
+                    }
+                    passthrough_position=true;
+                    position_attribute=it->second;
+                } else if (def->opcode() == TypedOpcode::ConstructPosition) {
                     const auto it = attribute_for_value.find(def->src0.id());
                     if (def->src0.kind() != TypedValueKind::Value || it == attribute_for_value.end()) {
                         out.error = "typed constructed position is not sourced by a vertex input"; return false;
@@ -821,6 +830,28 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             selected_varying_semantic = varying_semantic;
         }
         if (!position_written) { out.error = "typed vertex shader does not write position"; return false; }
+        if (passthrough_position) {
+            if (constructed_position || transformed_position || !vertex_matrices.empty() ||
+                position_attribute>=vertex_attributes.size()) {
+                out.error="typed passthrough-position vertex shape is unsupported";
+                return false;
+            }
+            if (!varying_written) {
+                if (vertex_attributes.size()!=1) {
+                    out.error="typed passthrough vertex profile requires one attribute";
+                    return false;
+                }
+                return compile_vertex_passthrough(vertex_attributes[position_attribute],0,0,out);
+            }
+            if (vertex_attributes.size()!=2 || varying_attribute>=vertex_attributes.size() ||
+                varying_attribute==position_attribute) {
+                out.error="typed passthrough-varying vertex profile requires two distinct attributes";
+                return false;
+            }
+            return compile_vertex_passthrough_varying(vertex_attributes[position_attribute],
+                                                      vertex_attributes[varying_attribute],
+                                                      selected_varying_semantic,0,0,out);
+        }
         if (constructed_position) {
             if (transformed_position || varying_written || vertex_attributes.size()!=1 || !vertex_matrices.empty() ||
                 position_attribute>=vertex_attributes.size()) {
@@ -828,6 +859,11 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 return false;
             }
             return compile_vertex_construct_position(vertex_attributes[position_attribute],0,0,out);
+        }
+        if (transformed_position && !varying_written && vertex_attributes.size()==1 && vertex_matrices.size()==1 &&
+            position_attribute<vertex_attributes.size() && position_matrix==0 &&
+            vertex_attributes[position_attribute].components==4) {
+            return compile_vertex_uniform_matrix(vertex_attributes[position_attribute],vertex_matrices[0],0,0,out);
         }
         if (!transformed_position || !varying_written || vertex_attributes.size()!=2 || vertex_matrices.size()!=1 ||
             position_attribute>=vertex_attributes.size() || varying_attribute>=vertex_attributes.size() ||

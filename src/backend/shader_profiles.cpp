@@ -196,6 +196,156 @@ bool compile_vertex_matrix_path(const IrAttribute &position, const IrAttribute &
     return true;
 }
 
+bool compile_vertex_passthrough(const IrAttribute &position,
+                                uint32_t binary_guid, uint32_t source_guid,
+                                IrCompileResult &out) {
+    out={};
+    if (!valid_attribute(position) || position.resource_index!=0 || position.components!=4) {
+        out.error="vertex passthrough requires float4 position at resource 0";
+        return false;
+    }
+    MachineProgram code;
+    if (!code.emit<MachineOpcode::Phase>() ||
+        !code.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+            machine_move_config(3,4,1,true,false),
+            code.physical(machine_vertex_output(0),MachineType::F32),
+            code.physical(machine_primary(0),MachineType::F32)) ||
+        !code.emit<MachineOpcode::Emit>()) {
+        out.error="failed to build vertex passthrough Machine IR";
+        return false;
+    }
+    MachineCompileResult compiled;
+    if (!compile_words(code,compiled,out,"vertex passthrough Machine IR lowering failed")) return false;
+
+    uint8_t interface_block[32]{};
+    interface_block[0]=0x0f; interface_block[17]=0x10; interface_block[19]=0x04;
+    const gxp::ParameterDesc parameters[]={
+        {position.name.c_str(),0,0,4,0,11,0,1,0},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid; image.source_guid=source_guid;
+    image.program_flags=0x00090000;
+    image.data_buffer_count=0;
+    image.primary_phase_count=1;
+    image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=compiled.words.data(); image.primary_instruction_count=compiled.words.size();
+    image.parameters=parameters; image.parameter_count=1;
+    image.primary_register_count=4; image.secondary_register_count=0;
+    image.compiler_version_raw=0x0002df30;
+    image.vertex_primary_padding_word=true;
+    const size_t needed=gxp::required_size(image);
+    if(!needed){out.error="GXP writer rejected vertex passthrough profile";return false;}
+    out.gxp.resize(needed);
+    if(!gxp::write_program(image,out.gxp.data(),out.gxp.size())){out.gxp.clear();out.error="GXP writer failed for vertex passthrough profile";return false;}
+    return true;
+}
+
+bool compile_vertex_passthrough_varying(const IrAttribute &position, const IrAttribute &varying,
+                                        IrVaryingSemantic semantic,
+                                        uint32_t binary_guid, uint32_t source_guid,
+                                        IrCompileResult &out) {
+    out={};
+    if (!valid_attribute(position) || !valid_attribute(varying) || position.resource_index!=0 ||
+        varying.resource_index!=4 || position.components!=4 || varying.components!=2 ||
+        semantic!=IrVaryingSemantic::TexCoord) {
+        out.error="vertex passthrough-varying profile requires float4 position + float2 TEXCOORD";
+        return false;
+    }
+    MachineProgram code;
+    if (!code.emit<MachineOpcode::Phase>() ||
+        !code.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+            machine_move_config(3,4,2,true,false),
+            code.physical(machine_vertex_output(0),MachineType::F32),
+            code.physical(machine_primary(0),MachineType::F32)) ||
+        !code.emit<MachineOpcode::Emit>()) {
+        out.error="failed to build vertex passthrough-varying Machine IR";
+        return false;
+    }
+    MachineCompileResult compiled;
+    if (!compile_words(code,compiled,out,"vertex passthrough-varying Machine IR lowering failed")) return false;
+    uint8_t interface_block[32]{};
+    interface_block[0]=0x3f; interface_block[17]=0x10; interface_block[19]=0x06; interface_block[20]=0x01;
+    const gxp::ParameterDesc parameters[]={
+        {position.name.c_str(),0,0,4,0,11,0,1,0},
+        {varying.name.c_str(),0,0,4,0,14,0,1,4},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid; image.source_guid=source_guid;
+    image.program_flags=0x00090000;
+    image.data_buffer_count=0;
+    image.primary_phase_count=1;
+    image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=compiled.words.data(); image.primary_instruction_count=compiled.words.size();
+    image.parameters=parameters; image.parameter_count=2;
+    image.primary_register_count=8; image.secondary_register_count=0;
+    image.compiler_version_raw=0x0002df30;
+    image.vertex_primary_padding_word=true;
+    const size_t needed=gxp::required_size(image);
+    if(!needed){out.error="GXP writer rejected vertex passthrough-varying profile";return false;}
+    out.gxp.resize(needed);
+    if(!gxp::write_program(image,out.gxp.data(),out.gxp.size())){out.gxp.clear();out.error="GXP writer failed for vertex passthrough-varying profile";return false;}
+    return true;
+}
+
+bool compile_vertex_uniform_matrix(const IrAttribute &position, const IrMatrix4Uniform &matrix,
+                                   uint32_t binary_guid, uint32_t source_guid,
+                                   IrCompileResult &out) {
+    out={};
+    if (!valid_attribute(position) || position.resource_index!=0 || position.components!=4 ||
+        matrix.name.empty() || matrix.resource_index!=0) {
+        out.error="uniform-matrix vertex profile requires float4 position and mat4 resource 0";
+        return false;
+    }
+    MachineProgram code;
+    const auto gpi0=code.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
+    if (gpi0.kind()==MachineOperandKind::None || !code.emit<MachineOpcode::Phase>() ||
+        !code.emit<MachineOpcode::Nop>() ||
+        !code.emit_config<MachineOpcode::Pack>(machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F32),
+            machine_pack_config(0xF,true,false),gpi0,
+            code.physical(machine_primary(0),MachineType::F32),
+            code.physical(machine_primary(1),MachineType::F32)) ||
+        !code.emit<MachineOpcode::VmadUniformMat4>(0,
+            code.physical(machine_vertex_output(0),MachineType::F32),gpi0) ||
+        !code.emit<MachineOpcode::Emit>()) {
+        out.error="failed to build uniform-matrix vertex Machine IR";
+        return false;
+    }
+    MachineCompileResult compiled;
+    if (!compile_words(code,compiled,out,"uniform-matrix vertex Machine IR lowering failed")) return false;
+    uint8_t interface_block[32]{};
+    interface_block[0]=0x0f; interface_block[17]=0x10; interface_block[19]=0x04;
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,16}};
+    const gxp::ParameterDesc parameters[]={
+        {position.name.c_str(),0,0,4,0,11,0,1,0},
+        {matrix.name.c_str(),1,0,4,14,0,0,4,0},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid; image.source_guid=source_guid;
+    image.program_flags=0x00090000;
+    image.buffer_flags=0x10000000;
+    image.data_buffer_count=0;
+    image.default_uniform_buffer_count=16;
+    image.primary_phase_count=1;
+    image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=compiled.words.data(); image.primary_instruction_count=compiled.words.size();
+    image.containers=containers; image.container_count=1;
+    image.parameters=parameters; image.parameter_count=2;
+    image.primary_register_count=4; image.secondary_register_count=16;
+    image.compiler_version_raw=0x0002df30;
+    image.vertex_primary_padding_word=true;
+    const size_t needed=gxp::required_size(image);
+    if(!needed){out.error="GXP writer rejected uniform-matrix vertex profile";return false;}
+    out.gxp.resize(needed);
+    if(!gxp::write_program(image,out.gxp.data(),out.gxp.size())){out.gxp.clear();out.error="GXP writer failed for uniform-matrix vertex profile";return false;}
+    return true;
+}
+
 } // namespace vsc::backend
 
 namespace vsc::backend {

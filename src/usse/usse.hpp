@@ -115,6 +115,10 @@ struct VmadSemantic {
     Swizzle4 src1_swizzle{};
     Swizzle4 gpi1_swizzle{};
     bool vec4 = true;
+    // Oracle evidence shows both values are legal. Public libvita2d VMADs use
+    // 1; the compact repeated mat4 profile emitted by Sony uses 0. The exact
+    // hardware meaning of this control bit is intentionally left unnamed.
+    bool control_bit_53 = true;
     RepeatMode repeat_mode = RepeatMode::Slmsi;
     uint8_t repeat_count = 0;
     bool skip_invalid = true;
@@ -295,6 +299,7 @@ struct VmadFields {
     uint8_t pred = 0;
     bool skip_invalid = false;
     bool gpi1_swizzle_ext = false;
+    bool control_bit_53 = true;
     bool opcode2 = false;
     bool dest_bank_ext = false;
     bool end = false;

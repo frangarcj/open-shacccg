@@ -264,6 +264,45 @@ bool compile_oracle_fragment_profile(const std::string &source, const char *name
     vsc_destroy_result(&request.allocator,&result);
     return ok;
 }
+
+struct OracleVertexParam {
+    const char *name;
+    uint8_t semantic;
+    uint32_t resource_index;
+};
+
+bool compile_oracle_vertex_profile(const std::string &source, const char *name,
+                                   uint32_t expected_size, uint16_t pa, uint16_t sa,
+                                   const OracleVertexParam *expected_params, size_t expected_param_count,
+                                   const uint64_t *expected_words, size_t expected_word_count) {
+    VscCompileRequest request{};
+    request.source_name=name;
+    request.source=source.data();
+    request.source_size=source.size();
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_VERTEX;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+    if (ok) {
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        ok=view.valid() && view.logical_size()==expected_size && view.sdk_version()==0x0165 &&
+            view.flags()==0x00090000 && view.primary_register_count()==pa &&
+            view.secondary_register_count()==sa && view.parameter_count()==expected_param_count &&
+            view.primary_instruction_count()==expected_word_count;
+        for (size_t i=0;ok && i<expected_param_count;++i) {
+            vsc::gxp::ParameterView parameter{};
+            ok=view.parameter(static_cast<uint32_t>(i),parameter) &&
+                parameter.name==expected_params[i].name && parameter.semantic==expected_params[i].semantic &&
+                parameter.resource_index==expected_params[i].resource_index;
+        }
+        const auto code=view.primary_program();
+        if (ok) ok=code.size==expected_word_count*sizeof(uint64_t) &&
+            std::memcmp(code.data,expected_words,code.size)==0;
+    }
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
 #endif
 #endif
 } // namespace
@@ -332,6 +371,32 @@ int test_cg_frontend() {
         if (source.empty() || !compile_oracle_fragment_profile(source,"fp-constant-red.cg",
                 216,0x00080001,2,2,2,words,2))
             failures += fail("Cg constant-red profile did not reproduce oracle metadata/VMOV");
+    }
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/vp-passthrough.cg");
+        const OracleVertexParam params[]={{"p",11,0}};
+        const uint64_t words[]={0xfa44070000000000ULL,0x3880152183000000ULL,0xfb275000a0200000ULL};
+        if (source.empty() || !compile_oracle_vertex_profile(source,"vp-passthrough.cg",
+                230,4,0,params,1,words,3))
+            failures += fail("Cg vertex passthrough did not reproduce oracle profile");
+    }
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/vp-uniform-mul.cg");
+        const OracleVertexParam params[]={{"p",11,0},{"mvp",0,0}};
+        const uint64_t words[]={0xfa44070000000000ULL,0xf800094000000000ULL,
+                                0x40800dbcaf998002ULL,0x18903081c011a200ULL,
+                                0xfb275000a0200000ULL};
+        if (source.empty() || !compile_oracle_vertex_profile(source,"vp-uniform-mul.cg",
+                274,4,16,params,2,words,5))
+            failures += fail("Cg vertex uniform mat4 multiply did not reproduce oracle profile");
+    }
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/vp-varying.cg");
+        const OracleVertexParam params[]={{"p",11,0},{"uv",14,4}};
+        const uint64_t words[]={0xfa44070000000000ULL,0x3880252183000000ULL,0xfb275000a0200000ULL};
+        if (source.empty() || !compile_oracle_vertex_profile(source,"vp-varying.cg",
+                249,8,0,params,2,words,3))
+            failures += fail("Cg vertex position/uv passthrough did not reproduce oracle profile");
     }
 #endif
     return failures;

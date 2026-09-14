@@ -949,6 +949,38 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             if (!builder.instruction(mad)) { out.error = "failed to encode machine VMAD"; return false; }
             break;
         }
+        case MachineOpcode::VmadUniformMat4: {
+            usse::VmadSemantic mad{};
+            usse::RegisterRef gpi{};
+            if (instruction.subop()!=0 || guard!=usse::Predicate::Always ||
+                !resolve_register_value(instruction.dst,MachineType::F32,out.value_registers,&mad.dst) ||
+                !resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&gpi) ||
+                machine_gpi_index(gpi)!=0) {
+                out.error="uniform mat4 VMAD requires F32 output and oracle GPI0 staging";
+                return false;
+            }
+            mad.src1={usse::RegisterBank::SecondaryAttribute,0};
+            mad.gpi0=0;
+            mad.gpi1=2;
+            mad.write_mask=1;
+            mad.gpi0_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                               usse::SwizzleChannel::Z,usse::SwizzleChannel::W}};
+            mad.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                               usse::SwizzleChannel::X,usse::SwizzleChannel::Y}};
+            mad.gpi1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                               usse::SwizzleChannel::Z,usse::SwizzleChannel::Z}};
+            mad.vec4=true;
+            mad.control_bit_53=false;
+            mad.repeat_mode=usse::RepeatMode::External;
+            mad.repeat_count=3;
+            mad.skip_invalid=true;
+            mad.no_schedule=false;
+            if (!builder.instruction(mad)) {
+                out.error="failed to encode oracle uniform-mat4 VMAD";
+                return false;
+            }
+            break;
+        }
         case MachineOpcode::DependentSample: {
             if (instruction.subop() != 0 || guard != usse::Predicate::Always) {
                 out.error = "dependent sample pseudo-op currently supports only sampler 0";

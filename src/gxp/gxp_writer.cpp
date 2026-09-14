@@ -100,6 +100,9 @@ bool valid_desc(const ProgramImage &image) {
         (image.type != ProgramType::Fragment || image.secondary_instruction_count != 0 ||
          image.primary_instruction_count == 0))
         return false;
+    if (image.vertex_primary_padding_word &&
+        (image.type != ProgramType::Vertex || image.secondary_instruction_count != 0))
+        return false;
     if (image.primary_instruction_count && !image.primary_instructions)
         return false;
     if (image.secondary_instruction_count && !image.secondary_instructions)
@@ -171,6 +174,8 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
         // instruction allows primary code to begin at 0xB8.
         if (image.type == ProgramType::Fragment && image.secondary_instruction_count == 0) {
             if (!add_size(cursor, sizeof(uint64_t))) return false;
+        } else if (image.type == ProgramType::Vertex && image.vertex_primary_padding_word) {
+            if (!add_size(cursor, sizeof(uint32_t))) return false;
         }
         l.secondary_off = image.secondary_instruction_count ? cursor : cursor - 4;
         if (!mul_size(image.secondary_instruction_count, sizeof(uint64_t), bytes) || !add_size(cursor, bytes)) return false;

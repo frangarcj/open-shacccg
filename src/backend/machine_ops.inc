@@ -8,6 +8,7 @@ VSC_MACHINE_OP(PackSwizzle, "pack-swizzle", ValueDef, ValueUse, ValueUse,      0
 VSC_MACHINE_OP(PackValue, "pack-value", ValueDef, ValueUse,     None,         0x0f)
 VSC_MACHINE_OP(Vector,  "vector",  ValueDef,     ValueUse,     ValueUse,     0x0f)
 VSC_MACHINE_OP(Vmad,    "vmad",    ValueDef,     ValueUse,     ValuePairUse, 0x0f)
+VSC_MACHINE_OP(VmadUniformMat4, "vmad-uniform-mat4", ValueDef, ValueUse, None, 0x0f)
 VSC_MACHINE_OP(DependentSample, "dependent-sample", ValueDef, ValueUse, None, 0x0f)
 VSC_MACHINE_OP(Branch,  "branch",   None,         LabelUse,     None,         0x01)
 VSC_MACHINE_OP(LoopCounterInit, "loop-counter-init", ValueDef, None, None,    0x0f)

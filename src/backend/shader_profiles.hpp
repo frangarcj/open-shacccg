@@ -57,6 +57,16 @@ bool compile_vertex_matrix_path(const IrAttribute &position, const IrAttribute &
                                 const IrMatrix4Uniform &matrix, IrVaryingSemantic semantic,
                                 uint32_t binary_guid, uint32_t source_guid,
                                 IrCompileResult &out);
+bool compile_vertex_passthrough(const IrAttribute &position,
+                                uint32_t binary_guid, uint32_t source_guid,
+                                IrCompileResult &out);
+bool compile_vertex_passthrough_varying(const IrAttribute &position, const IrAttribute &varying,
+                                        IrVaryingSemantic semantic,
+                                        uint32_t binary_guid, uint32_t source_guid,
+                                        IrCompileResult &out);
+bool compile_vertex_uniform_matrix(const IrAttribute &position, const IrMatrix4Uniform &matrix,
+                                   uint32_t binary_guid, uint32_t source_guid,
+                                   IrCompileResult &out);
 bool compile_fragment_machine_profile(FragmentMachineProfile profile,
                                       const std::vector<IrUniformVec4> &uniforms,
                                       const std::vector<IrSampler2D> &samplers,

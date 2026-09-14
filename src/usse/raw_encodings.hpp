@@ -49,9 +49,10 @@ using V32NmadEncoding = Encoding<0xf800000000000000ULL, 0x0800000000000000ULL,
     VSC_FIELD(V32NmadFields, src1_swizzle_0_6, 15, 7), VSC_FIELD(V32NmadFields, op2, 12, 3),
     VSC_FIELD(V32NmadFields, src1_num, 6, 6), VSC_FIELD(V32NmadFields, src2_num, 0, 6)>;
 
-using VmadEncoding = Encoding<0xf820000000000000ULL, 0x1820000000000000ULL,
+using VmadEncoding = Encoding<0xf800000000000000ULL, 0x1800000000000000ULL,
     VSC_FIELD(VmadFields, pred, 56, 3), VSC_FIELD(VmadFields, skip_invalid, 55, 1),
-    VSC_FIELD(VmadFields, gpi1_swizzle_ext, 54, 1), VSC_FIELD(VmadFields, opcode2, 52, 1),
+    VSC_FIELD(VmadFields, gpi1_swizzle_ext, 54, 1), VSC_FIELD(VmadFields, control_bit_53, 53, 1),
+    VSC_FIELD(VmadFields, opcode2, 52, 1),
     VSC_FIELD(VmadFields, dest_bank_ext, 51, 1), VSC_FIELD(VmadFields, end, 50, 1),
     VSC_FIELD(VmadFields, src1_bank_ext, 49, 1), VSC_FIELD(VmadFields, repeat_mode, 47, 2),
     VSC_FIELD(VmadFields, gpi0_abs, 46, 1), VSC_FIELD(VmadFields, repeat_count, 44, 2),
