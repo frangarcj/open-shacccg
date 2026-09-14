@@ -1,5 +1,7 @@
 #include "core/internal.hpp"
+#include "backend/typed_ir.hpp"
 #include "backend/vita_ir.hpp"
+#include "spirv/spirv_cross_adapter.hpp"
 #include "spirv/spirv_pipeline.hpp"
 
 #include <algorithm>
@@ -493,6 +495,25 @@ bool spirv_to_gxp(VscStage stage, const char *entrypoint,
         std::ostringstream ss; ss << "SPIR-V entry point '" << wanted_name << "' for " << (stage==VSC_STAGE_FRAGMENT?"fragment":"vertex") << " stage was not found";
         out.diagnostics.push_back({VSC_DIAG_ERROR,0x2201,0,0,ss.str()}); return false;
     }
+
+#if defined(OPENSHACCG_ENABLE_SPIRV_CROSS)
+    {
+        backend::TypedShader typed(stage == VSC_STAGE_FRAGMENT ? backend::TypedStage::Fragment
+                                                               : backend::TypedStage::Vertex);
+        std::string typed_why;
+        if (spirv_cross_to_typed_shader(prepared.words, typed.stage(), wanted_name, typed, typed_why)) {
+            backend::IrCompileResult lowered;
+            if (backend::compile_typed_shader(typed, lowered)) {
+                out.gxp = std::move(lowered.gxp);
+                return true;
+            }
+            typed_why = "Typed Vita IR lowering failed: " + lowered.error;
+        }
+        // Keep the independently tested parser/lowerer as a temporary fallback
+        // while Typed IR coverage grows. Diagnostics remain owned by the legacy
+        // path until the fallback can be removed completely.
+    }
+#endif
     if (stage == VSC_STAGE_FRAGMENT) {
         backend::FragmentIr ir; std::string why;
         if (!lower_fragment_subset(words,word_count,selected->id,ir,why)) {

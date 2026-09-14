@@ -17,7 +17,10 @@ Implemented now:
 - experimental glslang HLSL frontend for the Cg-compatible subset, enabled with `OPENSHACCG_ENABLE_GLSLANG`
 - dependency-free SPIR-V reader/lowerer remains the portable fallback
 - optional SPIRV-Tools `-O`-style optimization and SPIRV-Cross parsing/reflection before Vita lowering
-- first SPIRV-Cross -> compact Typed Vita IR path for scalar U32 bitwise/compare/conditional discard
+- SPIRV-Cross -> compact Typed Vita IR for scalar U32 control work plus F32/F16 vector resources,
+  dependent texture sampling, float multiply, homogeneous position construction and mat4 transforms
+- all seven public libvita2d Cg shaders now pass through the Typed Vita IR path; generated GXPs are
+  byte-identical to the preserved public samples except for Sony's two 32-bit GUID fields
 - frontend -> SPIR-V and SPIR-V -> Vita IR -> USSE/GXP boundaries
 - independent structured GXP reader for real Vita program images
 - canonical GXP serializer for interface data, primary/secondary code, parameter containers and reflection names
@@ -34,8 +37,8 @@ Implemented now:
 Not implemented yet:
 
 - complete Cg compatibility beyond the glslang HLSL-compatible subset (callback includes, option defines, profile quirks and remaining Cg-only syntax)
-- broaden SPIR-V instruction selection beyond the validated vertex subset and add fragment lowering
-- bank-aware USSE register allocation
+- replace the remaining F32/GPI physical-register choices in `vita_ir.cpp` with bank-aware Machine IR allocation
+- derive Sony-compatible binary/source GUIDs instead of currently emitting zero for newly compiled shaders
 - field-level USSE instruction encoding
 - exotic GXP auxiliary tables (literal/uniform-buffer/dependent-sampler tables)
 - full `SceShaccCg` reflection export surface
@@ -63,8 +66,10 @@ ctest --test-dir build-spv-pipeline --output-on-failure
 
 SPIRV-Tools runs performance passes while preserving interfaces, bindings and
 specialization constants. SPIRV-Cross then parses/reflection-checks the selected
-module. Unsupported Typed IR shapes still fall back to the dependency-free
-lowerer; the Vita static build therefore does not require host SPIR-V libraries.
+module. The compact Typed Vita IR is now the preferred lowering path when
+SPIRV-Cross is enabled; unsupported shapes still fall back to the dependency-free
+lowerer while coverage grows. The default Vita static build therefore does not
+require host SPIR-V libraries.
 
 The experimental Cg-compatible frontend can be enabled independently or as part
 of that full host pipeline:
@@ -82,6 +87,12 @@ It feeds source to glslang's HLSL/DX9-compatible parser with glslang's internal
 optimizer disabled; SPIRV-Tools remains the explicit optimization stage. The
 current Cg shim only strips a UTF-8 BOM and rewrites the Cg parameter spelling
 `TYPE out name` to HLSL `out TYPE name`.
+
+As an end-to-end regression, the seven preserved libvita2d shaders are compiled
+from their original Cg source through glslang, SPIRV-Tools, SPIRV-Cross and Typed
+Vita IR. Every byte after offset `0x14` matches the public GXP corpus. Offsets
+`0x0c..0x13` are the Sony binary/source GUIDs; their generation algorithm is not
+yet derived, so open-shacccg currently leaves those fields at zero.
 
 ## GXP / USSE workbench
 

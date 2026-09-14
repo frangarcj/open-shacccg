@@ -8,6 +8,12 @@
 
 namespace vsc {
 
+bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
+                                 backend::TypedStage stage,
+                                 const char *entrypoint,
+                                 backend::TypedShader &typed,
+                                 std::string &error);
+
 bool spirv_cross_to_typed_fragment(const std::vector<uint32_t> &words,
                                    const char *entrypoint,
                                    backend::TypedProgram &typed,

@@ -15,7 +15,20 @@ enum class TypedType : uint8_t {
     U32,
     U16,
     S32,
+    F32x2,
+    F32x3,
+    F32x4,
+    F16x2,
+    F16x3,
+    F16x4,
+    U32x2,
+    U32x3,
+    U32x4,
+    Sampler2D,
 };
+
+static_assert(static_cast<uint8_t>(TypedType::Sampler2D) < 16,
+              "TypedType must remain encodable in the compact 4-bit handle field");
 
 enum class TypedValueKind : uint8_t {
     None = 0,
@@ -57,6 +70,46 @@ struct TypedInstruction {
 };
 static_assert(sizeof(TypedInstruction) == 16, "typed IR instructions must stay compact");
 
+enum class TypedStage : uint8_t { Vertex, Fragment };
+
+enum class TypedResourceKind : uint8_t {
+    Input,
+    Uniform,
+    Matrix4,
+    Sampler2D,
+    Output,
+};
+
+enum class TypedSemantic : uint8_t {
+    None,
+    Position,
+    Color,
+    TexCoord,
+};
+
+enum class TypedFloatOp : uint8_t {
+    Mul,
+    Add,
+    Sub,
+    Min,
+    Max,
+    Dot,
+};
+
+// Resource metadata is deliberately separate from the hot 16-byte instruction
+// stream. The value handle links data-bearing resources back to Typed IR while
+// name_index keeps strings out of every descriptor.
+struct TypedResource {
+    TypedValue value{};
+    uint16_t name_index = 0;
+    uint16_t index = 0;
+    TypedResourceKind kind = TypedResourceKind::Input;
+    TypedType type = TypedType::Invalid;
+    TypedSemantic semantic = TypedSemantic::None;
+    uint8_t semantic_index = 0;
+};
+static_assert(sizeof(TypedResource) == 12, "typed resource descriptors must stay compact");
+
 class TypedProgram {
 public:
     TypedValue make_value(TypedType type);
@@ -65,6 +118,10 @@ public:
 
     TypedValue make_predicate(bool inverted = false);
     TypedValue literal_u32(uint32_t value);
+    TypedValue sampler(uint16_t binding);
+
+    TypedValue input(TypedType type, uint16_t location);
+    TypedValue uniform(TypedType type, uint16_t resource_index);
 
     bool append(TypedOpcode opcode, uint8_t subop = 0,
                 TypedValue dst = {}, TypedValue src0 = {}, TypedValue src1 = {},
@@ -80,16 +137,12 @@ public:
 
     template <TypedType Type>
     TypedValue input(uint16_t location) {
-        auto dst = make_value<Type>();
-        if (!emit<TypedOpcode::Input>(0, dst, {}, {}, location)) return {};
-        return dst;
+        return input(Type, location);
     }
 
     template <TypedType Type>
     TypedValue uniform(uint16_t resource_index) {
-        auto dst = make_value<Type>();
-        if (!emit<TypedOpcode::Uniform>(0, dst, {}, {}, resource_index)) return {};
-        return dst;
+        return uniform(Type, resource_index);
     }
 
     const std::vector<TypedInstruction> &instructions() const { return instructions_; }
@@ -104,7 +157,36 @@ private:
     uint16_t next_predicate_ = 0;
 };
 
+class TypedShader {
+public:
+    explicit TypedShader(TypedStage stage = TypedStage::Fragment) : stage_(stage) {}
+
+    TypedStage stage() const { return stage_; }
+    TypedProgram &program() { return program_; }
+    const TypedProgram &program() const { return program_; }
+
+    uint16_t add_resource(TypedResourceKind kind, TypedValue value, TypedType type,
+                          const std::string &name, uint16_t index,
+                          TypedSemantic semantic = TypedSemantic::None,
+                          uint8_t semantic_index = 0);
+
+    const std::vector<TypedResource> &resources() const { return resources_; }
+    const std::string &resource_name(const TypedResource &resource) const;
+
+private:
+    TypedStage stage_ = TypedStage::Fragment;
+    TypedProgram program_;
+    std::vector<TypedResource> resources_;
+    std::vector<std::string> names_;
+};
+
+struct IrCompileResult;
+
 bool lower_typed_program(const TypedProgram &typed, MachineProgram &machine, std::string &error);
 bool compile_typed_program(const TypedProgram &typed, MachineCompileResult &out);
+bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out);
+
+uint8_t typed_component_count(TypedType type);
+bool typed_is_float(TypedType type);
 
 } // namespace vsc::backend

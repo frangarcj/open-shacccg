@@ -118,6 +118,7 @@ bool cg_to_spirv(const VscCompileRequest &request, FrontendOutput &out) {
     shader.setEnvInput(glslang::EShSourceHlsl, stage, glslang::EShClientVulkan, 100);
     shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_0);
     shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_0);
+    shader.setEnvTargetHlslFunctionality1();
     shader.setAutoMapBindings(true);
     shader.setAutoMapLocations(true);
 

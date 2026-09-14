@@ -1,6 +1,12 @@
 #include "backend/typed_ir.hpp"
+#include "backend/vita_ir.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cctype>
+#include <functional>
+#include <limits>
+#include <unordered_map>
 
 namespace vsc::backend {
 namespace {
@@ -42,9 +48,29 @@ MachineType machine_type(TypedType type) {
     case TypedType::U32: return MachineType::U32;
     case TypedType::U16: return MachineType::U16;
     case TypedType::S32: return MachineType::S32;
+    case TypedType::F32x2:
+    case TypedType::F32x3:
+    case TypedType::F32x4:
+    case TypedType::F16x2:
+    case TypedType::F16x3:
+    case TypedType::F16x4:
+    case TypedType::U32x2:
+    case TypedType::U32x3:
+    case TypedType::U32x4:
+    case TypedType::Sampler2D:
     case TypedType::Invalid: return MachineType::Invalid;
     }
     return MachineType::Invalid;
+}
+
+TypedSemantic infer_semantic(const std::string &name) {
+    std::string lower;
+    lower.reserve(name.size());
+    for (char c : name) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    if (lower.find("position") != std::string::npos || lower == "pos") return TypedSemantic::Position;
+    if (lower.find("color") != std::string::npos || lower.find("colour") != std::string::npos) return TypedSemantic::Color;
+    if (lower.find("tex") != std::string::npos || lower.find("uv") != std::string::npos) return TypedSemantic::TexCoord;
+    return TypedSemantic::None;
 }
 
 bool is_value(const TypedValue &value) {
@@ -72,6 +98,49 @@ MachineOperand lower_value(const TypedProgram &typed, const TypedValue &value,
 }
 
 } // namespace
+
+uint8_t typed_component_count(TypedType type) {
+    switch (type) {
+    case TypedType::F32:
+    case TypedType::F16:
+    case TypedType::U32:
+    case TypedType::U16:
+    case TypedType::S32:
+        return 1;
+    case TypedType::F32x2:
+    case TypedType::F16x2:
+    case TypedType::U32x2:
+        return 2;
+    case TypedType::F32x3:
+    case TypedType::F16x3:
+    case TypedType::U32x3:
+        return 3;
+    case TypedType::F32x4:
+    case TypedType::F16x4:
+    case TypedType::U32x4:
+        return 4;
+    case TypedType::Sampler2D:
+    case TypedType::Invalid:
+        return 0;
+    }
+    return 0;
+}
+
+bool typed_is_float(TypedType type) {
+    switch (type) {
+    case TypedType::F32:
+    case TypedType::F16:
+    case TypedType::F32x2:
+    case TypedType::F32x3:
+    case TypedType::F32x4:
+    case TypedType::F16x2:
+    case TypedType::F16x3:
+    case TypedType::F16x4:
+        return true;
+    default:
+        return false;
+    }
+}
 
 TypedValue TypedValue::value(uint32_t id, TypedType type) {
     return pack_value(TypedValueKind::Value, type, id, false);
@@ -108,6 +177,24 @@ TypedValue TypedProgram::literal_u32(uint32_t value) {
     return TypedValue::literal(static_cast<uint32_t>(literals_.size() - 1), TypedType::U32);
 }
 
+TypedValue TypedProgram::input(TypedType type, uint16_t location) {
+    auto dst = make_value(type);
+    if (dst.kind() == TypedValueKind::None || !emit<TypedOpcode::Input>(0, dst, {}, {}, location)) return {};
+    return dst;
+}
+
+TypedValue TypedProgram::uniform(TypedType type, uint16_t resource_index) {
+    auto dst = make_value(type);
+    if (dst.kind() == TypedValueKind::None || !emit<TypedOpcode::Uniform>(0, dst, {}, {}, resource_index)) return {};
+    return dst;
+}
+
+TypedValue TypedProgram::sampler(uint16_t binding) {
+    auto dst = make_value(TypedType::Sampler2D);
+    if (dst.kind() == TypedValueKind::None || !emit<TypedOpcode::Sampler>(0, dst, {}, {}, binding)) return {};
+    return dst;
+}
+
 bool TypedProgram::append(TypedOpcode opcode, uint8_t subop, TypedValue dst,
                           TypedValue src0, TypedValue src1, uint16_t aux) {
     if (!descriptor(opcode)) return false;
@@ -120,6 +207,23 @@ bool TypedProgram::append(TypedOpcode opcode, uint8_t subop, TypedValue dst,
     instruction.src1 = src1;
     instructions_.push_back(instruction);
     return true;
+}
+
+uint16_t TypedShader::add_resource(TypedResourceKind kind, TypedValue value, TypedType type,
+                                   const std::string &name, uint16_t index,
+                                   TypedSemantic semantic, uint8_t semantic_index) {
+    if (resources_.size() >= std::numeric_limits<uint16_t>::max() ||
+        names_.size() >= std::numeric_limits<uint16_t>::max())
+        return std::numeric_limits<uint16_t>::max();
+    const uint16_t name_index = static_cast<uint16_t>(names_.size());
+    names_.push_back(name);
+    resources_.push_back({value, name_index, index, kind, type, semantic, semantic_index});
+    return static_cast<uint16_t>(resources_.size() - 1);
+}
+
+const std::string &TypedShader::resource_name(const TypedResource &resource) const {
+    static const std::string empty;
+    return resource.name_index < names_.size() ? names_[resource.name_index] : empty;
 }
 
 bool lower_typed_program(const TypedProgram &typed, MachineProgram &machine, std::string &error) {
@@ -176,6 +280,14 @@ bool lower_typed_program(const TypedProgram &typed, MachineProgram &machine, std
             value_defined[instruction.dst.id()] = true;
             break;
         }
+        case TypedOpcode::Sampler:
+        case TypedOpcode::FloatBinary:
+        case TypedOpcode::ConstructPosition:
+        case TypedOpcode::TransformPosition:
+        case TypedOpcode::Sample2D:
+        case TypedOpcode::StoreOutput:
+            error = "high-level typed shader operation requires compile_typed_shader";
+            return false;
         case TypedOpcode::Bitwise: {
             if (instruction.dst.type() != TypedType::U32 || instruction.src0.type() != TypedType::U32 ||
                 instruction.src1.type() != TypedType::U32 ||
@@ -238,6 +350,224 @@ bool compile_typed_program(const TypedProgram &typed, MachineCompileResult &out)
         return false;
     }
     return compile_machine_program(machine, out);
+}
+
+bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
+    out = {};
+    const auto &program = shader.program();
+    const auto &instructions = program.instructions();
+    const auto &resources = shader.resources();
+
+    std::vector<const TypedInstruction *> defs(program.value_count(), nullptr);
+    for (const auto &instruction : instructions) {
+        if (instruction.dst.kind() == TypedValueKind::Value && instruction.dst.id() < defs.size()) {
+            if (defs[instruction.dst.id()]) { out.error = "typed shader value is defined twice"; return false; }
+            defs[instruction.dst.id()] = &instruction;
+        }
+    }
+
+    std::vector<const TypedResource *> resource_by_value(program.value_count(), nullptr);
+    for (const auto &resource : resources) {
+        if (resource.value.kind() != TypedValueKind::Value) continue;
+        if (resource.value.id() >= resource_by_value.size()) { out.error = "typed resource value is out of range"; return false; }
+        resource_by_value[resource.value.id()] = &resource;
+    }
+
+    auto resource_for_value = [&](TypedValue value) -> const TypedResource * {
+        if (value.kind() != TypedValueKind::Value || value.id() >= resource_by_value.size()) return nullptr;
+        return resource_by_value[value.id()];
+    };
+    auto definition = [&](TypedValue value) -> const TypedInstruction * {
+        if (value.kind() != TypedValueKind::Value || value.id() >= defs.size()) return nullptr;
+        return defs[value.id()];
+    };
+
+    if (shader.stage() == TypedStage::Vertex) {
+        VertexIr vertex;
+        std::vector<const TypedResource *> inputs;
+        std::vector<const TypedResource *> matrices;
+        for (const auto &resource : resources) {
+            if (resource.kind == TypedResourceKind::Input) inputs.push_back(&resource);
+            else if (resource.kind == TypedResourceKind::Matrix4) matrices.push_back(&resource);
+        }
+        std::sort(inputs.begin(), inputs.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
+        std::sort(matrices.begin(), matrices.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
+        if (inputs.empty()) { out.error = "typed vertex shader has no inputs"; return false; }
+
+        std::unordered_map<uint32_t, uint32_t> attribute_for_value;
+        for (const auto *resource : inputs) {
+            const uint8_t components = typed_component_count(resource->type);
+            if (!typed_is_float(resource->type) || components < 2 || components > 4 ||
+                resource->value.kind() != TypedValueKind::Value) {
+                out.error = "typed vertex input is not a supported float vector";
+                return false;
+            }
+            const uint32_t attribute = static_cast<uint32_t>(vertex.attributes.size());
+            attribute_for_value[resource->value.id()] = attribute;
+            vertex.attributes.push_back({shader.resource_name(*resource), components,
+                                         static_cast<uint32_t>(resource->index) * 4u});
+        }
+
+        std::unordered_map<uint16_t, uint32_t> matrix_for_resource;
+        for (const auto *resource : matrices) {
+            const uint16_t resource_id = static_cast<uint16_t>(resource - resources.data());
+            matrix_for_resource[resource_id] = static_cast<uint32_t>(vertex.matrices.size());
+            vertex.matrices.push_back({shader.resource_name(*resource), resource->index});
+        }
+
+        bool position_written = false;
+        for (const auto &instruction : instructions) {
+            if (instruction.opcode() != TypedOpcode::StoreOutput) continue;
+            if (instruction.aux >= resources.size()) { out.error = "typed vertex output resource is out of range"; return false; }
+            const auto &output_resource = resources[instruction.aux];
+            if (output_resource.kind != TypedResourceKind::Output) { out.error = "typed StoreOutput does not reference an output"; return false; }
+
+            TypedSemantic semantic = output_resource.semantic;
+            if (semantic == TypedSemantic::None) semantic = infer_semantic(shader.resource_name(output_resource));
+            if (semantic == TypedSemantic::Position) {
+                if (position_written) { out.error = "typed vertex shader writes position twice"; return false; }
+                const auto *def = definition(instruction.src0);
+                if (!def) { out.error = "typed vertex position has no defining operation"; return false; }
+                if (def->opcode() == TypedOpcode::ConstructPosition) {
+                    const auto it = attribute_for_value.find(def->src0.id());
+                    if (def->src0.kind() != TypedValueKind::Value || it == attribute_for_value.end()) {
+                        out.error = "typed constructed position is not sourced by a vertex input"; return false;
+                    }
+                    vertex.ops.push_back({IrOpKind::ConstructPosition, it->second, 0, IrVaryingSemantic::TexCoord});
+                } else if (def->opcode() == TypedOpcode::TransformPosition) {
+                    TypedValue source = def->src0;
+                    if (const auto *construct = definition(source); construct && construct->opcode() == TypedOpcode::ConstructPosition)
+                        source = construct->src0;
+                    const auto attr_it = attribute_for_value.find(source.id());
+                    const auto matrix_it = matrix_for_resource.find(def->aux);
+                    if (source.kind() != TypedValueKind::Value || attr_it == attribute_for_value.end() || matrix_it == matrix_for_resource.end()) {
+                        out.error = "typed transformed position has unresolved input or matrix"; return false;
+                    }
+                    vertex.ops.push_back({IrOpKind::TransformPosition, attr_it->second, matrix_it->second, IrVaryingSemantic::TexCoord});
+                } else {
+                    out.error = "typed vertex position producer is unsupported"; return false;
+                }
+                position_written = true;
+                continue;
+            }
+
+            const auto source_it = attribute_for_value.find(instruction.src0.id());
+            if (instruction.src0.kind() != TypedValueKind::Value || source_it == attribute_for_value.end()) {
+                out.error = "typed varying output must currently copy a vertex input"; return false;
+            }
+            if (semantic == TypedSemantic::None) {
+                const auto *input_resource = resource_for_value(instruction.src0);
+                if (input_resource) semantic = infer_semantic(shader.resource_name(*input_resource));
+            }
+            IrVaryingSemantic varying_semantic;
+            if (semantic == TypedSemantic::Color) varying_semantic = IrVaryingSemantic::Color;
+            else if (semantic == TypedSemantic::TexCoord) varying_semantic = IrVaryingSemantic::TexCoord;
+            else { out.error = "typed vertex varying semantic is unknown"; return false; }
+            vertex.ops.push_back({IrOpKind::CopyVarying, source_it->second, 0, varying_semantic});
+        }
+        if (!position_written) { out.error = "typed vertex shader does not write position"; return false; }
+        return compile_vertex_ir(vertex, out);
+    }
+
+    FragmentIr fragment;
+    std::vector<const TypedResource *> uniforms;
+    std::vector<const TypedResource *> samplers;
+    for (const auto &resource : resources) {
+        if (resource.kind == TypedResourceKind::Uniform) uniforms.push_back(&resource);
+        else if (resource.kind == TypedResourceKind::Sampler2D) samplers.push_back(&resource);
+    }
+    std::sort(uniforms.begin(), uniforms.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
+    std::sort(samplers.begin(), samplers.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
+    std::unordered_map<uint32_t, uint32_t> uniform_for_value;
+    for (const auto *resource : uniforms) {
+        if (resource->type != TypedType::F32x4 || resource->value.kind() != TypedValueKind::Value) {
+            out.error = "typed fragment uniform is not a supported float4"; return false;
+        }
+        uniform_for_value[resource->value.id()] = static_cast<uint32_t>(fragment.uniforms.size());
+        fragment.uniforms.push_back({shader.resource_name(*resource), resource->index});
+    }
+    for (const auto *resource : samplers)
+        fragment.samplers.push_back({shader.resource_name(*resource), resource->index});
+
+    const TypedInstruction *store = nullptr;
+    for (const auto &instruction : instructions) {
+        if (instruction.opcode() != TypedOpcode::StoreOutput) continue;
+        if (store) { out.error = "typed fragment shader has multiple output stores"; return false; }
+        store = &instruction;
+    }
+    if (!store) { out.error = "typed fragment shader has no output store"; return false; }
+    const TypedValue root = store->src0;
+
+    if (const auto *resource = resource_for_value(root)) {
+        if (resource->kind == TypedResourceKind::Uniform && resource->type == TypedType::F32x4) {
+            fragment.op = FragmentOpKind::UniformColor;
+            return compile_fragment_ir(fragment, out);
+        }
+        if (resource->kind == TypedResourceKind::Input && resource->type == TypedType::F32x4) {
+            fragment.op = FragmentOpKind::VaryingColor;
+            return compile_fragment_ir(fragment, out);
+        }
+    }
+
+    const auto *root_def = definition(root);
+    if (!root_def) { out.error = "typed fragment root has no defining operation"; return false; }
+    if (root_def->opcode() == TypedOpcode::Sample2D) {
+        fragment.op = FragmentOpKind::Texture2D;
+        return compile_fragment_ir(fragment, out);
+    }
+    if (root_def->opcode() == TypedOpcode::FloatBinary &&
+        root_def->subop() == static_cast<uint8_t>(TypedFloatOp::Mul)) {
+        const TypedInstruction *sample = nullptr;
+        const TypedResource *tint = nullptr;
+        if (const auto *a = definition(root_def->src0); a && a->opcode() == TypedOpcode::Sample2D) sample = a;
+        if (const auto *b = definition(root_def->src1); b && b->opcode() == TypedOpcode::Sample2D) sample = b;
+        if (const auto *r = resource_for_value(root_def->src0); r && r->kind == TypedResourceKind::Uniform) tint = r;
+        if (const auto *r = resource_for_value(root_def->src1); r && r->kind == TypedResourceKind::Uniform) tint = r;
+        if (sample && tint && uniforms.size() == 1 && samplers.size() == 1) {
+            fragment.op = FragmentOpKind::TextureTint2D;
+            return compile_fragment_ir(fragment, out);
+        }
+    }
+
+    std::unordered_map<uint32_t, uint32_t> expression_for_value;
+    std::function<bool(TypedValue, uint32_t &)> build_expression = [&](TypedValue value, uint32_t &index) -> bool {
+        if (value.kind() != TypedValueKind::Value) { out.error = "typed arithmetic uses a non-value operand"; return false; }
+        if (auto it = expression_for_value.find(value.id()); it != expression_for_value.end()) { index = it->second; return true; }
+        FragmentExprNode node{};
+        if (const auto *resource = resource_for_value(value)) {
+            if (resource->kind == TypedResourceKind::Input) {
+                if (resource->index != 0 || resource->type != TypedType::F32x4) { out.error = "typed arithmetic supports only float4 input 0"; return false; }
+                node.kind = FragmentExprKind::Varying; node.a = 0; node.components = 4;
+            } else if (resource->kind == TypedResourceKind::Uniform) {
+                const auto it = uniform_for_value.find(value.id());
+                if (it == uniform_for_value.end()) { out.error = "typed arithmetic uniform is unresolved"; return false; }
+                node.kind = FragmentExprKind::Uniform; node.a = it->second; node.components = 4;
+            } else {
+                out.error = "typed arithmetic resource kind is unsupported"; return false;
+            }
+        } else {
+            const auto *def = definition(value);
+            if (!def || def->opcode() != TypedOpcode::FloatBinary) { out.error = "typed arithmetic value has unsupported definition"; return false; }
+            if (!build_expression(def->src0, node.a) || !build_expression(def->src1, node.b)) return false;
+            switch (static_cast<TypedFloatOp>(def->subop())) {
+            case TypedFloatOp::Mul: node.kind = FragmentExprKind::Mul; break;
+            case TypedFloatOp::Add: node.kind = FragmentExprKind::Add; break;
+            case TypedFloatOp::Sub: node.kind = FragmentExprKind::Sub; break;
+            case TypedFloatOp::Min: node.kind = FragmentExprKind::Min; break;
+            case TypedFloatOp::Max: node.kind = FragmentExprKind::Max; break;
+            case TypedFloatOp::Dot: node.kind = FragmentExprKind::Dot; break;
+            default: out.error = "typed float operation is unsupported"; return false;
+            }
+            node.components = def->dst.type() == TypedType::F32 ? 1 : typed_component_count(def->dst.type());
+        }
+        index = static_cast<uint32_t>(fragment.expressions.size());
+        fragment.expressions.push_back(node);
+        expression_for_value[value.id()] = index;
+        return true;
+    };
+    if (!build_expression(root, fragment.root_expression)) return false;
+    fragment.op = FragmentOpKind::Arithmetic;
+    return compile_fragment_ir(fragment, out);
 }
 
 } // namespace vsc::backend

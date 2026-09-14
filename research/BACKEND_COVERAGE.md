@@ -108,13 +108,13 @@ Observed source acceptance during the initial probe:
   compatibility rewrite `TYPE out name` -> `out TYPE name` used by its two
   vertex shaders.
 
-With glslang + SPIRV-Tools + SPIRV-Cross enabled together, public `color_f` and
-`texture_f` already compile end-to-end from original Cg source to GXP. Their
-primary USSE instruction streams match the preserved public GXPs exactly. The
-remaining public samples fail later in the current SPIR-V/Vita lowering because
-glslang expresses uniforms/position operations in shapes the old shape-specific
-lowerer does not yet recognize; these are backend gaps rather than Cg parse
-failures.
+With glslang + SPIRV-Tools + SPIRV-Cross enabled together, all seven public
+libvita2d shaders now compile end-to-end from original Cg source through the
+compact Typed Vita IR. The resulting GXP images match the preserved public
+samples byte-for-byte after offset `0x14`, including all USSE words, interface
+records, containers, reflection descriptors and strings. The only difference is
+the two Sony GUID fields at `0x0c..0x13`; their generation algorithm is still
+unknown and open-shacccg currently emits zero there.
 
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
@@ -128,19 +128,22 @@ The host build now has two independent optional stages before Vita lowering:
   validation enabled while preserving interfaces, bindings and specialization
   constants.
 - `OPENSHACCG_ENABLE_SPIRV_CROSS` parses the resulting module and performs
-  entry-point/resource reflection. Its first direct adapter lowers scalar U32
-  stage inputs, bitwise operations, integer comparisons and a structured
-  conditional discard into the compact Typed Vita IR.
+  entry-point/resource reflection. Its adapter now lowers scalar U32 control
+  work plus float vectors, UBO members, samplers, dependent samples, float
+  multiply, position expansion, matrix transforms and output stores into the
+  compact Typed Vita IR.
 
-A regression exercises the full development path `SPIR-V -> SPIRV-Tools ->
-SPIRV-Cross -> Typed IR -> Machine IR -> VBW/VTST/KILL`. The old dependency-free
-SPIR-V lowering remains the fallback and the default Vita static build does not
-link host SPIRV-Tools/SPIRV-Cross libraries.
+A regression exercises both the integer path `SPIR-V -> SPIRV-Tools ->
+SPIRV-Cross -> Typed IR -> Machine IR -> VBW/VTST/KILL` and the seven public
+Cg shaders through `Cg -> glslang -> SPIRV-Tools -> SPIRV-Cross -> Typed IR ->
+GXP`. The old dependency-free SPIR-V lowering remains a temporary fallback and
+the default Vita static build does not link host SPIRV-Tools/SPIRV-Cross
+libraries.
 
 ## Next backend order
 
-1. **Broaden SPIRV-Cross -> typed Vita IR.** The compact typed layer and first Cross adapter now cover U32 inputs, bitwise, compare and conditional discard. Add F32/F16/vector arithmetic, uniforms/resources and conversions without reintroducing node classes.
-2. **Bank-aware value allocation.** U32 virtual values now receive TEMP registers from lifetimes. Extend the same allocator with per-op bank/width constraints for F32/F16 vectors, PA/SA/OUTPUT and GPI staging.
+1. **Bank-aware F32/F16 allocation.** Public float/vector resources now flow through Typed Vita IR, but the final validated float paths still use the physical PA/SA/TEMP/OUTPUT/GPI choices in `vita_ir.cpp`. Move those choices into Machine IR descriptors/lifetimes without changing the seven public GXP regressions.
+2. **Broaden typed arithmetic/conversions.** Add the remaining F32/F16 unary/vector forms, conversions and swizzles directly to Typed/Machine IR so generic shaders no longer need the legacy fragment DAG bridge.
 3. **BR control flow.** Add raw and semantic BR only once branch offset/direction semantics are anchored by real words. Then lower structured `if/else`; loops come after branch back-edges are independently validated.
 4. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
 5. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.

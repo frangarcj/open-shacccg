@@ -44,7 +44,7 @@ endif()
 function(openshacccg_configure_target target)
     target_include_directories(${target} PUBLIC include PRIVATE src)
     target_compile_definitions(${target} PRIVATE
-        $<$<BOOL:${OPENSHACCG_ENABLE_GLSLANG}>:OPENSHACCG_ENABLE_GLSLANG=1>
+        $<$<BOOL:${OPENSHACCG_ENABLE_GLSLANG}>:OPENSHACCG_ENABLE_GLSLANG=1;ENABLE_HLSL=1>
         $<$<BOOL:${OPENSHACCG_ENABLE_SPIRV_TOOLS}>:OPENSHACCG_ENABLE_SPIRV_TOOLS=1>
         $<$<BOOL:${OPENSHACCG_ENABLE_SPIRV_CROSS}>:OPENSHACCG_ENABLE_SPIRV_CROSS=1>
     )
