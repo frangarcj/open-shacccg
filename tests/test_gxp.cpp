@@ -417,6 +417,32 @@ int test_gxp_writer() {
         }
     }
 
+    {
+        const uint64_t secondary4[]={
+            0x5080000aa0200181ULL,0x5080000aa0000100ULL,
+            0x408106caa0000080ULL,0x4085094ea0010000ULL,
+        };
+        ProgramImage image4{};
+        image4.type=ProgramType::Fragment;
+        image4.interface_block=interface_block;
+        image4.interface_block_size=sizeof(interface_block);
+        image4.secondary_instructions=secondary4;
+        image4.secondary_instruction_count=4;
+        image4.primary_instructions=primary;
+        image4.primary_instruction_count=2;
+        const size_t need=required_size(image4);
+        std::vector<uint8_t> bytes(need);
+        if (!need || !write_program(image4,bytes.data(),bytes.size())) {
+            failures += fail("four-word fragment secondary layout was rejected");
+        } else {
+            uint32_t rel=0;
+            std::memcpy(&rel,bytes.data()+0x40,sizeof(rel));
+            const size_t primary_off=0x40u+rel;
+            if (primary_off!=0xd0 || std::memcmp(bytes.data()+0xac,secondary4,sizeof(secondary4))!=0)
+                failures += fail("four-word fragment secondary layout does not match int2 oracle anchor");
+        }
+    }
+
 
     // Full independent texture_v reconstruction. Every operand-bearing USSE
     // instruction is assembled from semantic operands, then serialized from

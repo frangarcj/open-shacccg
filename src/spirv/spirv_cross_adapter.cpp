@@ -52,8 +52,9 @@ backend::TypedType typed_type(const spirv_cross::SPIRType &type) {
                            backend::TypedType::U32x3, backend::TypedType::U32x4);
     if (type.basetype == spirv_cross::SPIRType::UInt && type.width == 16 && type.vecsize == 1)
         return backend::TypedType::U16;
-    if (type.basetype == spirv_cross::SPIRType::Int && type.width == 32 && type.vecsize == 1)
-        return backend::TypedType::S32;
+    if (type.basetype == spirv_cross::SPIRType::Int && type.width == 32)
+        return vector_type(backend::TypedType::S32, backend::TypedType::U32x2,
+                           backend::TypedType::U32x3, backend::TypedType::U32x4);
     return backend::TypedType::Invalid;
 }
 
@@ -777,8 +778,10 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 if (map_bitwise(op,bitwise)) {
                     if (count!=5) { error="invalid scalar integer bitwise instruction"; return false; }
                     const auto result_type=typed_type(compiler.get_type(args[0]));
-                    if (result_type!=backend::TypedType::S32 && result_type!=backend::TypedType::U32) {
-                        error="bitwise result is outside the validated scalar U32/S32 subset";
+                    const bool scalar=result_type==backend::TypedType::S32 || result_type==backend::TypedType::U32;
+                    const bool int2=result_type==backend::TypedType::U32x2 && bitwise==usse::BitwiseOp::Or;
+                    if (!scalar && !int2) {
+                        error="bitwise result is outside the validated scalar or int2-OR subset";
                         return false;
                     }
                     auto resolve_integer=[&](uint32_t id, backend::TypedValue &value) -> bool {
@@ -786,6 +789,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                             value=it->second;
                             return true;
                         }
+                        if (int2) return false;
                         const auto constant=constants.find(id);
                         if (constant==constants.end()) return false;
                         value=result_type==backend::TypedType::S32 ?

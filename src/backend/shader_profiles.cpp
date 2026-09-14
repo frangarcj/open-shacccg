@@ -688,6 +688,76 @@ bool compile_fragment_f32_to_s32_machine(const MachineProgram &primary,
     return true;
 }
 
+bool compile_fragment_s32x2_machine(const MachineProgram &primary, const MachineProgram &secondary,
+                                    const std::vector<IrUniformS32> &uniforms,
+                                    uint32_t binary_guid, uint32_t source_guid,
+                                    IrCompileResult &out) {
+    out={};
+    if (uniforms.empty() || uniforms.size()>2) {
+        out.error="S32x2 fragment profile requires one or two uniforms";
+        return false;
+    }
+    const bool binary=uniforms.size()==2;
+    if (uniforms[0].name.empty() || uniforms[0].resource_index!=0 ||
+        (binary && (uniforms[1].name.empty() || uniforms[1].resource_index!=2))) {
+        out.error="S32x2 uniforms must occupy packed resources 0 and optionally 2";
+        return false;
+    }
+    MachineCompileResult primary_compiled,secondary_compiled;
+    if (!compile_words(primary,primary_compiled,out,"S32x2 primary Machine IR lowering failed") ||
+        !compile_words(secondary,secondary_compiled,out,"S32x2 secondary Machine IR lowering failed"))
+        return false;
+    if (primary_compiled.words.size()!=2 || secondary_compiled.words.size()!=(binary?4u:2u)) {
+        out.error="S32x2 Machine streams are outside the oracle-validated pass/OR shapes";
+        return false;
+    }
+
+    const uint8_t pass_interface[32]={
+        0,0,0,0,0,0,0,0,0,0,1,4,0,0,0,0,4,0,0,0,0x80,0,0,0xa0,
+        0xca,0x06,0x81,0x40,0,0,1,0xa0,
+    };
+    const uint8_t or_interface[32]={
+        0,0,0,0,0,0,0,0,0,0,1,4,0,0,0,0,4,0,0,0,0x81,0x01,0x20,0xa0,
+        0x0a,0x00,0x80,0x50,0,1,0,0xa0,
+    };
+    const uint8_t *interface_block=binary?or_interface:pass_interface;
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,static_cast<uint16_t>(binary?4:2)}};
+    std::vector<gxp::ParameterDesc> parameters;
+    parameters.push_back({uniforms[0].name.c_str(),1,4,2,14,0,0,1,0});
+    if (binary) parameters.push_back({uniforms[1].name.c_str(),1,4,2,14,0,0,1,2});
+
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Fragment;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00080000;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=1;
+    image.secondary_register_count=static_cast<uint16_t>(binary?4:2);
+    image.primary_phase_count=1;
+    image.default_uniform_buffer_count=static_cast<uint32_t>(binary?4:2);
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block;
+    image.interface_block_size=32;
+    image.secondary_instructions=secondary_compiled.words.data();
+    image.secondary_instruction_count=secondary_compiled.words.size();
+    image.primary_instructions=primary_compiled.words.data();
+    image.primary_instruction_count=primary_compiled.words.size();
+    image.containers=containers;
+    image.container_count=1;
+    image.parameters=parameters.data();
+    image.parameter_count=parameters.size();
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected S32x2 fragment profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for S32x2 fragment profile"; return false;
+    }
+    return true;
+}
+
 bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
                                          const std::vector<IrUniformVec4> &uniforms,
                                          uint8_t float_input_count,

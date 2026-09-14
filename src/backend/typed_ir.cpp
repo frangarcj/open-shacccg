@@ -946,6 +946,7 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
 
     std::vector<IrUniformVec4> fragment_uniforms;
     std::vector<IrUniformS32> fragment_s32_uniforms;
+    std::vector<IrUniformS32> fragment_i32x2_uniforms;
     std::vector<IrSampler2D> fragment_samplers;
     std::vector<const TypedResource *> inputs;
     std::vector<const TypedResource *> uniforms;
@@ -967,8 +968,10 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             fragment_uniforms.push_back({shader.resource_name(*resource),resource->index});
         else if (resource->type==TypedType::S32)
             fragment_s32_uniforms.push_back({shader.resource_name(*resource),resource->index});
+        else if (resource->type==TypedType::U32x2)
+            fragment_i32x2_uniforms.push_back({shader.resource_name(*resource),resource->index});
         else {
-            out.error="typed fragment uniform type is outside validated float4/S32 profiles";
+            out.error="typed fragment uniform type is outside validated float4/S32/int2 profiles";
             return false;
         }
     }
@@ -1035,6 +1038,63 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     }
     if (!store) { out.error = "typed fragment shader has no output store"; return false; }
     const TypedValue root = store->src0;
+
+    if (root.type()==TypedType::U32x2) {
+        if (!inputs.empty() || !fragment_uniforms.empty() || !fragment_s32_uniforms.empty() ||
+            !fragment_samplers.empty() || fragment_i32x2_uniforms.empty() || fragment_i32x2_uniforms.size()>2 ||
+            store->aux>=resources.size() || resources[store->aux].kind!=TypedResourceKind::Output ||
+            resources[store->aux].index!=0 || resources[store->aux].type!=TypedType::U32x2) {
+            out.error="typed int2 output requires Location 0 and one/two packed int2 uniforms";
+            return false;
+        }
+        MachineProgram primary,secondary;
+        const auto zero=primary.literal_s32(0);
+        if (zero.kind()==MachineOperandKind::None || !primary.emit<MachineOpcode::Phase>() ||
+            !primary.emit<MachineOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),
+                primary.physical(machine_fragment_output(0),MachineType::S32),
+                primary.physical(machine_secondary(0),MachineType::S32),zero)) {
+            out.error="failed to build int2 primary uniform copy";
+            return false;
+        }
+        if (const auto *resource=resource_for_value(root)) {
+            if (fragment_i32x2_uniforms.size()!=1 || resource->kind!=TypedResourceKind::Uniform ||
+                resource->type!=TypedType::U32x2 || resource->index!=0) {
+                out.error="direct int2 output currently requires uniform resource 0";
+                return false;
+            }
+        } else {
+            const auto *def=definition(root);
+            auto uniform_index=[&](TypedValue value) -> int {
+                const auto *resource=resource_for_value(value);
+                return resource && resource->kind==TypedResourceKind::Uniform && resource->type==TypedType::U32x2 ?
+                    static_cast<int>(resource->index) : -1;
+            };
+            if (!def || def->opcode()!=TypedOpcode::Bitwise ||
+                def->subop()!=static_cast<uint8_t>(usse::BitwiseOp::Or) ||
+                fragment_i32x2_uniforms.size()!=2 ||
+                !((uniform_index(def->src0)==0 && uniform_index(def->src1)==2) ||
+                  (uniform_index(def->src0)==2 && uniform_index(def->src1)==0))) {
+                out.error="int2 output currently covers only OR of packed uniform resources 0 and 2";
+                return false;
+            }
+            if (!secondary.emit<MachineOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),
+                    secondary.physical(machine_primary(1),MachineType::S32),
+                    secondary.physical(machine_primary(3),MachineType::S32),
+                    secondary.physical(machine_primary(1),MachineType::S32)) ||
+                !secondary.emit<MachineOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),
+                    secondary.physical(machine_primary(0),MachineType::S32),
+                    secondary.physical(machine_primary(2),MachineType::S32),
+                    secondary.physical(machine_primary(0),MachineType::S32))) {
+                out.error="failed to build oracle int2 OR secondary operations";
+                return false;
+            }
+        }
+        if (!secondary.emit<MachineOpcode::S32x2ColorPack>()) {
+            out.error="failed to append oracle int2 COLOR pack";
+            return false;
+        }
+        return compile_fragment_s32x2_machine(primary,secondary,fragment_i32x2_uniforms,0,0,out);
+    }
 
     if (root.type()==TypedType::S32) {
         const bool s32_output=store->aux<resources.size() &&

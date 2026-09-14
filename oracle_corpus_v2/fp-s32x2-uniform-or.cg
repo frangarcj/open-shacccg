@@ -1,0 +1,1 @@
+uniform int2 x; uniform int2 y; int2 main() : COLOR0 { return x | y; }

@@ -223,6 +223,18 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        if (!program.emit<MachineOpcode::S32x2ColorPack>()) {
+            failures += fail("could not construct oracle S32x2 COLOR pack Machine profile");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=2 ||
+                result.words[0]!=0x408106caa0000080ULL || result.words[1]!=0x4085094ea0010000ULL)
+                failures += fail("oracle S32x2 COLOR pack Machine words mismatch");
+        }
+    }
+
+    {
+        MachineProgram program;
         const auto counter=program.make_value<MachineType::S32>();
         if (!program.emit<MachineOpcode::LoopCounterInit>(0,counter) ||
             !program.emit<MachineOpcode::LoopIncrement>(1,counter)) {

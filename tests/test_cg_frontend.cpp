@@ -343,6 +343,44 @@ bool compile_oracle_s32_profile(const std::string &source, const char *name,
     vsc_destroy_result(&request.allocator,&result);
     return ok;
 }
+
+bool compile_oracle_s32x2_profile(const std::string &source, const char *name,
+                                  uint32_t expected_size, uint32_t expected_params,
+                                  const uint64_t *secondary_words, size_t secondary_count) {
+    VscCompileRequest request{};
+    request.source_name=name;
+    request.source=source.data();
+    request.source_size=source.size();
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_FRAGMENT;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+    if (ok) {
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        const uint64_t primary_words[]={0xfa44070000000000ULL,0x5081000ae0000000ULL};
+        ok=view.valid() && view.logical_size()==expected_size && view.sdk_version()==0x0165 &&
+            view.flags()==0x00080001 && view.primary_register_count()==1 &&
+            view.secondary_register_count()==(expected_params==1?2:4) &&
+            view.parameter_count()==expected_params && view.primary_instruction_count()==2 &&
+            view.secondary_instruction_count()==secondary_count;
+        for (uint32_t i=0;ok && i<expected_params;++i) {
+            vsc::gxp::ParameterView parameter{};
+            const char expected_name=static_cast<char>('x'+i);
+            ok=view.parameter(i,parameter) && parameter.name.size()==1 && parameter.name[0]==expected_name &&
+                parameter.category==1 && parameter.type==4 && parameter.component_count==2 &&
+                parameter.container_index==14 && parameter.resource_index==i*2u;
+        }
+        const auto primary=view.primary_program();
+        const auto secondary=view.secondary_program();
+        if (ok) ok=primary.size==sizeof(primary_words) &&
+            std::memcmp(primary.data,primary_words,sizeof(primary_words))==0 &&
+            secondary.size==secondary_count*sizeof(uint64_t) &&
+            std::memcmp(secondary.data,secondary_words,secondary.size)==0;
+    }
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
 #endif
 #endif
 } // namespace
@@ -585,6 +623,26 @@ int test_cg_frontend() {
             if (source.empty() || !compile_oracle_fragment_profile(source,probe,
                     224,0x00081005,1,0,0,words,4)) {
                 std::fprintf(stderr,"test_cg_frontend: F32->S32 input/conversion probe failed: %s\n",probe);
+                ++failures;
+            }
+        }
+    }
+    {
+        const uint64_t pack[]={0x408106caa0000080ULL,0x4085094ea0010000ULL};
+        const uint64_t or_words[]={
+            0x5080000aa0200181ULL,0x5080000aa0000100ULL,
+            0x408106caa0000080ULL,0x4085094ea0010000ULL,
+        };
+        struct Int2Probe { const char *name; uint32_t logical_size; uint32_t params; const uint64_t *words; size_t count; };
+        const Int2Probe probes[]={
+            {"fp-s32x2-uniform-pass",234,1,pack,2},
+            {"fp-s32x2-uniform-or",268,2,or_words,4},
+        };
+        for (const auto &probe:probes) {
+            const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/"+probe.name+".cg");
+            if (source.empty() || !compile_oracle_s32x2_profile(source,probe.name,probe.logical_size,
+                    probe.params,probe.words,probe.count)) {
+                std::fprintf(stderr,"test_cg_frontend: S32x2 probe failed: %s\n",probe.name);
                 ++failures;
             }
         }

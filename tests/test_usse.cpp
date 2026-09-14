@@ -387,6 +387,15 @@ int test_usse() {
             !decode_v16nmad_f32_to_s32_semantic(word,&decoded) || decoded.phase!=phase)
             failures += fail("oracle F32->S32 V16NMAD phase mismatch");
     }
+    const uint64_t s32x2_pack_words[]={0x408106caa0000080ULL,0x4085094ea0010000ULL};
+    for (uint8_t phase=0;phase<2;++phase) {
+        VpckS32x2ColorSemantic pack{phase};
+        uint64_t word=0;
+        VpckS32x2ColorSemantic decoded{};
+        if (!encode_vpck_s32x2_color_semantic(pack,&word) || word!=s32x2_pack_words[phase] ||
+            !decode_vpck_s32x2_color_semantic(word,&decoded) || decoded.phase!=phase)
+            failures += fail("oracle S32x2 COLOR VPCK phase mismatch");
+    }
 
     // Semantic VMAD: reconstruct the complete four-instruction matrix path.
     const uint64_t matrix_words[] = {

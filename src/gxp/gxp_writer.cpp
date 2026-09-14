@@ -163,7 +163,10 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
         // oracle-backed scalar-int bitwise profiles use two words: the second
         // extends four bytes beyond the interface and primary code resumes at
         // the next 8-byte boundary.
-        if (image.secondary_instruction_count > 2) return false;
+        // Integer-vector oracle probes extend this same layout to 4/5/8 words;
+        // keep the observed upper bound fail-closed until a larger legal stream
+        // is captured.
+        if (image.secondary_instruction_count > 8) return false;
         l.secondary_off = l.interface_off + 20;
         if (!mul_size(image.secondary_instruction_count,sizeof(uint64_t),bytes)) return false;
         l.secondary_end = l.secondary_off + bytes;

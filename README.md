@@ -43,6 +43,10 @@ Implemented now:
 - oracle-exact scalar F32->S32 fragment conversion for both interpolated `int` passthrough
   and explicit `(int)float`: a validated F32->F16 VPCK staging word plus two fixed V16NMAD
   conversion phases produces the same four-word Sony primary program
+- oracle-exact `uniform int2` passthrough and OR. Signed integer vectors reuse the compact
+  `U32xN` Typed slots as bit containers (signedness is irrelevant to bitwise lanes), avoiding
+  any expansion of the 4-bit TypedType field; the int2 COLOR path uses two fixed VPCK words
+  and up to four observed secondary instructions
 - oracle-exact fragment profiles for `wzyx` and the constant `float4(1,0,0,1)`,
   including swizzled VPCK, literal-table placement and the primary/interface overlap convention
 - oracle-exact standalone vertex profiles for float4 position passthrough,

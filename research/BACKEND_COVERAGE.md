@@ -417,6 +417,17 @@ as one narrow semantic profile rather than guessing the general V16NMAD layout.
 S32->F32 conversion, vector integer resources, bitcasts and a source-level U32
 profile remain fail-closed until separately derived from oracle or SPIR-V evidence.
 
+The first vector integer slice is now covered without expanding the compact type
+handle. `TypedType` already occupies all sixteen encodable 4-bit values; for vector
+bitwise work, signedness does not affect the lane bits, so signed SPIR-V `int2` maps
+to the existing `U32x2` bit-container slot while scalar `S32` remains distinct for
+comparisons/conversions. `uniform int2` passthrough and OR are both exact outside
+GUIDs. Pass uses the normal primary uniform copy plus fixed VPCK words
+`0x408106caa0000080` and `0x4085094ea0010000`; OR prepends secondary VBW words
+`0x5080000aa0200181` and `0x5080000aa0000100`. These probes also extend the
+validated fragment-secondary layout to four qwords (and the oracle has separately
+observed five/eight-word int4 streams, though int4 lowering remains closed).
+
 Backend fallback diagnostics now retain the SPIRV-Cross Typed-path failure when
 the dependency-free parser also rejects a shader, so future oracle sweeps expose
 the actual higher-level coverage gap instead of only the final fallback error.
@@ -428,7 +439,7 @@ not byte identity.
 
 1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, keeping the single Typed -> Machine lowering path fail-closed.
 2. **Complete structured control flow.** BR forward/backward offsets, six F32 VTST compares, direct COLOR0 two-way phi merge, output `OpSelect` and positive-step dynamic loops are validated; the control corpus is 12/12. Next generalize remaining phi consumers and derive decrement/other loop-update profiles from oracle probes.
-3. **Integer data movement/conversion.** Scalar S32 uniforms now reach VBW/COLOR0 exactly for pass/AND/OR/XOR/SHL/ASR, and scalar attribute F32->S32 conversion is exact. Next derive S32->F32 conversion, then vector integer resources/bitcasts; source-level `uint` is not a Sony Cg spelling, so U32 coverage should be driven by SPIR-V/HLSL evidence.
+3. **Integer data movement/conversion.** Integer oracle coverage is 10/10 exact: scalar S32 uniform pass/AND/OR/XOR/SHL/ASR, scalar attribute F32->S32, plus int2 uniform pass/OR. Next derive S32->F32 conversion and int4/bitcast profiles; source-level `uint` is not a Sony Cg spelling, so unsigned coverage should be driven by SPIR-V/HLSL evidence.
 4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
 5. **Common missing ALU families.** The 77-case ALU language corpus is complete. Next prioritize VMAD2/VDUAL/V16 optimization profiles only where they improve real shaders, while expanding texture/integer coverage from new oracle probes.
 6. **Resource/reflection generalization.** Derive register counts, parameter types, containers, uniform buffers, literals and dependent samplers from IR instead of current sample-shaped layouts.

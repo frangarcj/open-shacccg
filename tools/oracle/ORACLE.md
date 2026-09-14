@@ -168,3 +168,10 @@ conversion is a separate pair of probes: `int` attribute passthrough and explici
 `PHAS, 0x40810d46a0000000, 0x10a40084a0042000, 0x10a400a620041000`.
 Open reproduces both exactly outside GUIDs. S32->F32 and vector/bitcast cases remain
 separate oracle milestones.
+
+`uniform int2` is the first vector-integer milestone. Passthrough uses secondary
+VPCK words `0x408106caa0000080` / `0x4085094ea0010000`; OR first emits
+`0x5080000aa0200181` / `0x5080000aa0000100`. Both GXPs are exact outside GUIDs.
+The writer therefore accepts the observed four-word secondary stream; int4 probes
+have additionally demonstrated five- and eight-word layouts, but their instruction
+profiles are not enabled yet. `--feature integer` currently contains ten exact cases.

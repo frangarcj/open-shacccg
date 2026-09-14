@@ -753,6 +753,7 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             words=(components>=1 && components<=4) ? static_cast<uint32_t>(components+2) : 1;
         } else if (program.instructions()[i].opcode()==MachineOpcode::DotSplatF32) words=3;
         else if (program.instructions()[i].opcode()==MachineOpcode::F32ToS32Color) words=3;
+        else if (program.instructions()[i].opcode()==MachineOpcode::S32x2ColorPack) words=2;
         word_positions[i + 1] = word_positions[i] + words;
     }
     for (uint32_t position : program.labels()) {
@@ -1048,6 +1049,14 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             }
             break;
         }
+        case MachineOpcode::S32x2ColorPack:
+            if (guard!=usse::Predicate::Always || instruction.subop()!=0 ||
+                !builder.instruction(usse::VpckS32x2ColorSemantic{0}) ||
+                !builder.instruction(usse::VpckS32x2ColorSemantic{1})) {
+                out.error="failed to encode oracle S32x2 COLOR pack";
+                return false;
+            }
+            break;
         case MachineOpcode::DotSplatF32: {
             const uint8_t components=instruction.subop();
             if ((components!=2 && components!=3) || guard!=usse::Predicate::Always) {

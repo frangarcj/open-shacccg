@@ -704,6 +704,22 @@
     "op": "f32-to-s32"
   },
   {
+    "name": "fp-s32x2-uniform-pass",
+    "file": "fp-s32x2-uniform-pass.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "integer",
+    "type": "int2",
+    "op": "pass"
+  },
+  {
+    "name": "fp-s32x2-uniform-or",
+    "file": "fp-s32x2-uniform-or.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "integer",
+    "type": "int2",
+    "op": "or"
+  },
+  {
     "name": "fp-if",
     "file": "fp-if.cg",
     "profile": "sce_fp_psp2",
