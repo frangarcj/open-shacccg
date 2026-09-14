@@ -521,7 +521,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         return false;
                     }
                     const auto dst=program.make_value<backend::TypedType::F32>();
-                    if (!program.emit<backend::TypedOpcode::FloatExtractX>(0,dst,it->second.source)) {
+                    if (!program.emit<backend::TypedOpcode::FloatExtract>(0,dst,it->second.source)) {
                         error="failed to emit Typed IR float X extraction";
                         return false;
                     }
@@ -534,6 +534,18 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 auto source = values.find(args[2]);
                 if (source == values.end()) { error = "Typed IR adapter could not resolve composite extract source"; return false; }
                 extracts[args[1]] = {source->second, args[3]};
+                const auto result_type=typed_type(compiler.get_type(args[0]));
+                const uint8_t components=backend::typed_component_count(source->second.type());
+                if (result_type==backend::TypedType::F32 && backend::typed_is_float(source->second.type()) &&
+                    components>=2 && components<=4 && args[3]<components) {
+                    const auto dst=program.make_value<backend::TypedType::F32>();
+                    if (dst.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::FloatExtract>(static_cast<uint8_t>(args[3]),dst,source->second)) {
+                        error="failed to emit Typed float component extraction";
+                        return false;
+                    }
+                    values[args[1]]=dst;
+                }
             } else if (op == spv::OpVectorShuffle && count == 9) {
                 const auto result_type = typed_type(compiler.get_type(args[0]));
                 const auto source = values.find(args[2]);
@@ -882,7 +894,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                             backend::typed_component_count(ext->second.source.type())<2)
                             return false;
                         const auto scalar=program.make_value<backend::TypedType::F32>();
-                        if (!program.emit<backend::TypedOpcode::FloatExtractX>(0,scalar,ext->second.source)) return false;
+                        if (!program.emit<backend::TypedOpcode::FloatExtract>(0,scalar,ext->second.source)) return false;
                         values[id]=scalar;
                         value=scalar;
                         return true;

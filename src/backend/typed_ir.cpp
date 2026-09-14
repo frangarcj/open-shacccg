@@ -621,20 +621,28 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         case TypedOpcode::FloatConstant:
             error="high-level float swizzle/constant requires compile_typed_shader";
             return false;
-        case TypedOpcode::FloatExtractX: {
+        case TypedOpcode::FloatExtract: {
             const auto components=typed_component_count(instruction.src0.type());
             if (instruction.dst.type()!=TypedType::F32 || !typed_is_float(instruction.src0.type()) ||
-                components<2 || components>4) {
-                error = "typed float extract-X requires a float vector source and F32 destination";
+                components<2 || components>4 || instruction.subop()>=components) {
+                error = "typed float extract requires a float vector source, valid component and F32 destination";
                 return false;
             }
             const auto src=lower_value(typed,instruction.src0,values,literals,machine);
             if (src.kind()==MachineOperandKind::None) {
-                error = "failed to lower float extract-X source";
+                error = "failed to lower float extract source";
                 return false;
             }
-            // X aliases the base F32 register directly; no USSE instruction is needed.
-            values[instruction.dst.id()]=src;
+            if (src.kind()==MachineOperandKind::PhysicalValue) {
+                const auto reg=src.physical_register();
+                values[instruction.dst.id()]=machine.physical(reg,MachineType::F32,instruction.subop());
+            } else if (instruction.subop()==0) {
+                // X aliases the base F32 register directly for allocated vector values.
+                values[instruction.dst.id()]=src;
+            } else {
+                error="non-X extraction from a virtual float vector is not yet validated";
+                return false;
+            }
             value_types[instruction.dst.id()]=TypedType::F32;
             value_defined[instruction.dst.id()]=true;
             break;

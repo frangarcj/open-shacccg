@@ -504,6 +504,25 @@ int test_typed_ir() {
 
     {
         TypedProgram program;
+        const auto source=program.input<TypedType::F32x3>(0);
+        const auto y=program.make_value<TypedType::F32>();
+        const auto neg=program.make_value<TypedType::F32>();
+        program.emit<TypedOpcode::FloatExtract>(1,y,source);
+        program.emit<TypedOpcode::FloatUnary>(static_cast<uint8_t>(TypedFloatUnaryOp::Neg),neg,y);
+        MachineCompileResult result;
+        usse::V32NmadSemantic op{};
+        if (!compile_typed_program(program,result) || result.words.size()!=1 ||
+            !usse::decode_v32nmad_semantic(result.words[0],&op) || !op.src1_negative ||
+            op.src1.bank!=usse::RegisterBank::PrimaryAttribute ||
+            op.src1_swizzle.c[0]!=usse::SwizzleChannel::Y ||
+            op.src1_swizzle.c[1]!=usse::SwizzleChannel::Y ||
+            op.src1_swizzle.c[2]!=usse::SwizzleChannel::Y ||
+            op.src1_swizzle.c[3]!=usse::SwizzleChannel::Y)
+            failures += fail("typed float component extraction did not alias the physical source lane");
+    }
+
+    {
+        TypedProgram program;
         const auto source = program.input<TypedType::F32x4>(0);
         const auto dst = program.make_value<TypedType::F16x4>();
         program.emit<TypedOpcode::FloatConvert>(
