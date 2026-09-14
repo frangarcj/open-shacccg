@@ -90,7 +90,8 @@ struct MachineOperand {
     uint32_t bits = 0;
 
     static MachineOperand virtual_value(uint32_t id, MachineType type);
-    static MachineOperand physical_value(usse::RegisterBank bank, uint8_t num, MachineType type);
+    static MachineOperand physical_value(usse::RegisterBank bank, uint8_t num, MachineType type,
+                                         uint8_t component = 0xff);
     static MachineOperand virtual_predicate(uint32_t id, bool inverted = false);
     static MachineOperand physical_predicate(uint8_t num, bool inverted = false);
     static MachineOperand literal(uint32_t id, MachineType type);
@@ -102,6 +103,7 @@ struct MachineOperand {
     uint32_t id() const;
     bool inverted() const;
     usse::RegisterRef physical_register() const;
+    uint8_t physical_component() const;
     uint16_t pair_first() const;
     uint16_t pair_second() const;
 };
@@ -188,8 +190,9 @@ public:
     }
 
     MachineOperand make_predicate(bool inverted = false);
-    MachineOperand physical(usse::RegisterBank bank, uint8_t num, MachineType type) const;
-    MachineOperand physical(usse::RegisterRef reg, MachineType type) const;
+    MachineOperand physical(usse::RegisterBank bank, uint8_t num, MachineType type,
+                            uint8_t component = 0xff) const;
+    MachineOperand physical(usse::RegisterRef reg, MachineType type, uint8_t component = 0xff) const;
     template <MachineType Type>
     MachineOperand physical(usse::RegisterBank bank, uint8_t num) const {
         return physical(bank, num, Type);

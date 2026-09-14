@@ -106,11 +106,17 @@ struct VcompRcpF32Fields {
     uint8_t source_pair = 0;
     uint8_t component = 0;
     bool source_odd = false;
+    bool scalar = false;
 };
 
 struct VcompRcpF32Semantic {
     RegisterRef src{}; // PrimaryAttribute vector base; odd PA is validated for float2 xy
     uint8_t component = 0;
+};
+
+struct VcompRcpScalarF32Semantic {
+    RegisterRef src{}; // currently oracle-validated for PA0 only
+    uint8_t component = 0; // X/Y packed scalar input
 };
 
 // Fixed F32 division combine forms observed after reciprocal VCOMPs and
@@ -501,6 +507,8 @@ bool encode_v32nmad_semantic(const V32NmadSemantic &instruction, uint64_t *word)
 bool decode_v32nmad_semantic(uint64_t word, V32NmadSemantic *instruction);
 bool encode_vcomp_rcp_f32_semantic(const VcompRcpF32Semantic &instruction, uint64_t *word);
 bool decode_vcomp_rcp_f32_semantic(uint64_t word, VcompRcpF32Semantic *instruction);
+bool encode_vcomp_rcp_scalar_f32_semantic(const VcompRcpScalarF32Semantic &instruction, uint64_t *word);
+bool decode_vcomp_rcp_scalar_f32_semantic(uint64_t word, VcompRcpScalarF32Semantic *instruction);
 bool encode_v16nmad_div_f32_semantic(const V16NmadDivF32Semantic &, uint64_t *word);
 bool decode_v16nmad_div_f32_semantic(uint64_t word, V16NmadDivF32Semantic *instruction);
 bool encode_v16nmad_dot_splat_f32_semantic(const V16NmadDotSplatF32Semantic &, uint64_t *word);
@@ -526,6 +534,7 @@ inline bool encode_semantic(const VmovSemantic &i, uint64_t *word) { return enco
 inline bool encode_semantic(const VpckSemantic &i, uint64_t *word) { return encode_vpck_semantic(i, word); }
 inline bool encode_semantic(const V32NmadSemantic &i, uint64_t *word) { return encode_v32nmad_semantic(i, word); }
 inline bool encode_semantic(const VcompRcpF32Semantic &i, uint64_t *word) { return encode_vcomp_rcp_f32_semantic(i, word); }
+inline bool encode_semantic(const VcompRcpScalarF32Semantic &i, uint64_t *word) { return encode_vcomp_rcp_scalar_f32_semantic(i, word); }
 inline bool encode_semantic(const V16NmadDivF32Semantic &i, uint64_t *word) { return encode_v16nmad_div_f32_semantic(i, word); }
 inline bool encode_semantic(const V16NmadDotSplatF32Semantic &i, uint64_t *word) { return encode_v16nmad_dot_splat_f32_semantic(i, word); }
 inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return encode_vmad_semantic(i, word); }

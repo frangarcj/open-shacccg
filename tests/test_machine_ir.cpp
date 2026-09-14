@@ -70,6 +70,19 @@ int test_machine_ir() {
     }
 
     {
+        const auto scalar_y=MachineOperand::physical_value(
+            usse::RegisterBank::PrimaryAttribute,0,MachineType::F32,1);
+        const auto reg=scalar_y.physical_register();
+        if (scalar_y.kind()!=MachineOperandKind::PhysicalValue ||
+            reg.bank!=usse::RegisterBank::PrimaryAttribute || reg.num!=0 ||
+            scalar_y.physical_component()!=1 || sizeof(MachineOperand)!=4)
+            failures += fail("compact physical scalar component handle did not round-trip");
+    }
+
+    {
+        const uint64_t expected1[]={
+            0x308008088f800001ULL,0x3880050081f40000ULL,0x10a4008600040f7cULL,
+        };
         const uint64_t expected2[]={
             0x308008008f800081ULL,0x308008088f800082ULL,
             0x3880052083f40000ULL,0x10a4418600040f7cULL,
@@ -83,18 +96,21 @@ int test_machine_ir() {
             0x308008008f800184ULL,0x308008088f800188ULL,
             0x40800dbcafb98002ULL,0x10a4478600040f7cULL,
         };
-        for (uint8_t components=2;components<=4;++components) {
+        for (uint8_t components=1;components<=4;++components) {
             MachineProgram program;
-            const uint8_t rhs=components==2 ? 1 : 2;
+            const uint8_t rhs=components==1 ? 0 : (components==2 ? 1 : 2);
+            const uint8_t lhs_component=components==1 ? 0 : 0xff;
+            const uint8_t rhs_component=components==1 ? 1 : 0xff;
             if (!program.emit<MachineOpcode::DivF32>(components,
                     program.physical(machine_fragment_output(0),MachineType::F16),
-                    program.physical(machine_primary(0),MachineType::F32),
-                    program.physical(machine_primary(rhs),MachineType::F32))) {
+                    program.physical(machine_primary(0),MachineType::F32,lhs_component),
+                    program.physical(machine_primary(rhs),MachineType::F32,rhs_component))) {
                 failures += fail("could not construct oracle F32 division Machine IR");
                 continue;
             }
             MachineCompileResult result;
-            const uint64_t *expected=components==2 ? expected2 : (components==3 ? expected3 : expected4);
+            const uint64_t *expected=components==1 ? expected1 :
+                (components==2 ? expected2 : (components==3 ? expected3 : expected4));
             const size_t count=static_cast<size_t>(components+2);
             if (!compile_machine_program(program,result) || result.words.size()!=count)
                 failures += fail("oracle F32 division Machine IR did not compile");

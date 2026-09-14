@@ -142,3 +142,11 @@ PA1.x/y encode as reciprocal words ending `...81`/`...82`, while float3 uses the
 same even-PA lane encodings as float4. F32 float2/float3 division and dot-splat
 profiles are exact outside GUIDs; half2 is compiled through the F32 path because
 glslang HLSL does not preserve half precision in the emitted SPIR-V.
+
+Scalar probes anchor a separate component-packed input convention. Consecutive
+scalar locations share PA registers (`Location0=PA0.x`, `Location1=PA0.y`,
+`Location2=PA1.x`). Scalar reciprocal X/Y on PA0 use
+`0x308008008f800001` / `0x308008088f800001`; the latter differs from vector
+lane-Y (`...0002`) and was confirmed with temporary `a/b` versus `b/a` probes.
+The F32 scalar division GXP is byte-identical outside GUIDs and the complete ALU
+corpus now compiles 77/77 with both Sony and OpenShaccCg.

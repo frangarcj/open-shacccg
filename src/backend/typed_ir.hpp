@@ -139,6 +139,7 @@ public:
     TypedValue sampler(uint16_t binding);
 
     TypedValue input(TypedType type, uint16_t location);
+    TypedValue input_component_f32(uint16_t physical_index, uint8_t component);
     TypedValue uniform(TypedType type, uint16_t resource_index);
     uint16_t make_label();
     bool bind_label(uint16_t label);

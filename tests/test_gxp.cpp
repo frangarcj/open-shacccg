@@ -357,7 +357,7 @@ int test_gxp_writer() {
 
     {
         struct NarrowCase { uint8_t components; uint8_t code; uint8_t tail; };
-        const NarrowCase cases[]={{2,0x40,0x10},{3,0xc0,0x30}};
+        const NarrowCase cases[]={{1,0x00,0x00},{2,0x40,0x10},{3,0xc0,0x30}};
         for (const auto &c:cases) {
             ProgramImage narrow{};
             narrow.type=ProgramType::Fragment;

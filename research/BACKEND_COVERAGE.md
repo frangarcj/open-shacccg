@@ -351,8 +351,31 @@ and `fp-dot-float3` are byte-identical outside GUIDs.
 
 Differential probes therefore compile 33/33 across `float2`, `float3` and
 `half2`. Half precision still arrives as F32 from glslang and intentionally uses
-the F32 profiles. Together with the 22/22 vector4 slice, Open now compiles 55/77
-ALU corpus cases; the remaining 22 are scalar float/half probes.
+the F32 profiles.
+
+## Packed scalar F32 arithmetic
+
+The final 22 ALU probes establish how scalar stage inputs are packed. Sony maps
+Location 0/1 to `PA0.x/y` and Location 2 to `PA1.x`; VMOV staging words make the
+component selection observable independently. Open keeps `MachineOperand` at four
+bytes by storing an optional physical-component selector in otherwise-unused
+payload bits. Ordinary Typed `Input<F32>(n)` retains its direct-register meaning;
+the SPIR-V adapter explicitly emits component-selected inputs for reflected scalar
+locations, so existing Typed/API semantics do not change.
+
+Scalar add/sub/mul/min/max/abs/neg/saturate/mad (and scalar `dot`, which glslang
+reduces to FMul) reuse masked V32NMAD plus the normal output pack. Scalar division
+adds one oracle-backed VCOMP variant: PA0.x reciprocal is
+`0x308008008f800001`, while PA0.y sets bit 35 and becomes
+`0x308008088f800001`. The exact F32 scalar division profile is PHAS + NOP + that
+Y reciprocal + `0x3880050081f40000` staging + V16NMAD
+`0x10a4008600040f7c`.
+
+Sony and Open now compile all 77/77 ALU corpus probes. F32 scalar division plus
+F32x2/F32x3/F32x4 division and the narrow F32 dot-splat profiles are byte-identical
+outside GUIDs; many other operations intentionally differ in instruction selection
+because Sony prefers compact V16NMAD/VMAD2 forms while Open uses its validated
+V32NMAD path.
 
 Backend fallback diagnostics now retain the SPIRV-Cross Typed-path failure when
 the dependency-free parser also rejects a shader, so future oracle sweeps expose
@@ -367,7 +390,7 @@ not byte identity.
 2. **Complete structured control flow.** BR forward/backward offsets, six F32 VTST compares, direct COLOR0 two-way phi merge, output `OpSelect` and positive-step dynamic loops are validated; the control corpus is 12/12. Next generalize remaining phi consumers and derive decrement/other loop-update profiles from oracle probes.
 3. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
 4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
-5. **Common missing ALU families.** VCOMP now covers oracle-exact F32 vector division and narrow dot-splat reductions are anchored. Next close scalar ALU packing/component selection, then prioritize VMAD2/VDUAL based on real traces.
+5. **Common missing ALU families.** The 77-case ALU language corpus is complete. Next prioritize VMAD2/VDUAL/V16 optimization profiles only where they improve real shaders, while expanding texture/integer coverage from new oracle probes.
 6. **Resource/reflection generalization.** Derive register counts, parameter types, containers, uniform buffers, literals and dependent samplers from IR instead of current sample-shaped layouts.
 7. **Hardware gate.** Treat a capability as complete only after host regressions plus real-Vita `sceGxmProgramCheck`/render validation where possible.
 

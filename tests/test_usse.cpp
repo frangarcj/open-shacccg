@@ -345,15 +345,26 @@ int test_usse() {
         if (!decode_vcomp_rcp_f32_semantic(word,&decoded) || decoded.src.num!=1 || decoded.component!=lane)
             failures += fail("semantic packed-float2 reciprocal VCOMP decode mismatch");
     }
+    const uint64_t vcomp_scalar[]={0x308008008f800001ULL,0x308008088f800001ULL};
+    for (uint8_t component=0;component<2;++component) {
+        VcompRcpScalarF32Semantic semantic{{RegisterBank::PrimaryAttribute,0},component};
+        uint64_t word=0;
+        VcompRcpScalarF32Semantic decoded{};
+        if (!encode_vcomp_rcp_scalar_f32_semantic(semantic,&word) || word!=vcomp_scalar[component] ||
+            !decode_vcomp_rcp_scalar_f32_semantic(word,&decoded) || decoded.src.num!=0 ||
+            decoded.component!=component)
+            failures += fail("semantic packed-scalar reciprocal VCOMP oracle word mismatch");
+    }
     const uint64_t div_combine_words[]={
-        0x10a4418600040f7cULL,0x10a4438600040f7cULL,0x10a4478600040f7cULL,
+        0x10a4008600040f7cULL,0x10a4418600040f7cULL,
+        0x10a4438600040f7cULL,0x10a4478600040f7cULL,
     };
-    for (uint8_t components=2;components<=4;++components) {
+    for (uint8_t components=1;components<=4;++components) {
         V16NmadDivF32Semantic div_combine{components};
         uint64_t word=0;
         V16NmadDivF32Semantic decoded{};
         if (!encode_v16nmad_div_f32_semantic(div_combine,&word) ||
-            word!=div_combine_words[components-2] ||
+            word!=div_combine_words[components-1] ||
             !decode_v16nmad_div_f32_semantic(word,&decoded) || decoded.components!=components)
             failures += fail("oracle F32 division V16NMAD combine mismatch");
     }

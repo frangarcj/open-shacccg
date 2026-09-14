@@ -264,7 +264,27 @@ int test_typed_ir() {
             MachineCompileResult result;
             if (!compile_typed_program(program,result) || result.words.size()!=1 ||
                 result.words[0]!=0x48088a81a0038002ULL)
-                failures += fail("typed F32 compare did not reproduce oracle VTST word");
+            failures += fail("typed F32 compare did not reproduce oracle VTST word");
+        }
+    }
+
+    {
+        TypedProgram program;
+        const auto lhs=program.input_component_f32(0,0);
+        const auto rhs=program.input_component_f32(0,1);
+        const auto dst=program.make_value<TypedType::F32>();
+        if (!program.emit<TypedOpcode::FloatBinary>(static_cast<uint8_t>(TypedFloatOp::Add),dst,lhs,rhs)) {
+            failures += fail("could not construct packed scalar F32 arithmetic");
+        } else {
+            MachineCompileResult result;
+            usse::V32NmadSemantic add{};
+            if (!compile_typed_program(program,result) || result.words.size()!=1 ||
+                !usse::decode_v32nmad_semantic(result.words[0],&add) || add.op!=usse::VectorOp::Add ||
+                add.dest_mask!=1 || add.src1.bank!=usse::RegisterBank::PrimaryAttribute || add.src1.num!=0 ||
+                add.src2.bank!=usse::RegisterBank::PrimaryAttribute || add.src2.num!=0 ||
+                add.src1_swizzle.c[0]!=usse::SwizzleChannel::X || add.src1_swizzle.c[3]!=usse::SwizzleChannel::X ||
+                add.src2_swizzle.c[0]!=usse::SwizzleChannel::Y || add.src2_swizzle.c[3]!=usse::SwizzleChannel::Y)
+                failures += fail("packed scalar F32 inputs did not lower to component-selected V32NMAD");
         }
     }
 

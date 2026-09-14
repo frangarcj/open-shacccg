@@ -247,7 +247,9 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             if (location > std::numeric_limits<uint16_t>::max()) { error = "stage input location is too large"; return false; }
             const auto type = typed_type(compiler.get_type(resource.type_id));
             if (type == backend::TypedType::Invalid) { error = "SPIRV-Cross stage input has unsupported type"; return false; }
-            const auto value = program.input(type, static_cast<uint16_t>(location));
+            const auto value = type==backend::TypedType::F32 ?
+                program.input_component_f32(static_cast<uint16_t>(location/2u),static_cast<uint8_t>(location&1u)) :
+                program.input(type, static_cast<uint16_t>(location));
             if (value.kind() == backend::TypedValueKind::None) { error = "failed to create Typed IR input"; return false; }
             uint8_t semantic_index = 0;
             auto semantic = reflected_semantic(compiler, resource.id, resource.name, semantic_index);
@@ -663,11 +665,13 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 const auto result_type = typed_type(compiler.get_type(args[0]));
                 const uint32_t ext = args[3];
                 const uint8_t result_components=backend::typed_component_count(result_type);
+                const bool result_scalar=result_type==backend::TypedType::F32;
                 const bool result_vector=result_type==backend::TypedType::F32x2 ||
                     result_type==backend::TypedType::F32x3 || result_type==backend::TypedType::F32x4;
+                const bool result_float=result_scalar || result_vector;
                 if (ext == GLSLstd450FAbs) {
-                    if (count != 6 || !result_vector) {
-                        error = "GLSL.std.450 FAbs is outside the validated F32 vector subset";
+                    if (count != 6 || !result_float) {
+                        error = "GLSL.std.450 FAbs is outside the validated F32 subset";
                         return false;
                     }
                     const auto source = values.find(args[4]);
@@ -682,8 +686,8 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     }
                     values[args[1]] = dst;
                 } else if (ext == GLSLstd450FMin || ext == GLSLstd450FMax) {
-                    if (count != 7 || !result_vector) {
-                        error = "GLSL.std.450 min/max is outside the validated F32 vector subset";
+                    if (count != 7 || !result_float) {
+                        error = "GLSL.std.450 min/max is outside the validated F32 subset";
                         return false;
                     }
                     const auto lhs = values.find(args[4]);
@@ -702,12 +706,16 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     }
                     values[args[1]] = dst;
                 } else if (ext == GLSLstd450FClamp) {
-                    if (count != 8 || !result_vector) {
-                        error="GLSL.std.450 FClamp is outside the validated F32 vector subset";
+                    if (count != 8 || !result_float) {
+                        error="GLSL.std.450 FClamp is outside the validated F32 subset";
                         return false;
                     }
                     const auto source=values.find(args[4]);
                     auto constant_bits=[&](uint32_t id, uint32_t expected) {
+                        if (result_scalar) {
+                            const auto it=constants.find(id);
+                            return it!=constants.end() && it->second==expected;
+                        }
                         const auto it=float_vector_constants.find(id);
                         if (it==float_vector_constants.end()) return false;
                         for (uint8_t lane=0;lane<result_components;++lane)
@@ -716,7 +724,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     };
                     if (source==values.end() || source->second.type()!=result_type ||
                         !constant_bits(args[5],0u) || !constant_bits(args[6],0x3f800000u)) {
-                        error="FClamp bounds are not the validated F32-vector zero/one constants";
+                        error="FClamp bounds are not the validated F32 zero/one constants";
                         return false;
                     }
                     const auto dst=program.make_value(result_type);

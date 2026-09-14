@@ -29,9 +29,10 @@ Implemented now:
   so one/two/three-input homogeneous F32 vector graphs lower without being blocked by unused Cg/HLSL parameters
 - F32 vector `saturate` lowers fail-closed from GLSL.std.450 FClamp with exact 0/1 bounds to
   validated masked `MAX(x,0)` + `MIN(x,SPECIAL1.yyyy)` V32NMAD forms
-- the oracle ALU corpus currently compiles 55/77 cases: all float4/half4/float2/float3/half2
-  operations; only scalar float/half remain as a separate lowering task
-- oracle-exact direct F32x2/F32x3/F32x4 division and narrow F32 dot-splat profiles use
+- the oracle ALU corpus compiles 77/77 cases across scalar, float2/float3/float4 and
+  their HLSL `half` spellings; packed scalar inputs use explicit PA component selectors
+  inside the existing 4-byte Machine operand handle
+- oracle-exact direct scalar/F32x2/F32x3/F32x4 division and narrow F32 dot-splat profiles use
   width-aware VCOMP/V32NMAD/VPCK staging plus validated V16NMAD reductions; half vectors compile
   through the F32 path
   because the glslang HLSL frontend does not preserve half precision in SPIR-V

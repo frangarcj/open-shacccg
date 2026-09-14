@@ -204,6 +204,15 @@ TypedValue TypedProgram::input(TypedType type, uint16_t location) {
     return dst;
 }
 
+TypedValue TypedProgram::input_component_f32(uint16_t physical_index, uint8_t component) {
+    if (physical_index >= 128 || component >= 4) return {};
+    auto dst=make_value(TypedType::F32);
+    if (dst.kind()==TypedValueKind::None ||
+        !emit<TypedOpcode::Input>(static_cast<uint8_t>(component+1u),dst,{},{},physical_index))
+        return {};
+    return dst;
+}
+
 TypedValue TypedProgram::uniform(TypedType type, uint16_t resource_index) {
     auto dst = make_value(type);
     if (dst.kind() == TypedValueKind::None || !emit<TypedOpcode::Uniform>(0, dst, {}, {}, resource_index)) return {};
@@ -361,8 +370,15 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             const auto bank = instruction.opcode() == TypedOpcode::Input ?
                 usse::RegisterBank::PrimaryAttribute : usse::RegisterBank::SecondaryAttribute;
             uint16_t physical_index = instruction.aux;
+            uint8_t physical_component=0xff;
             if (instruction.opcode() == TypedOpcode::Input) {
-                if (instruction.dst.type()==TypedType::F32x2)
+                if (instruction.dst.type()==TypedType::F32 && instruction.subop()!=0) {
+                    if (instruction.subop()>4) { error="scalar F32 input component is out of range"; return false; }
+                    physical_component=static_cast<uint8_t>(instruction.subop()-1u);
+                } else if (instruction.subop()!=0) {
+                    error="input component selector is only validated for scalar F32";
+                    return false;
+                } else if (instruction.dst.type()==TypedType::F32x2)
                     physical_index=instruction.aux;
                 else if (instruction.dst.type()==TypedType::F32x3 || instruction.dst.type()==TypedType::F32x4)
                     physical_index = static_cast<uint16_t>(instruction.aux * 2u);
@@ -372,7 +388,8 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 physical_index = instruction.aux / 2u;
             }
             if (physical_index >= 128) { error = "resource physical index exceeds current register subset"; return false; }
-            values[instruction.dst.id()] = machine.physical(bank, static_cast<uint8_t>(physical_index), type);
+            values[instruction.dst.id()] = machine.physical(bank, static_cast<uint8_t>(physical_index), type,
+                                                            physical_component);
             value_types[instruction.dst.id()] = instruction.dst.type();
             value_defined[instruction.dst.id()] = true;
             break;
@@ -493,18 +510,20 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         case TypedOpcode::FloatBinary: {
             const auto float_op = static_cast<TypedFloatOp>(instruction.subop());
             if (float_op==TypedFloatOp::Div) {
-                error="typed F32x4 division requires the shader-level oracle profile";
+                error="typed F32 division requires the shader-level oracle profile";
                 return false;
             }
             const uint8_t components=typed_component_count(instruction.dst.type());
+            const bool scalar=instruction.dst.type()==TypedType::F32 &&
+                instruction.src0.type()==TypedType::F32 && instruction.src1.type()==TypedType::F32;
             const bool vector = typed_is_float(instruction.dst.type()) && components>=2 && components<=4 &&
                 instruction.src0.type()==instruction.dst.type() && instruction.src1.type()==instruction.dst.type() &&
                 (instruction.dst.type()==TypedType::F32x2 || instruction.dst.type()==TypedType::F32x3 ||
                  instruction.dst.type()==TypedType::F32x4);
             const bool dot = float_op == TypedFloatOp::Dot && instruction.dst.type() == TypedType::F32 &&
                 instruction.src0.type() == TypedType::F32x4 && instruction.src1.type() == TypedType::F32x4;
-            if ((!vector && !dot) || float_op > TypedFloatOp::Dot) {
-                error = "typed float binary currently supports F32x2/x3/x4 arithmetic and float4 dot";
+            if ((!scalar && !vector && !dot) || float_op > TypedFloatOp::Dot) {
+                error = "typed float binary currently supports scalar/F32-vector arithmetic and float4 dot";
                 return false;
             }
 
@@ -550,13 +569,14 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         case TypedOpcode::FloatUnary: {
             const auto unary_op = static_cast<TypedFloatUnaryOp>(instruction.subop());
             const uint8_t components=typed_component_count(instruction.dst.type());
-            const bool supported_type=(instruction.dst.type()==TypedType::F32x2 ||
+            const bool supported_type=(instruction.dst.type()==TypedType::F32 ||
+                                       instruction.dst.type()==TypedType::F32x2 ||
                                        instruction.dst.type()==TypedType::F32x3 ||
                                        instruction.dst.type()==TypedType::F32x4) &&
                                       instruction.src0.type()==instruction.dst.type();
             if (!supported_type ||
                 unary_op > TypedFloatUnaryOp::Saturate) {
-                error = "typed float unary currently supports F32x2/x3/x4 negate/absolute/saturate";
+                error = "typed float unary currently supports scalar/F32-vector negate/absolute/saturate";
                 return false;
             }
             const auto src = lower_value(typed, instruction.src0, values, literals, machine);
@@ -1032,9 +1052,10 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         }
         const TypedType div_type=root.type();
         const uint8_t components=typed_component_count(div_type);
-        if ((div_type!=TypedType::F32x2 && div_type!=TypedType::F32x3 && div_type!=TypedType::F32x4) ||
-            components<2 || components>4) {
-            out.error="typed direct F32 division requires vector width 2..4";
+        if ((div_type!=TypedType::F32 && div_type!=TypedType::F32x2 &&
+             div_type!=TypedType::F32x3 && div_type!=TypedType::F32x4) ||
+            components<1 || components>4) {
+            out.error="typed direct F32 division requires width 1..4";
             return false;
         }
         const auto *numerator=resource_for_value(root_def->src0);
@@ -1053,14 +1074,20 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         }
         const uint8_t input_count=static_cast<uint8_t>(std::max(numerator->index,denominator->index)+1);
         auto pa_base=[&](uint16_t location) {
+            if (components==1) return static_cast<uint8_t>(location/2u);
             return static_cast<uint8_t>(components==2 ? location : location*2u);
+        };
+        auto pa_component=[&](uint16_t location) {
+            return components==1 ? static_cast<uint8_t>(location&1u) : uint8_t{0xff};
         };
         MachineProgram primary;
         if (!primary.emit<MachineOpcode::Phase>() || !primary.emit<MachineOpcode::Nop>() ||
             !primary.emit<MachineOpcode::DivF32>(components,
                 primary.physical(machine_fragment_output(0),MachineType::F16),
-                primary.physical(machine_primary(pa_base(numerator->index)),MachineType::F32),
-                primary.physical(machine_primary(pa_base(denominator->index)),MachineType::F32))) {
+                primary.physical(machine_primary(pa_base(numerator->index)),MachineType::F32,
+                                 pa_component(numerator->index)),
+                primary.physical(machine_primary(pa_base(denominator->index)),MachineType::F32,
+                                 pa_component(denominator->index)))) {
             out.error="failed to build oracle F32 division Machine profile";
             return false;
         }
@@ -1150,9 +1177,10 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     used_input_locations.erase(std::unique(used_input_locations.begin(),used_input_locations.end()),used_input_locations.end());
     const TypedType arithmetic_type=root.type();
     const uint8_t arithmetic_components=typed_component_count(arithmetic_type);
-    if ((arithmetic_type!=TypedType::F32x2 && arithmetic_type!=TypedType::F32x3 && arithmetic_type!=TypedType::F32x4) ||
+    if ((arithmetic_type!=TypedType::F32 && arithmetic_type!=TypedType::F32x2 &&
+         arithmetic_type!=TypedType::F32x3 && arithmetic_type!=TypedType::F32x4) ||
         used_input_locations.empty() || used_input_locations.size()>3) {
-        out.error="typed generic arithmetic path requires one to three reachable F32 vector inputs (width 2..4)";
+        out.error="typed generic arithmetic path requires one to three reachable F32 inputs (width 1..4)";
         return false;
     }
     for (size_t i=0;i<used_input_locations.size();++i) {

@@ -428,6 +428,30 @@ int test_cg_frontend() {
         }
     }
     {
+        const char *scalar_types[]={"float","half"};
+        const char *scalar_ops[]={"add","sub","mul","div","min","max","sat","abs","neg","mad","dot"};
+        for (const char *type:scalar_types) {
+            for (const char *op:scalar_ops) {
+                const std::string probe=std::string("fp-")+op+"-"+type;
+                const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/"+probe+".cg");
+                if (source.empty() || !compile_fragment_gxp(source,probe.c_str())) {
+                    std::fprintf(stderr,"test_cg_frontend: scalar ALU probe failed: %s\n",probe.c_str());
+                    ++failures;
+                }
+            }
+        }
+    }
+    {
+        const std::string div1=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-div-float.cg");
+        const uint64_t words[]={
+            0xfa44070000000000ULL,0xf800094000000000ULL,
+            0x308008088f800001ULL,0x3880050081f40000ULL,0x10a4008600040f7cULL,
+        };
+        if (div1.empty() || !compile_oracle_fragment_profile(div1,"fp-div-float.cg",
+                248,0x00081005,2,0,0,words,5))
+            failures += fail("Cg scalar F32 division did not reproduce oracle profile");
+    }
+    {
         const std::string div2=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-div-float2.cg");
         const uint64_t words[]={
             0xfa44070000000000ULL,0xf800094000000000ULL,

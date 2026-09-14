@@ -346,12 +346,18 @@ bool decode_v32nmad_semantic(uint64_t word, V32NmadSemantic *i) {
 }
 
 bool encode_vcomp_rcp_f32(const VcompRcpF32Fields &f, uint64_t *word) {
-    if (!word || f.component>=4 || (f.source_odd && f.component>=2)) return false;
+    if (!word || f.component>=4 || (f.source_odd && f.component>=2) ||
+        (f.scalar && (f.source_odd || f.component>=2))) return false;
     static constexpr uint8_t kLaneLow[4]={0x01,0x02,0x84,0x88};
-    uint64_t encoded=0x308008008f800000ULL |
-        (static_cast<uint64_t>(f.source_pair)<<8) | kLaneLow[f.component];
-    if (f.source_odd) encoded|=0x80u;
-    if (f.component&1u) encoded|=uint64_t{1}<<35;
+    uint64_t encoded=0x308008008f800000ULL | (static_cast<uint64_t>(f.source_pair)<<8);
+    if (f.scalar) {
+        encoded|=0x01u;
+        if (f.component==1) encoded|=uint64_t{1}<<35;
+    } else {
+        encoded|=kLaneLow[f.component];
+        if (f.source_odd) encoded|=0x80u;
+        if (f.component&1u) encoded|=uint64_t{1}<<35;
+    }
     *word=encoded;
     return true;
 }
@@ -365,7 +371,9 @@ bool decode_vcomp_rcp_f32(uint64_t word, VcompRcpF32Fields *f) {
     const uint8_t low=static_cast<uint8_t>(word);
     uint8_t component=0xff;
     bool source_odd=false;
-    if (!odd && low==0x01) component=0;
+    bool scalar=false;
+    if (!odd && low==0x01) { component=0; scalar=true; }
+    else if (odd && low==0x01) { component=1; scalar=true; }
     else if (odd && low==0x02) component=1;
     else if (!odd && low==0x81) { component=0; source_odd=true; }
     else if (odd && low==0x82) { component=1; source_odd=true; }
@@ -375,6 +383,7 @@ bool decode_vcomp_rcp_f32(uint64_t word, VcompRcpF32Fields *f) {
     f->source_pair=static_cast<uint8_t>((word>>8)&0xffu);
     f->component=component;
     f->source_odd=source_odd;
+    f->scalar=scalar;
     return true;
 }
 
@@ -393,9 +402,24 @@ bool decode_vcomp_rcp_f32_semantic(uint64_t word, VcompRcpF32Semantic *i) {
     return true;
 }
 
+bool encode_vcomp_rcp_scalar_f32_semantic(const VcompRcpScalarF32Semantic &i, uint64_t *word) {
+    if (i.src.bank!=RegisterBank::PrimaryAttribute || i.src.num!=0 || i.component>=2) return false;
+    return encode_vcomp_rcp_f32({0,i.component,false,true},word);
+}
+
+bool decode_vcomp_rcp_scalar_f32_semantic(uint64_t word, VcompRcpScalarF32Semantic *i) {
+    if (!i) return false;
+    VcompRcpF32Fields f{};
+    if (!decode_vcomp_rcp_f32(word,&f) || !f.scalar || f.source_pair!=0 || f.component>=2) return false;
+    i->src={RegisterBank::PrimaryAttribute,0};
+    i->component=f.component;
+    return true;
+}
+
 bool encode_v16nmad_div_f32_semantic(const V16NmadDivF32Semantic &i, uint64_t *word) {
     if (!word) return false;
-    if (i.components==2) *word=0x10a4418600040f7cULL;
+    if (i.components==1) *word=0x10a4008600040f7cULL;
+    else if (i.components==2) *word=0x10a4418600040f7cULL;
     else if (i.components==3) *word=0x10a4438600040f7cULL;
     else if (i.components==4) *word=0x10a4478600040f7cULL;
     else return false;
@@ -404,7 +428,8 @@ bool encode_v16nmad_div_f32_semantic(const V16NmadDivF32Semantic &i, uint64_t *w
 
 bool decode_v16nmad_div_f32_semantic(uint64_t word, V16NmadDivF32Semantic *i) {
     if (!i) return false;
-    if (word==0x10a4418600040f7cULL) i->components=2;
+    if (word==0x10a4008600040f7cULL) i->components=1;
+    else if (word==0x10a4418600040f7cULL) i->components=2;
     else if (word==0x10a4438600040f7cULL) i->components=3;
     else if (word==0x10a4478600040f7cULL) i->components=4;
     else return false;
