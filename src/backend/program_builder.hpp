@@ -15,13 +15,12 @@ public:
     bool phase();
     bool nop();
     bool emit();
-    bool vmov(const usse::VmovSemantic &instruction);
-    bool vpck(const usse::VpckSemantic &instruction);
-    bool v32nmad(const usse::V32NmadSemantic &instruction);
-    bool vmad(const usse::VmadSemantic &instruction);
-    bool vtst(const usse::VtstSemantic &instruction);
-    bool vbw(const usse::VbwSemantic &instruction);
-    bool kill(usse::Predicate predicate);
+
+    template <typename Semantic>
+    bool instruction(const Semantic &instruction) {
+        uint64_t word = 0;
+        return append(usse::encode_semantic(instruction, &word), word);
+    }
 
     const std::vector<uint64_t> &words() const { return words_; }
     void clear() { words_.clear(); }

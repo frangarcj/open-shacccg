@@ -406,6 +406,14 @@ bool decode_vbw_semantic(uint64_t word, VbwSemantic *instruction);
 bool encode_kill_semantic(const KillSemantic &instruction, uint64_t *word);
 bool decode_kill_semantic(uint64_t word, KillSemantic *instruction);
 
+inline bool encode_semantic(const VmovSemantic &i, uint64_t *word) { return encode_vmov_semantic(i, word); }
+inline bool encode_semantic(const VpckSemantic &i, uint64_t *word) { return encode_vpck_semantic(i, word); }
+inline bool encode_semantic(const V32NmadSemantic &i, uint64_t *word) { return encode_v32nmad_semantic(i, word); }
+inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return encode_vmad_semantic(i, word); }
+inline bool encode_semantic(const VtstSemantic &i, uint64_t *word) { return encode_vtst_semantic(i, word); }
+inline bool encode_semantic(const VbwSemantic &i, uint64_t *word) { return encode_vbw_semantic(i, word); }
+inline bool encode_semantic(const KillSemantic &i, uint64_t *word) { return encode_kill_semantic(i, word); }
+
 // Strict convenience encoder: unsupported semantic instructions fail rather
 // than emitting guessed code.
 bool encode(const Instruction &instruction, uint64_t *word);

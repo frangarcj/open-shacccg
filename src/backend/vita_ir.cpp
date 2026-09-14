@@ -71,12 +71,12 @@ bool compile_vertex_ir(const VertexIr &ir, IrCompileResult &out) {
         mul.src1={RegisterBank::PrimaryAttribute,0}; mul.src2={RegisterBank::Special,1};
         mul.dest_mask=0xF; mul.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::One,SwizzleChannel::One}};
         mul.src2_swizzle=splat(SwizzleChannel::Y); mul.skip_invalid=true; mul.no_schedule=true;
-        if (!code.v32nmad(mul)) { out.error="failed to construct homogeneous position"; return false; }
+        if (!code.instruction(mul)) { out.error="failed to construct homogeneous position"; return false; }
         usse::VmovSemantic m{}; m.src={RegisterBank::Temp,60}; m.data_type=usse::DataType::F32; m.dest_mask=3; m.skip_invalid=true;
         m.dst={RegisterBank::Output,0}; m.swizzle=4;
-        if (!code.vmov(m)) { out.error="failed first position move"; return false; }
+        if (!code.instruction(m)) { out.error="failed first position move"; return false; }
         m.dst={RegisterBank::Output,1}; m.swizzle=11;
-        if (!code.vmov(m)) { out.error="failed second position move"; return false; }
+        if (!code.instruction(m)) { out.error="failed second position move"; return false; }
         if (!code.emit()) { out.error="failed to encode EMIT"; return false; }
 
         interface_block[0]=0x03; interface_block[16]=0x00; interface_block[17]=0x10; interface_block[18]=0x00; interface_block[19]=0x04;
@@ -94,20 +94,20 @@ bool compile_vertex_ir(const VertexIr &ir, IrCompileResult &out) {
 
         usse::VmovSemantic move{}; move.dst={RegisterBank::Output,2}; move.src={RegisterBank::PrimaryAttribute,2};
         move.data_type=usse::DataType::F32; move.dest_mask=3; move.swizzle=4; move.repeat_count=pass.components==4 ? 1 : 0; move.skip_invalid=true; move.no_schedule=true;
-        if (!code.vmov(move)) { out.error="failed varying copy"; return false; }
+        if (!code.instruction(move)) { out.error="failed varying copy"; return false; }
         usse::VpckSemantic p0{}; p0.dst={RegisterBank::Temp,124}; p0.src1={RegisterBank::PrimaryAttribute,0}; p0.src2={RegisterBank::PrimaryAttribute,1};
         p0.src_format=usse::PackFormat::F32; p0.dst_format=usse::PackFormat::F32; p0.dest_mask=7; p0.skip_invalid=true; p0.no_schedule=true;
-        if (!code.vpck(p0)) { out.error="failed position staging"; return false; }
+        if (!code.instruction(p0)) { out.error="failed position staging"; return false; }
         usse::VpckSemantic p1{}; p1.dst={RegisterBank::Temp,125}; p1.src1={RegisterBank::SecondaryAttribute,6}; p1.src2={RegisterBank::SecondaryAttribute,7};
         p1.src_format=usse::PackFormat::F32; p1.dst_format=usse::PackFormat::F32; p1.dest_mask=15; p1.skip_invalid=true; p1.no_schedule=true;
-        if (!code.vpck(p1)) { out.error="failed homogeneous staging"; return false; }
+        if (!code.instruction(p1)) { out.error="failed homogeneous staging"; return false; }
         const std::array<SwizzleChannel,4> lanes={SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W};
         for (size_t i=0;i<4;i++) {
             usse::VmadSemantic mad{}; mad.gpi0=0; mad.gpi1=1; mad.vec4=true; mad.repeat_mode=usse::RepeatMode::Slmsi; mad.skip_invalid=true;
             mad.src1_swizzle=identity(); mad.gpi1_swizzle=identity(); mad.gpi0_swizzle=splat(lanes[i==3?2:i]);
             if (i<2) { mad.dst={RegisterBank::Temp,61}; mad.src1={RegisterBank::SecondaryAttribute,uint8_t(i*2)}; mad.write_mask=15; mad.no_schedule=true; }
             else { mad.dst={RegisterBank::Output,uint8_t(i-2)}; mad.src1={RegisterBank::SecondaryAttribute,uint8_t(i+2)}; mad.write_mask=3; if(i==3) mad.gpi1_swizzle={{SwizzleChannel::Z,SwizzleChannel::W,SwizzleChannel::Z,SwizzleChannel::W}}; }
-            if (!code.vmad(mad)) { out.error="failed matrix multiply"; return false; }
+            if (!code.instruction(mad)) { out.error="failed matrix multiply"; return false; }
         }
         if (!code.emit()) { out.error="failed EMIT"; return false; }
         if (varying->semantic==IrVaryingSemantic::Color) {
@@ -167,7 +167,7 @@ bool compile_fragment_ir(const FragmentIr &ir, IrCompileResult &out) {
         move.dest_mask = 0x5;
         move.swizzle = 4;
         move.skip_invalid = true;
-        if (!primary.vmov(move)) { out.error = "failed to encode fragment color move"; return false; }
+        if (!primary.instruction(move)) { out.error = "failed to encode fragment color move"; return false; }
 
         usse::VpckSemantic pack{};
         pack.dst = {usse::RegisterBank::PrimaryAttribute, 0};
@@ -180,7 +180,7 @@ bool compile_fragment_ir(const FragmentIr &ir, IrCompileResult &out) {
         pack.skip_invalid = true;
         pack.no_schedule = false;
         pack.end = true;
-        if (!secondary.vpck(pack)) { out.error = "failed to encode fragment secondary VPCK"; return false; }
+        if (!secondary.instruction(pack)) { out.error = "failed to encode fragment secondary VPCK"; return false; }
 
         interface_block[10] = 1; interface_block[11] = 4; interface_block[16] = 4;
         containers = {{14,0,0,4},{19,0,4,2}};
@@ -200,7 +200,7 @@ bool compile_fragment_ir(const FragmentIr &ir, IrCompileResult &out) {
         pack.src_format=usse::PackFormat::F32; pack.dst_format=usse::PackFormat::F16;
         pack.dest_mask=0xF; pack.skip_invalid=true; pack.no_schedule=false;
         pack.components[0]=0; pack.components[1]=1; pack.components[2]=2; pack.components[3]=3;
-        if(!primary.vpck(pack)){out.error="failed to encode varying color VPCK";return false;}
+        if(!primary.instruction(pack)){out.error="failed to encode varying color VPCK";return false;}
         interface_block[10]=1; interface_block[11]=4; interface_block[12]=1; interface_block[16]=4;
         interface_block[20]=0x0f; interface_block[21]=0xa0; interface_block[22]=0xd0; interface_block[23]=0x0e;
         interface_block[28]=0x30;
@@ -275,7 +275,7 @@ bool compile_fragment_ir(const FragmentIr &ir, IrCompileResult &out) {
                 usse::VmovSemantic move{}; move.dst=dst; move.src=allocated[n.a].reg;
                 move.data_type=usse::DataType::F32; move.dest_mask=0xF; move.swizzle=0;
                 move.skip_invalid=true; move.no_schedule=false;
-                if(!primary.vmov(move)){out.error="failed to encode arithmetic scalar splat";return false;}
+                if(!primary.instruction(move)){out.error="failed to encode arithmetic scalar splat";return false;}
                 allocated[idx]={true,dst,4}; release_node(n.a); return true;
             }
             if (n.kind==FragmentExprKind::Neg || n.kind==FragmentExprKind::Abs) {
@@ -287,7 +287,7 @@ bool compile_fragment_ir(const FragmentIr &ir, IrCompileResult &out) {
                 op.dest_mask=0xF; op.src1_swizzle=identity(); op.src2_swizzle=identity();
                 op.src1_negative=(n.kind==FragmentExprKind::Neg); op.src1_absolute=(n.kind==FragmentExprKind::Abs);
                 op.skip_invalid=true; op.no_schedule=false;
-                if(!primary.v32nmad(op)){out.error="failed to encode arithmetic unary operation";return false;}
+                if(!primary.instruction(op)){out.error="failed to encode arithmetic unary operation";return false;}
                 allocated[idx]={true,dst,4}; release_node(n.a); return true;
             }
             if (!lower(n.a) || !lower(n.b)) return false;
@@ -306,7 +306,7 @@ bool compile_fragment_ir(const FragmentIr &ir, IrCompileResult &out) {
             case FragmentExprKind::Dot: op.op=usse::VectorOp::Dot; break;
             default: out.error="unsupported arithmetic expression node"; return false;
             }
-            if(!primary.v32nmad(op)){out.error="failed to encode generic arithmetic operation";return false;}
+            if(!primary.instruction(op)){out.error="failed to encode generic arithmetic operation";return false;}
             allocated[idx]={true,dst,static_cast<uint8_t>(n.kind==FragmentExprKind::Dot?1:4)};
             release_node(n.a); release_node(n.b); return true;
         };
@@ -317,7 +317,7 @@ bool compile_fragment_ir(const FragmentIr &ir, IrCompileResult &out) {
         outpack.dst={usse::RegisterBank::PrimaryAttribute,0}; outpack.src1=allocated[ir.root_expression].reg;
         outpack.src2={usse::RegisterBank::Immediate,0}; outpack.src_format=usse::PackFormat::F32; outpack.dst_format=usse::PackFormat::F16;
         outpack.dest_mask=0xF; outpack.skip_invalid=true; outpack.no_schedule=false;
-        if(!primary.vpck(outpack)){out.error="failed generic arithmetic output VPCK";return false;}
+        if(!primary.instruction(outpack)){out.error="failed generic arithmetic output VPCK";return false;}
 
         interface_block[10]=1; interface_block[11]=4; interface_block[12]=1; interface_block[16]=4;
         interface_block[20]=0x0f; interface_block[21]=0xa0; interface_block[22]=0xd0; interface_block[23]=0x0e;
@@ -345,13 +345,13 @@ bool compile_fragment_ir(const FragmentIr &ir, IrCompileResult &out) {
         stage.src_format=usse::PackFormat::F32; stage.dst_format=usse::PackFormat::F32;
         stage.dest_mask=0xF; stage.skip_invalid=true; stage.no_schedule=true;
         stage.components[0]=0; stage.components[1]=1; stage.components[2]=2; stage.components[3]=3;
-        if(!primary.vpck(stage)){out.error="failed texture-tint sample staging VPCK";return false;}
+        if(!primary.instruction(stage)){out.error="failed texture-tint sample staging VPCK";return false;}
         usse::V32NmadSemantic mul{};
         mul.op=usse::VectorOp::Mul; mul.dst={usse::RegisterBank::Temp,60};
         mul.src1={usse::RegisterBank::SecondaryAttribute,0}; mul.src2={usse::RegisterBank::Temp,60};
         mul.dest_mask=0xF; mul.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,usse::SwizzleChannel::Z,usse::SwizzleChannel::W}};
         mul.src2_swizzle=mul.src1_swizzle; mul.skip_invalid=true; mul.no_schedule=false;
-        if(!primary.v32nmad(mul)){out.error="failed texture-tint multiply";return false;}
+        if(!primary.instruction(mul)){out.error="failed texture-tint multiply";return false;}
         usse::VpckSemantic outpack{};
         outpack.dst={usse::RegisterBank::PrimaryAttribute,0};
         outpack.src1={usse::RegisterBank::Temp,60};
@@ -359,7 +359,7 @@ bool compile_fragment_ir(const FragmentIr &ir, IrCompileResult &out) {
         outpack.src_format=usse::PackFormat::F32; outpack.dst_format=usse::PackFormat::F16;
         outpack.dest_mask=0xF; outpack.skip_invalid=true; outpack.no_schedule=false;
         outpack.components[0]=0; outpack.components[1]=1; outpack.components[2]=2; outpack.components[3]=3;
-        if(!primary.vpck(outpack)){out.error="failed texture-tint output VPCK";return false;}
+        if(!primary.instruction(outpack)){out.error="failed texture-tint output VPCK";return false;}
         interface_block[10]=1; interface_block[11]=4; interface_block[12]=1; interface_block[14]=1; interface_block[16]=4;
         interface_block[20]=0x00; interface_block[21]=0xf9; interface_block[28]=0xc0;
         fragment_extension[0]=0x30;

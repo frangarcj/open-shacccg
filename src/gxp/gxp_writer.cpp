@@ -1,4 +1,5 @@
 #include "gxp/gxp_writer.hpp"
+#include "core/compact_layout.hpp"
 
 #include <cstring>
 #include <limits>
@@ -181,15 +182,20 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
     return l.physical_size != 0 && l.logical_size <= std::numeric_limits<uint32_t>::max();
 }
 
-template <typename T>
-void put(uint8_t *out, size_t off, T value) {
-    std::memcpy(out + off, &value, sizeof(value));
-}
-
 bool put_rel32(uint8_t *out, size_t field, size_t target) {
     if (target < field || target - field > std::numeric_limits<uint32_t>::max()) return false;
-    put<uint32_t>(out, field, static_cast<uint32_t>(target - field));
+    binary::store<uint32_t>(out, field, static_cast<uint32_t>(target - field));
     return true;
+}
+
+void write_header_fields(uint8_t *out, const ProgramImage &image) {
+#define VSC_GXP_FIELD(type, member, offset) \
+    binary::MemberField<type, &ProgramImage::member, offset>::write(out, 0, image);
+#define VSC_GXP_ARRAY_FIELD(type, member, index, offset) \
+    binary::ArrayField<type, &ProgramImage::member, index, offset>::write(out, 0, image);
+#include "gxp/header_fields.inc"
+#undef VSC_GXP_ARRAY_FIELD
+#undef VSC_GXP_FIELD
 }
 
 } // namespace
@@ -206,55 +212,32 @@ bool write_program(const ProgramImage &image, uint8_t *output, size_t capacity,
         return false;
 
     std::memset(output, 0, l.physical_size);
-    put<uint32_t>(output, kOffMagic, kMagic);
-    output[kOffMajor] = image.major_version;
-    output[kOffMinor] = image.minor_version;
-    put<uint16_t>(output, kOffSdk, image.sdk_version);
-    put<uint32_t>(output, kOffSize, static_cast<uint32_t>(l.logical_size));
-    put<uint32_t>(output, kOffBinaryGuid, image.binary_guid);
-    put<uint32_t>(output, kOffSourceGuid, image.source_guid);
+    binary::store<uint32_t>(output, kOffMagic, kMagic);
+    write_header_fields(output, image);
+    binary::store<uint32_t>(output, kOffSize, static_cast<uint32_t>(l.logical_size));
     uint32_t flags = image.program_flags & ~kFragmentFlag;
     if (image.type == ProgramType::Fragment) flags |= kFragmentFlag;
-    put<uint32_t>(output, kOffFlags, flags);
-    put<uint32_t>(output, kOffBufferFlags, image.buffer_flags);
-    put<uint32_t>(output, kOffTexunit0, image.texunit_flags[0]);
-    put<uint32_t>(output, kOffTexunit1, image.texunit_flags[1]);
-    put<uint32_t>(output, kOffParameterCount, static_cast<uint32_t>(image.parameter_count));
+    binary::store<uint32_t>(output, kOffFlags, flags);
     if (!put_rel32(output, kOffParameters, l.parameters_off) ||
         !put_rel32(output, kOffVaryings, l.interface_off)) return false;
 
-    put<uint16_t>(output, kOffPrimaryRegs, image.primary_register_count);
-    put<uint16_t>(output, kOffSecondaryRegs, image.secondary_register_count);
-    put<uint32_t>(output, kOffTemp1, image.temp_register_count);
-    put<uint16_t>(output, kOffTemp2, image.temp_register_count_phase2);
-    put<uint16_t>(output, kOffPhaseCount, image.primary_phase_count);
-    put<uint32_t>(output, kOffPrimaryInstrCount, static_cast<uint32_t>(image.primary_instruction_count));
     if (!put_rel32(output, kOffPrimaryProgram, l.primary_off)) return false;
-    put<uint32_t>(output, kOffSecondaryInstrCount, static_cast<uint32_t>(image.secondary_instruction_count));
     if (!put_rel32(output, kOffSecondaryProgram, l.secondary_off) ||
         !put_rel32(output, kOffSecondaryEnd, l.secondary_end)) return false;
 
-    put<uint32_t>(output, kOffScratchCount, image.scratch_buffer_count);
-    put<uint32_t>(output, kOffThreadCount, image.thread_buffer_count);
-    put<uint32_t>(output, kOffLiteralBufferCount, image.literal_buffer_count);
-    put<uint32_t>(output, kOffDataBufferCount, image.data_buffer_count);
-    put<uint32_t>(output, kOffTextureBufferCount, image.texture_buffer_count);
-    put<uint32_t>(output, kOffDefaultUniformCount, image.default_uniform_buffer_count);
     if (!put_rel32(output, kOffLiteralData, l.aux_off)) return false;
-    put<uint32_t>(output, kOffCompilerVersion, image.compiler_version_raw);
 
     // Auxiliary tables are intentionally unsupported in this first canonical
     // writer. Zero counts still receive in-range offsets, matching the robust
     // pattern used by known-good binaries.
-    put<uint32_t>(output, kOffLiteralsCount, 0);
+    binary::store<uint32_t>(output, kOffLiteralsCount, 0);
     if (!put_rel32(output, kOffLiterals, l.aux_off)) return false;
-    put<uint32_t>(output, kOffUniformBufferCount, 0);
+    binary::store<uint32_t>(output, kOffUniformBufferCount, 0);
     if (!put_rel32(output, kOffUniformBuffers, l.parameters_off)) return false;
-    put<uint32_t>(output, kOffDependentSamplerCount, 0);
+    binary::store<uint32_t>(output, kOffDependentSamplerCount, 0);
     if (!put_rel32(output, kOffDependentSamplers, l.aux_off)) return false;
-    put<uint32_t>(output, kOffTextureDependentSamplerCount, 0);
+    binary::store<uint32_t>(output, kOffTextureDependentSamplerCount, 0);
     if (!put_rel32(output, kOffTextureDependentSamplers, l.aux_off)) return false;
-    put<uint32_t>(output, kOffContainerCount, static_cast<uint32_t>(image.container_count));
     if (!put_rel32(output, kOffContainers, l.containers_off)) return false;
 
     if (image.interface_block)
@@ -272,10 +255,12 @@ bool write_program(const ProgramImage &image, uint8_t *output, size_t capacity,
     for (size_t i = 0; i < image.container_count; ++i) {
         const auto &c = image.containers[i];
         const size_t off = l.containers_off + i * kContainerSize;
-        put<uint16_t>(output, off + 0, c.container_index);
-        put<uint16_t>(output, off + 2, c.unknown);
-        put<uint16_t>(output, off + 4, c.base_sa_offset);
-        put<uint16_t>(output, off + 6, c.size_in_f32);
+        binary::write_fields<ParameterContainerDesc,
+            binary::MemberField<uint16_t, &ParameterContainerDesc::container_index, 0>,
+            binary::MemberField<uint16_t, &ParameterContainerDesc::unknown, 2>,
+            binary::MemberField<uint16_t, &ParameterContainerDesc::base_sa_offset, 4>,
+            binary::MemberField<uint16_t, &ParameterContainerDesc::size_in_f32, 6>
+        >(output, off, c);
     }
 
     size_t name_cursor = l.strings_off;
@@ -285,13 +270,15 @@ bool write_program(const ProgramImage &image, uint8_t *output, size_t capacity,
         const int64_t delta = static_cast<int64_t>(name_cursor) - static_cast<int64_t>(off);
         if (delta < std::numeric_limits<int32_t>::min() || delta > std::numeric_limits<int32_t>::max())
             return false;
-        put<int32_t>(output, off + 0, static_cast<int32_t>(delta));
-        output[off + 4] = static_cast<uint8_t>((p.type << 4) | p.category);
-        output[off + 5] = static_cast<uint8_t>((p.container_index << 4) | p.component_count);
-        output[off + 6] = p.semantic;
-        output[off + 7] = p.semantic_index;
-        put<uint32_t>(output, off + 8, p.array_size);
-        put<uint32_t>(output, off + 12, p.resource_index);
+        binary::store<int32_t>(output, off, static_cast<int32_t>(delta));
+        binary::write_fields<ParameterDesc,
+            binary::NibbleField<&ParameterDesc::category, &ParameterDesc::type, 4>,
+            binary::NibbleField<&ParameterDesc::component_count, &ParameterDesc::container_index, 5>,
+            binary::MemberField<uint8_t, &ParameterDesc::semantic, 6>,
+            binary::MemberField<uint8_t, &ParameterDesc::semantic_index, 7>,
+            binary::MemberField<uint32_t, &ParameterDesc::array_size, 8>,
+            binary::MemberField<uint32_t, &ParameterDesc::resource_index, 12>
+        >(output, off, p);
         const size_t len = std::strlen(p.name) + 1;
         std::memcpy(output + name_cursor, p.name, len);
         name_cursor += len;

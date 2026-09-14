@@ -180,11 +180,11 @@ Each codec has bit-perfect decode/encode round-trip tests against known-good
 Vita GXP machine words. Semantic names for register banks, numeric formats and
 swizzle enums remain intentionally unassigned until independently validated.
 
-The mechanical raw bit layouts are declared in `tools/usse_encodings.py` as
-64-bit patterns. Fixed `0`/`1` tokens generate matcher masks/expected values,
-`x` marks don't-care bits, and `name:width` declares a field. Running
-`python3 tools/gen_usse_raw.py` regenerates `src/usse/usse_raw.generated.inc`;
-host `ctest` checks that the generated file is not stale.
+Mechanical raw bit layouts now use C++17 compile-time descriptors in
+`src/usse/raw_encodings.hpp`. `BitField<&Struct::member, offset, width>` plus
+`Encoding<mask, expected, ...>` generates matching, field extraction, width
+validation and packing without generated source files or a Python build step.
+Only genuinely semantic restrictions remain handwritten.
 
 `tools/usse_fields.py <program.gxp>` prints the validated raw fields from a GXP
 so new corpus samples can immediately contribute differential evidence.
@@ -237,6 +237,20 @@ The backend now has a small `backend::ProgramBuilder` that appends only
 evidence-backed semantic USSE instructions (`PHAS`, `NOP`, `EMIT`, `VMOV`,
 `VPCK`, `V32NMAD`, `VMAD`, `VTST`, `VBW`, and `KILL`). Unsupported forms still
 fail instead of guessing instruction words.
+
+`ProgramBuilder` itself is type-driven: all operand-bearing families go through
+one `instruction<T>()` template and overload resolution selects the semantic
+USSE encoder. Adding another semantic instruction family therefore does not
+require adding another builder method.
+
+The backend follows the same compact-description rule above USSE. Machine IR
+operands are 4-byte tagged handles and instructions remain 16 bytes; one
+`machine_ops.inc` list generates both the opcode enum and operand-role table.
+Typed factories such as `physical<MachineType::U32>()` and
+`emit<MachineOpcode::Compare>()` keep call sites checked without expanding the
+runtime representation. GXP serialization similarly uses reusable member-field
+descriptors for scalar, array and packed-nibble wire fields; relative offsets
+and the few layout rules that cannot be derived stay explicit.
 
 As a full-path regression, `texture_v.gxp` from the MIT-licensed libvita2d
 corpus is reconstructed from structured GXP metadata plus semantic USSE

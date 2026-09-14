@@ -1,20 +1,9 @@
 #include "usse/usse.hpp"
+#include "usse/raw_encodings.hpp"
 
 namespace vsc::usse {
-namespace {
-uint64_t bits(uint64_t value, unsigned offset, unsigned width) {
-    return (value & ((uint64_t{1} << width) - 1)) << offset;
-}
-bool fits(uint64_t value, unsigned width) {
-    return value < (uint64_t{1} << width);
-}
-template <typename T>
-T field(uint64_t word, unsigned offset, unsigned width) {
-    return static_cast<T>((word >> offset) & ((uint64_t{1} << width) - 1));
-}
-} // namespace
 
-uint8_t major_opcode(uint64_t word) { return field<uint8_t>(word, 59, 5); }
+uint8_t major_opcode(uint64_t word) { return detail::extract<uint8_t>(word, 59, 5); }
 
 MajorClass classify_major(uint64_t word) {
     switch (major_opcode(word)) {
@@ -62,16 +51,16 @@ const char *major_class_name(MajorClass cls) {
 
 ControlClass classify_control(uint64_t word) {
     if (classify_major(word) != MajorClass::Control) return ControlClass::NotControl;
-    const uint8_t op2 = field<uint8_t>(word, 56, 3);
-    const uint8_t opcat = field<uint8_t>(word, 52, 2);
-    if (op2 == 0x2 && field<uint8_t>(word, 52, 3) == 0x4) return ControlClass::Phase;
-    if (field<uint8_t>(word, 54, 1) == 0 && opcat == 0 && field<uint8_t>(word, 38, 3) == 0x5)
+    const uint8_t op2 = detail::extract<uint8_t>(word, 56, 3);
+    const uint8_t opcat = detail::extract<uint8_t>(word, 52, 2);
+    if (op2 == 0x2 && detail::extract<uint8_t>(word, 52, 3) == 0x4) return ControlClass::Phase;
+    if (detail::extract<uint8_t>(word, 54, 1) == 0 && opcat == 0 && detail::extract<uint8_t>(word, 38, 3) == 0x5)
         return ControlClass::Nop;
     if (op2 == 0x3 && opcat == 0x2) return ControlClass::Emit;
     if (op2 == 0x4 && opcat == 0x2) return ControlClass::LoadImmediate;
-    if (op2 == 0x1 && opcat == 0x3 && field<uint16_t>(word,43,9) == 0 &&
-        field<uint16_t>(word,28,13) == 0x06f) return ControlClass::Kill;
-    if (field<uint8_t>(word, 54, 1) == 0 && opcat == 0) return ControlClass::Branch;
+    if (op2 == 0x1 && opcat == 0x3 && detail::extract<uint16_t>(word,43,9) == 0 &&
+        detail::extract<uint16_t>(word,28,13) == 0x06f) return ControlClass::Kill;
+    if (detail::extract<uint8_t>(word, 54, 1) == 0 && opcat == 0) return ControlClass::Branch;
     return ControlClass::Other;
 }
 
@@ -89,7 +78,27 @@ const char *control_class_name(ControlClass cls) {
     return "CONTROL-OTHER";
 }
 
-#include "usse/usse_raw.generated.inc"
+#define VSC_RAW_CODEC(name, encoding, fields_type) \
+    bool decode_##name(uint64_t word, fields_type *fields) { return detail::encoding::decode(word, fields); } \
+    bool encode_##name(const fields_type &fields, uint64_t *word) { return detail::encoding::encode(fields, word); }
+
+VSC_RAW_CODEC(vmov, VmovEncoding, VmovFields)
+VSC_RAW_CODEC(vpck, VpckEncoding, VpckFields)
+VSC_RAW_CODEC(v32nmad, V32NmadEncoding, V32NmadFields)
+VSC_RAW_CODEC(vmad, VmadEncoding, VmadFields)
+VSC_RAW_CODEC(vtst, VtstEncoding, VtstFields)
+VSC_RAW_CODEC(kill, KillEncoding, KillFields)
+
+#undef VSC_RAW_CODEC
+
+bool decode_vbw(uint64_t word, VbwFields *fields) {
+    if (!detail::VbwEncoding::decode(word, fields)) return false;
+    return fields->op1 >= 2 && fields->op1 <= 6;
+}
+
+bool encode_vbw(const VbwFields &fields, uint64_t *word) {
+    return fields.op1 >= 2 && fields.op1 <= 6 && detail::VbwEncoding::encode(fields, word);
+}
 
 bool encode_dest_bank(RegisterBank bank, uint8_t *selector, bool *extended) {
     if (!selector || !extended) return false;

@@ -13,11 +13,11 @@ bool append_compare_kill(vsc::backend::MachineProgram &program,
                          uint8_t rhs_register) {
     using namespace vsc;
     using namespace backend;
-    const auto lhs = program.physical(usse::RegisterBank::PrimaryAttribute, 0, MachineType::U32);
-    const auto rhs = program.physical(usse::RegisterBank::SecondaryAttribute, rhs_register, MachineType::U32);
-    return program.append(MachineOpcode::Compare, static_cast<uint8_t>(usse::CompareOp::Equal),
-                          predicate, lhs, rhs) &&
-        program.append(MachineOpcode::Kill, 0, {}, predicate);
+    const auto lhs = program.physical<MachineType::U32>(usse::RegisterBank::PrimaryAttribute, 0);
+    const auto rhs = program.physical<MachineType::U32>(usse::RegisterBank::SecondaryAttribute, rhs_register);
+    return program.emit<MachineOpcode::Compare>(static_cast<uint8_t>(usse::CompareOp::Equal),
+                                                predicate, lhs, rhs) &&
+        program.emit<MachineOpcode::Kill>(0, {}, predicate);
 }
 } // namespace
 
@@ -54,13 +54,14 @@ int test_machine_ir() {
         MachineProgram program;
         const auto first = program.make_predicate();
         const auto second = program.make_predicate();
-        const auto lhs = program.physical(usse::RegisterBank::PrimaryAttribute, 0, MachineType::U32);
-        const auto rhs8 = program.physical(usse::RegisterBank::SecondaryAttribute, 8, MachineType::U32);
-        const auto rhs6 = program.physical(usse::RegisterBank::SecondaryAttribute, 6, MachineType::U32);
-        if (!program.append(MachineOpcode::Compare, static_cast<uint8_t>(usse::CompareOp::Equal),
-                            first, lhs, rhs8) ||
-            !program.append(MachineOpcode::Compare, static_cast<uint8_t>(usse::CompareOp::Equal),
-                            second, lhs, rhs6, MachineOperand::virtual_predicate(first.id(), true)))
+        const auto lhs = program.physical<MachineType::U32>(usse::RegisterBank::PrimaryAttribute, 0);
+        const auto rhs8 = program.physical<MachineType::U32>(usse::RegisterBank::SecondaryAttribute, 8);
+        const auto rhs6 = program.physical<MachineType::U32>(usse::RegisterBank::SecondaryAttribute, 6);
+        if (!program.emit<MachineOpcode::Compare>(static_cast<uint8_t>(usse::CompareOp::Equal),
+                                                  first, lhs, rhs8) ||
+            !program.emit<MachineOpcode::Compare>(static_cast<uint8_t>(usse::CompareOp::Equal),
+                                                  second, lhs, rhs6,
+                                                  MachineOperand::virtual_predicate(first.id(), true)))
             failures += fail("could not construct predicated compare chain");
         MachineCompileResult result;
         if (!compile_machine_program(program, result)) {
@@ -97,15 +98,16 @@ int test_machine_ir() {
         MachineOperand predicates[3] = {
             program.make_predicate(), program.make_predicate(), program.make_predicate()
         };
-        const auto lhs = program.physical(usse::RegisterBank::PrimaryAttribute, 0, MachineType::U32);
+        const auto lhs = program.physical<MachineType::U32>(usse::RegisterBank::PrimaryAttribute, 0);
         for (uint8_t i = 0; i < 3; ++i) {
-            const auto rhs = program.physical(usse::RegisterBank::SecondaryAttribute, static_cast<uint8_t>(6 + i), MachineType::U32);
-            if (!program.append(MachineOpcode::Compare, static_cast<uint8_t>(usse::CompareOp::Equal),
-                                predicates[i], lhs, rhs))
+            const auto rhs = program.physical<MachineType::U32>(usse::RegisterBank::SecondaryAttribute,
+                                                                 static_cast<uint8_t>(6 + i));
+            if (!program.emit<MachineOpcode::Compare>(static_cast<uint8_t>(usse::CompareOp::Equal),
+                                                       predicates[i], lhs, rhs))
                 failures += fail("could not construct overlapping predicate definition");
         }
         for (const auto predicate : predicates)
-            if (!program.append(MachineOpcode::Kill, 0, {}, predicate))
+            if (!program.emit<MachineOpcode::Kill>(0, {}, predicate))
                 failures += fail("could not construct overlapping predicate use");
 
         MachineCompileResult result;

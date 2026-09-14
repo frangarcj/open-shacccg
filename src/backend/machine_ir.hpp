@@ -46,8 +46,10 @@ struct MachineOperand {
 static_assert(sizeof(MachineOperand) == 4, "machine operands must stay compact");
 
 enum class MachineOpcode : uint8_t {
-    Compare,
-    Kill,
+#define VSC_MACHINE_OP(name, label, dst, src0, src1, predicates) name,
+#include "backend/machine_ops.inc"
+#undef VSC_MACHINE_OP
+    Count,
 };
 
 // Generic 16-byte instruction. `subop` is opcode-specific (for example
@@ -71,13 +73,29 @@ static_assert(sizeof(MachineInstruction) == 16, "machine instructions must stay 
 class MachineProgram {
 public:
     MachineOperand make_value(MachineType type);
+    template <MachineType Type>
+    MachineOperand make_value() { return make_value(Type); }
+
     MachineOperand make_predicate(bool inverted = false);
     MachineOperand physical(usse::RegisterBank bank, uint8_t num, MachineType type) const;
+    template <MachineType Type>
+    MachineOperand physical(usse::RegisterBank bank, uint8_t num) const {
+        return physical(bank, num, Type);
+    }
+
     MachineOperand literal_u32(uint32_t value);
 
     bool append(MachineOpcode opcode, uint8_t subop = 0,
                 MachineOperand dst = {}, MachineOperand src0 = {}, MachineOperand src1 = {},
                 MachineOperand guard = {});
+
+    template <MachineOpcode Opcode>
+    bool emit(uint8_t subop = 0,
+              MachineOperand dst = {}, MachineOperand src0 = {}, MachineOperand src1 = {},
+              MachineOperand guard = {}) {
+        static_assert(Opcode < MachineOpcode::Count, "invalid machine opcode");
+        return append(Opcode, subop, dst, src0, src1, guard);
+    }
 
     const std::vector<MachineInstruction> &instructions() const { return instructions_; }
     const std::vector<uint32_t> &literals() const { return literals_; }

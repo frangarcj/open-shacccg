@@ -36,9 +36,12 @@ struct OpcodeDesc {
 };
 
 constexpr OpcodeDesc kOpcodeDesc[] = {
-    {"compare", {OperandRole::PredicateDef, OperandRole::ValueUse, OperandRole::ValueUse}, 0x0f},
-    {"kill",    {OperandRole::None,         OperandRole::PredicateUse, OperandRole::None}, 0x03},
+#define VSC_MACHINE_OP(name, label, dst, src0, src1, predicates) \
+    {label, {OperandRole::dst, OperandRole::src0, OperandRole::src1}, predicates},
+#include "backend/machine_ops.inc"
+#undef VSC_MACHINE_OP
 };
+static_assert(std::size(kOpcodeDesc) == static_cast<size_t>(MachineOpcode::Count));
 
 const OpcodeDesc *descriptor(MachineOpcode opcode) {
     const auto index = static_cast<size_t>(opcode);
@@ -341,7 +344,7 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             compare.predicate = guard;
             compare.op = static_cast<usse::CompareOp>(instruction.subop());
             compare.predicate_destination = out.predicate_registers[instruction.dst.id()];
-            if (!builder.vtst(compare)) { out.error = "failed to encode machine compare"; return false; }
+            if (!builder.instruction(compare)) { out.error = "failed to encode machine compare"; return false; }
             break;
         }
         case MachineOpcode::Kill: {
@@ -354,9 +357,14 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 out.error = "guarded kill is not in the validated machine subset";
                 return false;
             }
-            if (!builder.kill(predicate)) { out.error = "failed to encode machine kill"; return false; }
+            usse::KillSemantic kill{};
+            kill.predicate = predicate;
+            if (!builder.instruction(kill)) { out.error = "failed to encode machine kill"; return false; }
             break;
         }
+        case MachineOpcode::Count:
+            out.error = "invalid machine opcode sentinel";
+            return false;
         }
     }
     out.words = builder.words();

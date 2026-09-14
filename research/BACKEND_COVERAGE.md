@@ -67,25 +67,28 @@ Exact external trace anchors used by tests include:
 
 The semantic KILL encoder emits zero in don't-care fields rather than reproducing unrelated payload bits from a captured shader.
 
-## Declarative raw codec generation
+## Compact declarative backend rules
 
-Raw field packing is now generated from a project-owned compact encoding spec
-instead of being repeated by hand in `src/usse/usse.cpp`.
+Mechanical representation is now kept inside C++ and shared through small
+compile-time descriptors instead of external code generation.
 
-- `tools/usse_encodings.py` is the source of truth for mechanical bit layouts.
-- Patterns are exactly 64 bits from MSB to LSB.
-- binary `0`/`1` tokens are fixed opcode bits and produce `mask`/`expected`;
-- `x` tokens are ignored/don't-care bits and therefore do not enter the mask;
-- `field_name:width` tokens generate extraction, width validation and packing;
-- optional field constraints cover encodings such as the multi-major VBW family;
-- `tools/gen_usse_raw.py --check` verifies that the checked-in generated file is current.
+- `src/usse/compact_encoding.hpp` implements generic `BitField<>` and
+  `Encoding<>` templates for 64-bit instruction matching/packing.
+- `src/usse/raw_encodings.hpp` is the sole raw-USSE layout description for the
+  supported families; no Python generator or generated `.inc` is required.
+- `src/backend/machine_ops.inc` is the sole Machine IR opcode/role list and is
+  included to generate both enum values and runtime descriptors.
+- Machine operands stay 4 bytes and instructions stay 16 bytes; typed template
+  factories improve construction without changing storage.
+- `ProgramBuilder::instruction<T>()` dispatches semantic encoders by type, so
+  the builder itself does not grow one method per USSE family.
+- `src/core/compact_layout.hpp` provides reusable member/array/nibble field
+  writers for GXP wire metadata. Derived relative offsets remain explicit.
 
-The generated output is `src/usse/usse_raw.generated.inc`. Semantic meaning is
-deliberately not generated: register-bank mappings, compare operations,
-immediate representation, predicates and fail-closed restrictions remain in
-handwritten project code. This mirrors the useful separation in compact ISA
-decoders such as Dynarmic (declarative match layout versus semantic visitor)
-without importing Vita3K's GPL implementation.
+The design rule is: derive masks, widths, roles, wire offsets and trivial
+dispatch mechanically; keep semantic decisions, hardware constraints and
+fail-closed policy handwritten. This preserves the useful separation found in
+compact ISA decoders without importing Vita3K's GPL implementation.
 
 ## Next backend order
 

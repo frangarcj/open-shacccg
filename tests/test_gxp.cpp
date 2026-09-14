@@ -258,7 +258,7 @@ int test_gxp_writer() {
         move.swizzle = 4;
         move.skip_invalid = true;
         move.no_schedule = true;
-        if (!code.vmov(move)) failures += fail("texture_v VMOV assembly failed");
+        if (!code.instruction(move)) failures += fail("texture_v VMOV assembly failed");
 
         VpckSemantic p0{};
         p0.dst = {RegisterBank::Temp, 124};
@@ -269,7 +269,7 @@ int test_gxp_writer() {
         p0.dest_mask = 7;
         p0.skip_invalid = true;
         p0.no_schedule = true;
-        if (!code.vpck(p0)) failures += fail("texture_v first VPCK assembly failed");
+        if (!code.instruction(p0)) failures += fail("texture_v first VPCK assembly failed");
 
         VpckSemantic p1{};
         p1.dst = {RegisterBank::Temp, 125};
@@ -280,7 +280,7 @@ int test_gxp_writer() {
         p1.dest_mask = 15;
         p1.skip_invalid = true;
         p1.no_schedule = true;
-        if (!code.vpck(p1)) failures += fail("texture_v second VPCK assembly failed");
+        if (!code.instruction(p1)) failures += fail("texture_v second VPCK assembly failed");
 
         VmadSemantic mad[4]{};
         for (auto &m : mad) {
@@ -311,7 +311,7 @@ int test_gxp_writer() {
         mad[3].src1.num = 5;
         mad[3].gpi1_swizzle = {{SwizzleChannel::Z, SwizzleChannel::W, SwizzleChannel::Z, SwizzleChannel::W}};
         for (const auto &m : mad)
-            if (!code.vmad(m)) failures += fail("texture_v VMAD assembly failed");
+            if (!code.instruction(m)) failures += fail("texture_v VMAD assembly failed");
         if (!code.emit()) failures += fail("texture_v EMIT assembly failed");
 
         const uint8_t texture_interface[32] = {

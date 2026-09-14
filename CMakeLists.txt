@@ -58,7 +58,6 @@ endif()
 
 if(OPENSHACCG_BUILD_TESTS AND NOT OPENSHACCG_BUILD_VITA_STATIC)
     enable_testing()
-    find_package(Python3 COMPONENTS Interpreter QUIET)
     add_executable(openshacccg_tests
         tests/test_main.cpp
         tests/test_abi.cpp
@@ -72,10 +71,4 @@ if(OPENSHACCG_BUILD_TESTS AND NOT OPENSHACCG_BUILD_VITA_STATIC)
     target_include_directories(openshacccg_tests PRIVATE src)
     target_compile_definitions(openshacccg_tests PRIVATE OPENSHACCG_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     add_test(NAME openshacccg_tests COMMAND openshacccg_tests)
-    if(Python3_Interpreter_FOUND)
-        add_test(
-            NAME usse_codegen_check
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gen_usse_raw.py --check
-        )
-    endif()
 endif()
