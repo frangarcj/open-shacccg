@@ -384,6 +384,39 @@ int test_gxp_writer() {
         }
     }
 
+    {
+        // Two-word fragment secondary programs start at interface+20; the
+        // second qword extends four bytes beyond the interface and primary code
+        // resumes at the next 8-byte boundary. Scalar S32 bitwise probes anchor
+        // this layout independently of clear_f's one-word secondary stream.
+        const uint64_t secondary2[]={0x5080000aa0000080ULL,0x40850946a0000000ULL};
+        ProgramImage image2{};
+        image2.type=ProgramType::Fragment;
+        image2.interface_block=interface_block;
+        image2.interface_block_size=sizeof(interface_block);
+        image2.secondary_instructions=secondary2;
+        image2.secondary_instruction_count=2;
+        image2.primary_instructions=primary;
+        image2.primary_instruction_count=2;
+        const size_t need=required_size(image2);
+        std::vector<uint8_t> bytes(need);
+        if (!need || !write_program(image2,bytes.data(),bytes.size())) {
+            failures += fail("two-word fragment secondary layout was rejected");
+        } else {
+            auto get_u32=[&](size_t off) {
+                uint32_t value=0;
+                std::memcpy(&value,bytes.data()+off,sizeof(value));
+                return value;
+            };
+            const size_t secondary_off=0x48u+get_u32(0x48);
+            const size_t secondary_end=0x4cu+get_u32(0x4c);
+            const size_t primary_off=0x40u+get_u32(0x40);
+            if (secondary_off!=0xac || secondary_end!=0xbc || primary_off!=0xc0 ||
+                std::memcmp(bytes.data()+secondary_off,secondary2,sizeof(secondary2))!=0)
+                failures += fail("two-word fragment secondary anchors do not match oracle layout");
+        }
+    }
+
 
     // Full independent texture_v reconstruction. Every operand-bearing USSE
     // instruction is assembled from semantic operands, then serialized from

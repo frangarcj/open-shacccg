@@ -1,0 +1,1 @@
+uniform int x; int main() : COLOR0 { return x >> 3; }

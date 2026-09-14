@@ -303,6 +303,46 @@ bool compile_oracle_vertex_profile(const std::string &source, const char *name,
     vsc_destroy_result(&request.allocator,&result);
     return ok;
 }
+
+bool compile_oracle_s32_profile(const std::string &source, const char *name,
+                                uint32_t expected_size, uint32_t expected_params,
+                                const uint64_t *secondary_words, size_t secondary_count) {
+    VscCompileRequest request{};
+    request.source_name=name;
+    request.source=source.data();
+    request.source_size=source.size();
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_FRAGMENT;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+    if (ok) {
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        const uint64_t primary_words[]={0xfa44070000000000ULL,0x5081000ae0000000ULL};
+        ok=view.valid() && view.logical_size()==expected_size && view.sdk_version()==0x0165 &&
+            view.flags()==0x00080001 && view.primary_register_count()==1 &&
+            view.secondary_register_count()==2 && view.parameter_count()==expected_params &&
+            view.primary_instruction_count()==2 && view.secondary_instruction_count()==secondary_count;
+        for (uint32_t i=0;ok && i<expected_params;++i) {
+            vsc::gxp::ParameterView parameter{};
+            const char expected_name=static_cast<char>('x'+i);
+            ok=view.parameter(i,parameter) && parameter.name.size()==1 && parameter.name[0]==expected_name &&
+                parameter.category==1 && parameter.type==4 && parameter.component_count==1 &&
+                parameter.container_index==14 && parameter.resource_index==i;
+        }
+        const auto primary=view.primary_program();
+        const auto secondary=view.secondary_program();
+        if (ok) ok=primary.size==sizeof(primary_words) &&
+            std::memcmp(primary.data,primary_words,sizeof(primary_words))==0 &&
+            secondary.size==secondary_count*sizeof(uint64_t) &&
+            std::memcmp(secondary.data,secondary_words,secondary.size)==0;
+    }
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: %s S32 diagnostic=%s\n",name,
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
 #endif
 #endif
 } // namespace
@@ -504,6 +544,35 @@ int test_cg_frontend() {
         if (source.empty() || !compile_oracle_fragment_profile(source,"fp-div-float4.cg",
                 272,0x00081005,8,0,0,words,8))
             failures += fail("Cg F32x4 division did not reproduce oracle profile");
+    }
+    {
+        struct S32Probe {
+            const char *name;
+            uint32_t logical_size;
+            uint32_t params;
+            uint64_t operation;
+            bool has_operation;
+        };
+        const S32Probe probes[]={
+            {"fp-s32-uniform-pass",226,1,0,false},
+            {"fp-s32-uniform-or",252,2,0x5080000aa0000080ULL,true},
+            {"fp-s32-uniform-xor",234,1,0x58810002a0090034ULL,true},
+            {"fp-s32-uniform-and",234,1,0x50810002a000407fULL,true},
+            {"fp-s32-uniform-shl",234,1,0x60810002a0000003ULL,true},
+            {"fp-s32-uniform-shr",234,1,0x6881000aa0000003ULL,true},
+        };
+        for (const auto &probe:probes) {
+            const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/"+probe.name+".cg");
+            const uint64_t secondary_pass[]={0x40850946a0000000ULL};
+            const uint64_t secondary_op[]={probe.operation,0x40850946a0000000ULL};
+            const uint64_t *secondary=probe.has_operation ? secondary_op : secondary_pass;
+            const size_t count=probe.has_operation ? 2 : 1;
+            if (source.empty() || !compile_oracle_s32_profile(source,probe.name,probe.logical_size,
+                    probe.params,secondary,count)) {
+                std::fprintf(stderr,"test_cg_frontend: scalar S32 probe failed: %s\n",probe.name);
+                ++failures;
+            }
+        }
     }
 #endif
     return failures;

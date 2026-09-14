@@ -574,6 +574,74 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
     return true;
 }
 
+bool compile_fragment_s32_machine(const MachineProgram &primary, const MachineProgram &secondary,
+                                  const std::vector<IrUniformS32> &uniforms,
+                                  uint32_t binary_guid, uint32_t source_guid,
+                                  IrCompileResult &out) {
+    out={};
+    if (uniforms.empty() || uniforms.size()>2) {
+        out.error="scalar S32 fragment profile requires one or two uniforms";
+        return false;
+    }
+    std::vector<gxp::ParameterDesc> parameters;
+    parameters.reserve(uniforms.size());
+    for (size_t i=0;i<uniforms.size();++i) {
+        if (uniforms[i].name.empty() || uniforms[i].resource_index!=i) {
+            out.error="scalar S32 uniforms must be named and contiguous from resource 0";
+            return false;
+        }
+        parameters.push_back({uniforms[i].name.c_str(),1,4,1,14,0,0,1,uniforms[i].resource_index});
+    }
+
+    MachineCompileResult primary_compiled,secondary_compiled;
+    if (!compile_words(primary,primary_compiled,out,"S32 fragment primary Machine IR lowering failed") ||
+        !compile_words(secondary,secondary_compiled,out,"S32 fragment secondary Machine IR lowering failed"))
+        return false;
+    if (primary_compiled.words.size()!=2 || secondary_compiled.words.empty() || secondary_compiled.words.size()>2) {
+        out.error="scalar S32 profile is outside the oracle-validated primary/secondary shape";
+        return false;
+    }
+
+    uint8_t interface_block[32]{};
+    interface_block[10]=1;
+    interface_block[11]=4;
+    interface_block[16]=4;
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,2}};
+
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Fragment;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00080000;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=1;
+    image.secondary_register_count=2;
+    image.primary_phase_count=1;
+    image.default_uniform_buffer_count=2;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.secondary_instructions=secondary_compiled.words.data();
+    image.secondary_instruction_count=secondary_compiled.words.size();
+    image.primary_instructions=primary_compiled.words.data();
+    image.primary_instruction_count=primary_compiled.words.size();
+    image.containers=containers;
+    image.container_count=1;
+    image.parameters=parameters.data();
+    image.parameter_count=parameters.size();
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected scalar S32 Machine profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear();
+        out.error="GXP writer failed for scalar S32 Machine profile";
+        return false;
+    }
+    return true;
+}
+
 bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
                                          const std::vector<IrUniformVec4> &uniforms,
                                          uint8_t float_input_count,

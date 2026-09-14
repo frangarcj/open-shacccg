@@ -199,6 +199,7 @@ public:
     }
 
     MachineOperand literal_u32(uint32_t value);
+    MachineOperand literal_s32(int32_t value);
     MachineOperand pair(MachineOperand first, MachineOperand second) const;
     MachineOperand make_label();
     bool bind_label(MachineOperand label);

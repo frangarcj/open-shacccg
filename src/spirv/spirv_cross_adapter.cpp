@@ -755,8 +755,40 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 }
                 values[args[1]] = dst;
             } else {
+                usse::BitwiseOp bitwise{};
                 usse::CompareOp compare{};
-                if (op==spv::OpSLessThan) {
+                if (map_bitwise(op,bitwise)) {
+                    if (count!=5) { error="invalid scalar integer bitwise instruction"; return false; }
+                    const auto result_type=typed_type(compiler.get_type(args[0]));
+                    if (result_type!=backend::TypedType::S32 && result_type!=backend::TypedType::U32) {
+                        error="bitwise result is outside the validated scalar U32/S32 subset";
+                        return false;
+                    }
+                    auto resolve_integer=[&](uint32_t id, backend::TypedValue &value) -> bool {
+                        if (auto it=values.find(id); it!=values.end() && it->second.type()==result_type) {
+                            value=it->second;
+                            return true;
+                        }
+                        const auto constant=constants.find(id);
+                        if (constant==constants.end()) return false;
+                        value=result_type==backend::TypedType::S32 ?
+                            program.literal_s32(static_cast<int32_t>(constant->second)) :
+                            program.literal_u32(constant->second);
+                        return value.kind()!=backend::TypedValueKind::None;
+                    };
+                    backend::TypedValue lhs{},rhs{};
+                    if (!resolve_integer(args[2],lhs) || !resolve_integer(args[3],rhs)) {
+                        error="integer bitwise operands are unresolved or mismatched";
+                        return false;
+                    }
+                    const auto dst=program.make_value(result_type);
+                    if (dst.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::Bitwise>(static_cast<uint8_t>(bitwise),dst,lhs,rhs)) {
+                        error="failed to emit Typed integer bitwise operation";
+                        return false;
+                    }
+                    values[args[1]]=dst;
+                } else if (op==spv::OpSLessThan) {
                     if (count!=5) { error="invalid signed integer compare instruction"; return false; }
                     const auto lhs=values.find(args[2]);
                     const auto rhs=values.find(args[3]);

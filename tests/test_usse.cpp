@@ -529,6 +529,63 @@ int test_usse() {
         bw_dec.immediate!=0x00ff0000u)
         failures += fail("semantic VBW rotated immediate roundtrip mismatch");
 
+    // Scalar S32 uniform profiles isolate VBW from attribute conversion. These
+    // words are emitted by Sony 1.6.5 for the clean integer oracle probes.
+    struct S32BitwiseCase {
+        BitwiseOp op;
+        uint64_t word;
+        RegisterRef src1;
+        RegisterRef src2;
+        bool immediate;
+        uint32_t imm;
+    };
+    const S32BitwiseCase s32_cases[] = {
+        {BitwiseOp::Or,                  0x5081000ae0000000ULL,{RegisterBank::SecondaryAttribute,0},{},true,0},
+        {BitwiseOp::Or,                  0x5080000aa0000080ULL,{RegisterBank::PrimaryAttribute,1},{RegisterBank::PrimaryAttribute,0},false,0},
+        {BitwiseOp::Xor,                 0x58810002a0090034ULL,{RegisterBank::PrimaryAttribute,0},{},true,4660},
+        {BitwiseOp::And,                 0x50810002a000407fULL,{RegisterBank::PrimaryAttribute,0},{},true,255},
+        {BitwiseOp::ShiftLeft,           0x60810002a0000003ULL,{RegisterBank::PrimaryAttribute,0},{},true,3},
+        {BitwiseOp::ArithmeticShiftRight,0x6881000aa0000003ULL,{RegisterBank::PrimaryAttribute,0},{},true,3},
+    };
+    for (const auto &c:s32_cases) {
+        VbwSemantic op{};
+        op.op=c.op;
+        op.dst={RegisterBank::PrimaryAttribute,0};
+        op.src1=c.src1;
+        op.src2=c.src2;
+        op.src2_is_immediate=c.immediate;
+        op.immediate=c.imm;
+        uint64_t word=0;
+        VbwSemantic decoded{};
+        if (!encode_vbw_semantic(op,&word) || word!=c.word ||
+            !decode_vbw_semantic(c.word,&decoded) || decoded.op!=c.op ||
+            decoded.dst.bank!=RegisterBank::PrimaryAttribute || decoded.dst.num!=0 ||
+            decoded.src1.bank!=c.src1.bank || decoded.src1.num!=c.src1.num ||
+            decoded.src2_is_immediate!=c.immediate ||
+            (c.immediate ? decoded.immediate!=c.imm :
+                (decoded.src2.bank!=c.src2.bank || decoded.src2.num!=c.src2.num)))
+            failures += fail("oracle scalar S32 VBW semantic mismatch");
+    }
+
+    VpckSemantic s32_color{};
+    s32_color.dst={RegisterBank::PrimaryAttribute,0};
+    s32_color.src1={RegisterBank::PrimaryAttribute,0};
+    s32_color.src2={RegisterBank::Immediate,0};
+    s32_color.src_format=PackFormat::S16;
+    s32_color.dst_format=PackFormat::F16;
+    s32_color.dest_mask=1;
+    s32_color.end=true;
+    s32_color.no_schedule=false;
+    uint64_t s32_color_word=0;
+    VpckSemantic s32_color_dec{};
+    if (!encode_vpck_semantic(s32_color,&s32_color_word) || s32_color_word!=0x40850946a0000000ULL ||
+        !decode_vpck_semantic(s32_color_word,&s32_color_dec) ||
+        s32_color_dec.src_format!=PackFormat::S16 || s32_color_dec.dst_format!=PackFormat::F16 ||
+        s32_color_dec.dst.bank!=RegisterBank::PrimaryAttribute || s32_color_dec.dst.num!=0 ||
+        s32_color_dec.src1.bank!=RegisterBank::PrimaryAttribute ||
+        s32_color_dec.src2.bank!=RegisterBank::Immediate || !s32_color_dec.end)
+        failures += fail("oracle scalar S32 COLOR VPCK mismatch");
+
     KillSemantic kill{};
     kill.predicate=Predicate::P1;
     uint64_t kill_word=0;

@@ -94,8 +94,12 @@ MachineOperand lower_value(const TypedProgram &typed, const TypedValue &value,
     if (value.kind() == TypedValueKind::Value)
         return value.id() < values.size() ? values[value.id()] : MachineOperand{};
     if (value.kind() != TypedValueKind::Literal || value.id() >= typed.literals().size()) return {};
-    if (literals[value.id()].kind() == MachineOperandKind::None)
-        literals[value.id()] = machine.literal_u32(typed.literals()[value.id()]);
+    if (literals[value.id()].kind() == MachineOperandKind::None) {
+        if (value.type()==TypedType::U32)
+            literals[value.id()] = machine.literal_u32(typed.literals()[value.id()]);
+        else if (value.type()==TypedType::S32)
+            literals[value.id()] = machine.literal_s32(static_cast<int32_t>(typed.literals()[value.id()]));
+    }
     return literals[value.id()];
 }
 
@@ -676,12 +680,14 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             break;
         }
         case TypedOpcode::Bitwise: {
-            if (instruction.dst.type() != TypedType::U32 || instruction.src0.type() != TypedType::U32 ||
-                instruction.src1.type() != TypedType::U32 ||
+            const bool integer=(instruction.dst.type()==TypedType::U32 || instruction.dst.type()==TypedType::S32) &&
+                instruction.src0.type()==instruction.dst.type() && instruction.src1.type()==instruction.dst.type();
+            if (!integer ||
                 instruction.subop() > static_cast<uint8_t>(usse::BitwiseOp::ArithmeticShiftRight)) {
-                error = "typed bitwise currently requires U32 operands"; return false;
+                error = "typed bitwise currently requires matching scalar U32/S32 operands"; return false;
             }
-            const auto dst = machine.make_value<MachineType::U32>();
+            const MachineType machine_integer=instruction.dst.type()==TypedType::S32 ? MachineType::S32 : MachineType::U32;
+            const auto dst = machine.make_value(machine_integer);
             const auto src0 = lower_value(typed, instruction.src0, values, literals, machine);
             const auto src1 = lower_value(typed, instruction.src1, values, literals, machine);
             if (dst.kind() == MachineOperandKind::None || src0.kind() == MachineOperandKind::None || src1.kind() == MachineOperandKind::None ||
@@ -689,7 +695,7 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 error = "failed to lower typed bitwise operation"; return false;
             }
             values[instruction.dst.id()] = dst;
-            value_types[instruction.dst.id()] = TypedType::U32;
+            value_types[instruction.dst.id()] = instruction.dst.type();
             value_defined[instruction.dst.id()] = true;
             break;
         }
@@ -1026,6 +1032,106 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     }
     if (!store) { out.error = "typed fragment shader has no output store"; return false; }
     const TypedValue root = store->src0;
+
+    if (root.type()==TypedType::S32) {
+        if (!inputs.empty() || !fragment_uniforms.empty() || !fragment_samplers.empty() ||
+            fragment_s32_uniforms.empty() || fragment_s32_uniforms.size()>2 ||
+            store->aux>=resources.size() || resources[store->aux].kind!=TypedResourceKind::Output ||
+            resources[store->aux].index!=0 || resources[store->aux].type!=TypedType::S32) {
+            out.error="typed scalar S32 output requires Location 0, one/two S32 uniforms and no other resources";
+            return false;
+        }
+        for (size_t i=0;i<fragment_s32_uniforms.size();++i) {
+            if (fragment_s32_uniforms[i].resource_index!=i) {
+                out.error="typed scalar S32 uniforms must be contiguous from resource 0";
+                return false;
+            }
+        }
+
+        MachineProgram primary,secondary;
+        const auto zero=primary.literal_s32(0);
+        if (zero.kind()==MachineOperandKind::None || !primary.emit<MachineOpcode::Phase>() ||
+            !primary.emit<MachineOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),
+                primary.physical(machine_fragment_output(0),MachineType::S32),
+                primary.physical(machine_secondary(0),MachineType::S32),zero)) {
+            out.error="failed to build scalar S32 primary uniform copy";
+            return false;
+        }
+
+        if (const auto *resource=resource_for_value(root)) {
+            if (resource->kind!=TypedResourceKind::Uniform || resource->type!=TypedType::S32 || resource->index!=0) {
+                out.error="direct scalar S32 output currently requires uniform resource 0";
+                return false;
+            }
+        } else {
+            const auto *def=definition(root);
+            if (!def || def->opcode()!=TypedOpcode::Bitwise ||
+                def->subop()>static_cast<uint8_t>(usse::BitwiseOp::ArithmeticShiftRight)) {
+                out.error="scalar S32 output producer is outside the validated bitwise subset";
+                return false;
+            }
+            auto uniform_index=[&](TypedValue value) -> int {
+                const auto *resource=resource_for_value(value);
+                return resource && resource->kind==TypedResourceKind::Uniform && resource->type==TypedType::S32 ?
+                    static_cast<int>(resource->index) : -1;
+            };
+            const int lhs_uniform=uniform_index(def->src0);
+            const int rhs_uniform=uniform_index(def->src1);
+            const bool lhs_literal=def->src0.kind()==TypedValueKind::Literal && def->src0.id()<program.literals().size();
+            const bool rhs_literal=def->src1.kind()==TypedValueKind::Literal && def->src1.id()<program.literals().size();
+            MachineOperand lhs{},rhs{};
+            if (lhs_uniform>=0 && rhs_uniform>=0) {
+                const auto op=static_cast<usse::BitwiseOp>(def->subop());
+                if (op!=usse::BitwiseOp::Or || fragment_s32_uniforms.size()!=2 ||
+                    lhs_uniform==rhs_uniform || lhs_uniform>1 || rhs_uniform>1) {
+                    out.error="register-register scalar S32 profile currently covers oracle OR of uniforms 0/1";
+                    return false;
+                }
+                // Canonical Sony word is OR PA1, PA0 -> PA0 regardless of source spelling.
+                lhs=secondary.physical(machine_primary(1),MachineType::S32);
+                rhs=secondary.physical(machine_primary(0),MachineType::S32);
+            } else {
+                if (fragment_s32_uniforms.size()!=1) {
+                    out.error="immediate scalar S32 bitwise profile requires one uniform";
+                    return false;
+                }
+                const auto op=static_cast<usse::BitwiseOp>(def->subop());
+                const bool commutative=op==usse::BitwiseOp::And || op==usse::BitwiseOp::Or || op==usse::BitwiseOp::Xor;
+                uint32_t literal=0;
+                if (lhs_uniform==0 && rhs_literal) {
+                    lhs=secondary.physical(machine_primary(0),MachineType::S32);
+                    literal=program.literals()[def->src1.id()];
+                } else if (commutative && rhs_uniform==0 && lhs_literal) {
+                    lhs=secondary.physical(machine_primary(0),MachineType::S32);
+                    literal=program.literals()[def->src0.id()];
+                } else {
+                    out.error="scalar S32 immediate bitwise operands are outside the validated uniform/literal shape";
+                    return false;
+                }
+                rhs=secondary.literal_s32(static_cast<int32_t>(literal));
+                if (rhs.kind()==MachineOperandKind::None) {
+                    out.error="failed to materialize scalar S32 bitwise immediate";
+                    return false;
+                }
+            }
+            if (!secondary.emit<MachineOpcode::Bitwise>(def->subop(),
+                    secondary.physical(machine_fragment_output(0),MachineType::S32),lhs,rhs)) {
+                out.error="failed to build scalar S32 secondary bitwise operation";
+                return false;
+            }
+        }
+
+        if (!secondary.emit_config<MachineOpcode::Pack>(
+                machine_pack_subop(usse::PackFormat::S16,usse::PackFormat::F16),
+                machine_pack_config(1,true,false,true),
+                secondary.physical(machine_fragment_output(0),MachineType::F16),
+                secondary.physical(machine_primary(0),MachineType::S32),
+                secondary.physical(machine_immediate(0),MachineType::S32))) {
+            out.error="failed to append oracle scalar S32 output pack";
+            return false;
+        }
+        return compile_fragment_s32_machine(primary,secondary,fragment_s32_uniforms,0,0,out);
+    }
 
     if (const auto *resource = resource_for_value(root)) {
         if (resource->kind == TypedResourceKind::Uniform && resource->type == TypedType::F32x4) {

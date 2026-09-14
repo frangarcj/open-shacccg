@@ -377,6 +377,40 @@ outside GUIDs; many other operations intentionally differ in instruction selecti
 because Sony prefers compact V16NMAD/VMAD2 forms while Open uses its validated
 V32NMAD path.
 
+## Scalar S32 uniform data path
+
+The first non-loop integer resource path is now oracle-backed end to end. Sony Cg
+1.6.5 accepts `int`/`int2`/`int4`, but not `uint`/`uint4` source type names, so the
+clean differential corpus starts with scalar `uniform int` rather than claiming a
+source-level unsigned profile. Uniforms avoid the separate float-interpolation to
+integer conversion required by integer stage inputs and isolate the actual bitwise
+data path.
+
+Six probes are exact outside GUIDs with both compilers: direct `int` uniform output,
+register-register OR, XOR with `4660`, AND with `255`, left shift by 3 and arithmetic
+right shift by 3. They anchor these existing VBW semantic words respectively:
+
+- uniform copy: `0x5081000ae0000000` (`OR SA0, 0 -> PA0`);
+- register OR: `0x5080000aa0000080`;
+- XOR immediate: `0x58810002a0090034`;
+- AND immediate: `0x50810002a000407f`;
+- shift left: `0x60810002a0000003`;
+- arithmetic shift right: `0x6881000aa0000003`.
+
+All six terminate through the same oracle VPCK `0x40850946a0000000`, the narrowly
+validated scalar S16->F16 COLOR packing form. Its unused second source is canonically
+encoded as Immediate0. The OR/XOR/AND/shift profiles place their bitwise instruction
+in the fragment secondary stream before that VPCK; this independently extends the
+GXP writer's validated secondary layout from one to two qwords. Secondary starts at
+`interface+20`; a two-word stream extends four bytes past the 32-byte interface and
+primary code resumes at the next 8-byte boundary.
+
+Typed/Machine bitwise lowering now accepts matching scalar S32 as well as U32 while
+keeping the same 16-byte MachineInstruction and 4-byte operand handles. Attribute
+F32->S32 conversion, S32->F32 conversion, vector integer resources, bitcasts and a
+source-level U32 profile remain fail-closed until separately derived from oracle or
+SPIR-V evidence.
+
 Backend fallback diagnostics now retain the SPIRV-Cross Typed-path failure when
 the dependency-free parser also rejects a shader, so future oracle sweeps expose
 the actual higher-level coverage gap instead of only the final fallback error.
@@ -388,7 +422,7 @@ not byte identity.
 
 1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, keeping the single Typed -> Machine lowering path fail-closed.
 2. **Complete structured control flow.** BR forward/backward offsets, six F32 VTST compares, direct COLOR0 two-way phi merge, output `OpSelect` and positive-step dynamic loops are validated; the control corpus is 12/12. Next generalize remaining phi consumers and derive decrement/other loop-update profiles from oracle probes.
-3. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
+3. **Integer data movement/conversion.** Scalar S32 uniforms now reach VBW and COLOR0 exactly for pass/AND/OR/XOR/SHL/ASR. Next derive attribute F32->S32 and S32->F32 conversion, then vector integer resources/bitcasts; source-level `uint` is not a Sony Cg spelling, so U32 coverage should be driven by SPIR-V/HLSL evidence.
 4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
 5. **Common missing ALU families.** The 77-case ALU language corpus is complete. Next prioritize VMAD2/VDUAL/V16 optimization profiles only where they improve real shaders, while expanding texture/integer coverage from new oracle probes.
 6. **Resource/reflection generalization.** Derive register counts, parameter types, containers, uniform buffers, literals and dependent samplers from IR instead of current sample-shaped layouts.

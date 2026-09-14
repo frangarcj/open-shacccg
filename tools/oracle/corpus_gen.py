@@ -53,6 +53,18 @@ def main():
          "float4 main() : COLOR0 { return float4(1.0, 0.0, 0.0, 1.0); }", "constant")
     emit(root, manifest, "fp-uniform", "sce_fp_psp2",
          "uniform float4 color; float4 main() : COLOR0 { return color; }", "uniform")
+    emit(root, manifest, "fp-s32-uniform-pass", "sce_fp_psp2",
+         "uniform int x; int main() : COLOR0 { return x; }", "integer", type="int", op="pass")
+    emit(root, manifest, "fp-s32-uniform-or", "sce_fp_psp2",
+         "uniform int x; uniform int y; int main() : COLOR0 { return x | y; }", "integer", type="int", op="or")
+    emit(root, manifest, "fp-s32-uniform-xor", "sce_fp_psp2",
+         "uniform int x; int main() : COLOR0 { return x ^ 4660; }", "integer", type="int", op="xor-imm")
+    emit(root, manifest, "fp-s32-uniform-and", "sce_fp_psp2",
+         "uniform int x; int main() : COLOR0 { return x & 255; }", "integer", type="int", op="and-imm")
+    emit(root, manifest, "fp-s32-uniform-shl", "sce_fp_psp2",
+         "uniform int x; int main() : COLOR0 { return x << 3; }", "integer", type="int", op="shl-imm")
+    emit(root, manifest, "fp-s32-uniform-shr", "sce_fp_psp2",
+         "uniform int x; int main() : COLOR0 { return x >> 3; }", "integer", type="int", op="asr-imm")
     emit(root, manifest, "fp-if", "sce_fp_psp2",
          "float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1):COLOR0 { if (a.x > b.x) return a; return b; }", "control")
     emit(root, manifest, "fp-ternary", "sce_fp_psp2",

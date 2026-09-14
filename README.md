@@ -36,6 +36,10 @@ Implemented now:
   width-aware VCOMP/V32NMAD/VPCK staging plus validated V16NMAD reductions; half vectors compile
   through the F32 path
   because the glslang HLSL frontend does not preserve half precision in SPIR-V
+- oracle-exact scalar `uniform int` fragment data flow for passthrough, OR, XOR-immediate,
+  AND-immediate, left shift and arithmetic right shift: Typed S32 reaches the existing VBW
+  semantic path, then the observed scalar S16->F16 VPCK writes COLOR0; all six integer probes
+  match Sony outside GUIDs
 - oracle-exact fragment profiles for `wzyx` and the constant `float4(1,0,0,1)`,
   including swizzled VPCK, literal-table placement and the primary/interface overlap convention
 - oracle-exact standalone vertex profiles for float4 position passthrough,
@@ -63,7 +67,7 @@ Implemented now:
 - local Cortex-A9/Thumb/VFP/TLS Unicorn oracle runner for a user-supplied original SceShaccCg module,
   with in-memory import traps and direct `CompileProgram` GXP capture
 - differential `oracle_diff.py` workflow that runs clean probes against Sony and compares observable GXP metadata/USSE against OpenShaccCg without retaining Sony GXP files
-- expanded differential shader corpus generator (ALU, constants, uniforms, control flow, texture, matrix and interface cases)
+- expanded differential shader corpus generator (ALU, integer, constants, uniforms, control flow, texture, matrix and interface cases)
 - external oracle corpus runner protocol
 - GXP structural inspector, semantic comparator, USSE-family inspector and raw binary diff tools
 - host tests for ABI lifecycle, source compilation failure behavior, direct SPIR-V lowering, public GXP parsing, GXP writer round-trip and USSE family classification

@@ -340,6 +340,7 @@ MachineType pack_format_machine_type(usse::PackFormat format) {
     switch (format) {
     case usse::PackFormat::F32: return MachineType::F32;
     case usse::PackFormat::F16: return MachineType::F16;
+    case usse::PackFormat::S16: return MachineType::S32;
     default: return MachineType::Invalid;
     }
 }
@@ -477,6 +478,12 @@ MachineOperand MachineProgram::literal_u32(uint32_t value) {
     if (literals_.size() > kPayloadMask) return {};
     literals_.push_back(value);
     return MachineOperand::literal(static_cast<uint32_t>(literals_.size() - 1), MachineType::U32);
+}
+
+MachineOperand MachineProgram::literal_s32(int32_t value) {
+    if (literals_.size() > kPayloadMask) return {};
+    literals_.push_back(static_cast<uint32_t>(value));
+    return MachineOperand::literal(static_cast<uint32_t>(literals_.size() - 1), MachineType::S32);
 }
 
 MachineOperand MachineProgram::pair(MachineOperand first, MachineOperand second) const {
@@ -1296,29 +1303,31 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 out.error = "invalid bitwise subop";
                 return false;
             }
-            if (instruction.dst.kind() != MachineOperandKind::VirtualValue ||
-                instruction.dst.type() != MachineType::U32 ||
-                instruction.dst.id() >= out.value_registers.size()) {
-                out.error = "bitwise destination is not an allocated U32 value";
+            const MachineType type=instruction.dst.type();
+            if (type!=MachineType::U32 && type!=MachineType::S32) {
+                out.error = "bitwise destination must be U32 or S32";
                 return false;
             }
             usse::VbwSemantic op{};
             op.op = static_cast<usse::BitwiseOp>(instruction.subop());
-            op.dst = out.value_registers[instruction.dst.id()];
+            if (!resolve_register_value(instruction.dst,type,out.value_registers,&op.dst)) {
+                out.error="bitwise destination is not register-backed";
+                return false;
+            }
             op.predicate = guard;
-            if (!resolve_register_value(instruction.src0, MachineType::U32, out.value_registers, &op.src1)) {
-                out.error = "bitwise source1 must be a register-backed U32 value";
+            if (!resolve_register_value(instruction.src0,type,out.value_registers,&op.src1)) {
+                out.error = "bitwise source1 must be a matching register-backed integer value";
                 return false;
             }
             if (instruction.src1.kind() == MachineOperandKind::Literal) {
-                if (instruction.src1.type() != MachineType::U32 || instruction.src1.id() >= program.literals().size()) {
+                if (instruction.src1.type() != type || instruction.src1.id() >= program.literals().size()) {
                     out.error = "bitwise literal source is invalid";
                     return false;
                 }
                 op.src2_is_immediate = true;
                 op.immediate = program.literals()[instruction.src1.id()];
-            } else if (!resolve_register_value(instruction.src1, MachineType::U32, out.value_registers, &op.src2)) {
-                out.error = "bitwise source2 must be a U32 register or literal";
+            } else if (!resolve_register_value(instruction.src1,type,out.value_registers,&op.src2)) {
+                out.error = "bitwise source2 must be a matching integer register or literal";
                 return false;
             }
             if (!builder.instruction(op)) { out.error = "failed to encode machine bitwise operation"; return false; }

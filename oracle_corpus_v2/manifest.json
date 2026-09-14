@@ -640,6 +640,54 @@
     "feature": "uniform"
   },
   {
+    "name": "fp-s32-uniform-pass",
+    "file": "fp-s32-uniform-pass.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "integer",
+    "type": "int",
+    "op": "pass"
+  },
+  {
+    "name": "fp-s32-uniform-or",
+    "file": "fp-s32-uniform-or.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "integer",
+    "type": "int",
+    "op": "or"
+  },
+  {
+    "name": "fp-s32-uniform-xor",
+    "file": "fp-s32-uniform-xor.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "integer",
+    "type": "int",
+    "op": "xor-imm"
+  },
+  {
+    "name": "fp-s32-uniform-and",
+    "file": "fp-s32-uniform-and.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "integer",
+    "type": "int",
+    "op": "and-imm"
+  },
+  {
+    "name": "fp-s32-uniform-shl",
+    "file": "fp-s32-uniform-shl.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "integer",
+    "type": "int",
+    "op": "shl-imm"
+  },
+  {
+    "name": "fp-s32-uniform-shr",
+    "file": "fp-s32-uniform-shr.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "integer",
+    "type": "int",
+    "op": "asr-imm"
+  },
+  {
     "name": "fp-if",
     "file": "fp-if.cg",
     "profile": "sce_fp_psp2",

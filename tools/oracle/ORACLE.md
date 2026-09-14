@@ -150,3 +150,18 @@ scalar locations share PA registers (`Location0=PA0.x`, `Location1=PA0.y`,
 lane-Y (`...0002`) and was confirmed with temporary `a/b` versus `b/a` probes.
 The F32 scalar division GXP is byte-identical outside GUIDs and the complete ALU
 corpus now compiles 77/77 with both Sony and OpenShaccCg.
+
+Scalar integer coverage is available as `--feature integer`. Sony Cg 1.6.5 accepts
+`int` but rejects `uint` as a source type spelling, so these probes intentionally use
+`uniform int` to isolate the hardware integer path without the interpolation
+conversion needed by integer stage inputs. The six current cases (pass, OR,
+XOR-immediate, AND-immediate, SHL-immediate and arithmetic SHR-immediate) are all
+byte-identical outside GUIDs. They use the existing VBW family and terminate with
+the scalar S16->F16 VPCK `0x40850946a0000000`.
+
+These probes also establish a second fragment-secondary layout case. Secondary code
+still begins at `interface+20`; one qword fits within the 32-byte interface, while a
+two-qword stream ends four bytes beyond it and primary code resumes at the next
+8-byte boundary. The canonical writer tests cover both forms. Attribute integer
+conversion, int<->float conversion and vector/bitcast cases are deliberately separate
+oracle milestones.

@@ -72,6 +72,10 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
                                       const std::vector<IrSampler2D> &samplers,
                                       uint32_t binary_guid, uint32_t source_guid,
                                       IrCompileResult &out);
+bool compile_fragment_s32_machine(const MachineProgram &primary, const MachineProgram &secondary,
+                                  const std::vector<IrUniformS32> &uniforms,
+                                  uint32_t binary_guid, uint32_t source_guid,
+                                  IrCompileResult &out);
 bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
                                          const std::vector<IrUniformVec4> &uniforms,
                                          uint8_t float_input_count,

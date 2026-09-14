@@ -183,6 +183,28 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        const auto zero=program.literal_s32(0);
+        if (zero.kind()==MachineOperandKind::None ||
+            !program.emit<MachineOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),
+                program.physical(machine_fragment_output(0),MachineType::S32),
+                program.physical(machine_secondary(0),MachineType::S32),zero) ||
+            !program.emit_config<MachineOpcode::Pack>(
+                machine_pack_subop(usse::PackFormat::S16,usse::PackFormat::F16),
+                machine_pack_config(1,true,false,true),
+                program.physical(machine_fragment_output(0),MachineType::F16),
+                program.physical(machine_primary(0),MachineType::S32),
+                program.physical(machine_immediate(0),MachineType::S32))) {
+            failures += fail("could not construct scalar S32 uniform/output Machine profile");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=2 ||
+                result.words[0]!=0x5081000ae0000000ULL || result.words[1]!=0x40850946a0000000ULL)
+                failures += fail("scalar S32 uniform/output Machine words mismatch oracle");
+        }
+    }
+
+    {
+        MachineProgram program;
         const auto counter=program.make_value<MachineType::S32>();
         if (!program.emit<MachineOpcode::LoopCounterInit>(0,counter) ||
             !program.emit<MachineOpcode::LoopIncrement>(1,counter)) {

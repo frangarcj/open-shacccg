@@ -158,15 +158,17 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
     size_t bytes = 0;
     const bool primary_overlap=image.fragment_primary_overlaps_interface;
     if (image.type == ProgramType::Fragment && image.secondary_instruction_count) {
-        // In the validated clear_f program the single secondary USSE2 word is
-        // embedded in the final 12 bytes of the 32-byte fragment interface
-        // record.  The primary stream still starts immediately after the
-        // interface record, so the embedded secondary word must not advance
-        // the main layout cursor.  Keep this fail-closed until a public sample
-        // demonstrates a larger fragment secondary stream.
-        if (image.secondary_instruction_count != 1) return false;
+        // Secondary code starts 20 bytes into the fragment interface. One word
+        // fits entirely in that record (clear_f / scalar-int passthrough). The
+        // oracle-backed scalar-int bitwise profiles use two words: the second
+        // extends four bytes beyond the interface and primary code resumes at
+        // the next 8-byte boundary.
+        if (image.secondary_instruction_count > 2) return false;
         l.secondary_off = l.interface_off + 20;
-        l.secondary_end = l.secondary_off + sizeof(uint64_t);
+        if (!mul_size(image.secondary_instruction_count,sizeof(uint64_t),bytes)) return false;
+        l.secondary_end = l.secondary_off + bytes;
+        if (l.secondary_end > cursor) cursor=l.secondary_end;
+        cursor=align_up(cursor,8); if (!cursor) return false;
     } else if (primary_overlap) {
         l.primary_off=l.interface_off+24;
         l.secondary_off=l.primary_off-4;
