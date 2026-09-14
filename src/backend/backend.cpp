@@ -1,6 +1,6 @@
 #include "core/internal.hpp"
 #include "backend/typed_ir.hpp"
-#include "backend/vita_ir.hpp"
+#include "backend/shader_profiles.hpp"
 #include "spirv/spirv_cross_adapter.hpp"
 #include "spirv/spirv_pipeline.hpp"
 

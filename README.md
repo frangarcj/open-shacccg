@@ -350,7 +350,7 @@ The same 16-byte instruction record now carries the validated float backend too:
 the otherwise-free control bits, while VMAD uses a compact virtual-pair operand
 for its two GPI inputs. A zero-word dependent-sample pseudo-op connects the
 coordinate GPI lifetime to the asynchronously produced texture TEMP. As a
-result, `vita_ir.cpp` no longer constructs USSE semantic instruction structs or
+result, `shader_profiles.cpp` no longer constructs USSE semantic instruction structs or
 performs a second lifetime pass. The seven public libvita2d GXP regressions
 remain byte-identical.
 
@@ -363,159 +363,44 @@ float4 source contributes both consecutive F32 registers to one validated
 F32->F16 VPCK. Other vector widths, shuffle patterns and float conversions still
 fail closed.
 
-## Vita IR lowering milestone
+## Direct Typed/Machine shader lowering
 
-A first stage-specific backend IR now sits above the semantic USSE assembler.
-`backend::VertexIr` describes attributes, a `mat4` uniform and high-level
-operations (`TransformPosition`, `CopyVarying`) without exposing USSE words or
-register-bank selectors to the caller. The initial lowering is deliberately
-strict and fail-closed while its allocation rules are being validated.
+The old stage-specific `VertexIr` / `FragmentIr` bridge has been removed. Both
+SPIRV-Cross and the dependency-free SPIR-V recognizer now produce compact
+`TypedShader`/`TypedProgram` directly, and all runtime compilation continues as:
 
-For the public libvita2d `texture_v` shape, the IR lowering now performs the
-first deterministic Vita register assignment, stages GPI inputs, selects the
-validated `VMOV`/`VPCK`/`VMAD` sequence, builds reflection/container metadata,
-and serializes the final GXP. A regression describes only the shader-level IR
-(two attributes, one matrix, transform-position and copy-varying operations)
-and requires the resulting 344-byte GXP to be byte-for-byte identical to the
-known-good `texture_v.gxp` sample.
+`SPIR-V -> Typed IR -> Machine IR -> semantic USSE -> GXP`.
 
-The matrix lowering also captures an observed paired-output convention: the
-final VMAD reuses the Z-lane GPI0 source while GPI1 swizzling supplies the Z/W
-pair. This convention is regression-backed rather than inferred from a generic
-matrix model.
+The validated vertex profiles are still deliberately narrow and fail closed:
 
-## Vertex IR generalization milestone
+- `clear_v`: float2 position -> `float4(x,y,1,1)`;
+- `texture_v`: float3 position + mat4 + float2 TEXCOORD passthrough;
+- `color_v`: float3 position + mat4 + float4 COLOR passthrough.
 
-The strict Vita vertex IR lowering now reproduces three public MIT libvita2d
-vertex shaders byte-for-byte through one backend path:
+Machine-profile helpers own the evidence-backed GXP/interface details for those
+three forms. They preserve the observed PA/SA counts, matrix GPI staging,
+VMAD accumulator convention, varying descriptors, containers and compiler
+version fields. Direct regressions require byte-for-byte identity with all three
+public vertex GXPs.
 
-- `texture_v`: float3 position + float2 texcoord + mat4 transform
-- `color_v`: float3 position + float4 color + mat4 transform
-- `clear_v`: float2 position expanded to `float4(x, y, 1, 1)` without uniforms
+The validated fragment profiles are likewise emitted directly from Typed/Machine
+IR: uniform color (`clear_f`), varying color (`color_f`), dependent texture
+(`texture_f`) and texture multiplied by a float4 tint (`texture_tint_f`). The
+dependent texture form intentionally emits no SMP instruction because the
+public shader contains none; texture-unit/interface metadata represents that
+handoff, and the Machine IR `DependentSample` pseudo-op exists only to model the
+value lifetime. The `clear_f` secondary F32->F16 VPCK keeps its observed
+overlapping secondary-code layout.
 
-Evidence-backed lowering rules added in this milestone:
+Generic fragment arithmetic also stays in Typed/Machine IR rather than building
+a second expression DAG. The current subset includes F32x4 multiply/add/sub,
+min/max, dot, negate/absolute and scalar splat. Subtraction uses the validated
+negated-add V32NMAD form; unary negate/absolute use V32NMAD source modifiers.
+SPIRV-Cross additionally recognizes `GLSL.std.450` FMin/FMax/FAbs, validated
+X-splats and F32x4->F16x4 conversion. Unsupported graph shapes, vector widths,
+swizzles and conversions continue to fail closed.
 
-- logical attribute width is distinct from GXP reflection width; these public
-  vertex attributes are reflected as 4 components even for Cg float2/float3,
-  while USSE repeat/staging behavior follows the logical width;
-- a float4 passthrough varying uses VMOV repeat count 1, while float2 uses 0;
-- COLOR and TEXCOORD varyings use distinct 32-byte interface descriptors;
-- the no-uniform clear path uses PHAS/NOP/V32NMAD/VMOV/VMOV/EMIT, with the
-  homogeneous constant sourced from SPECIAL[1];
-- clear_v uses PA=4, SA=2, one container (19), compiler-version field 0,
-  whereas the matrix path uses PA=8, SA=18, containers 14+19 and compiler 16.
-
-All three IR-generated binaries are regression-tested by exact byte comparison
-against the preserved public libvita2d GXP corpus. Unsupported graph shapes
-continue to fail closed.
-
-
-## SPIR-V to Vita IR milestone
-
-`vsc_compile_spirv()` now lowers a real, deliberately small SPIR-V vertex subset
-instead of stopping after structural validation. The dependency-free recognizer
-tracks `OpName`, `Location` and `BuiltIn Position` decorations, F32/vector/matrix/
-pointer types, global Input/Output/Uniform variables, `OpConstant 1.0`, `OpLoad`,
-`OpCompositeConstruct`, `OpMatrixTimesVector`, and `OpStore` inside the selected
-entry function.
-
-Three validated graph shapes lower into the existing `backend::VertexIr`:
-
-- float2 position -> `float4(x,y,1,1)` (`clear_v` shape);
-- float3 position + mat4 + float2 texture-coordinate passthrough (`texture_v`);
-- float3 position + mat4 + float4 color passthrough (`color_v`).
-
-The first allocator maps input `Location N` to the validated PA resource convention
-`N*4`; varying kind is accepted only when its name gives an evidence-backed COLOR
-or TEXCOORD/UV interpretation. Unsupported variables, graph shapes, multiple
-uniforms/varyings, or unknown semantics fail closed with diagnostic `0x2210`.
-Fragment SPIR-V currently fails explicitly with `0x2202`.
-
-Regression tests build standards-shaped SPIR-V modules for all three vertex cases,
-compile them through the public `vsc_compile_spirv()` API, and require byte-for-byte
-identity with the GXP produced by the equivalent direct Vita IR. The older IR tests
-continue to require byte-for-byte identity against the public MIT libvita2d samples,
-so the chain is now covered as `SPIR-V -> Vita IR -> semantic USSE -> GXP`.
-
-## First fragment SPIR-V milestone
-
-The fragment backend is no longer a blanket `0x2202` placeholder. A first
-fail-closed fragment IR and SPIR-V recognizer now support the validated
-libvita2d `clear_f` shape: one F32 `float4` uniform is loaded and written
-directly to fragment color output Location 0.
-
-This path lowers as `SPIR-V -> FragmentIr -> semantic USSE2 -> GXP`. The
-fragment IR emits a primary `PHAS + VMOV` stream and a one-word secondary
-`VPCK` stream. The secondary pack is represented as a real semantic
-instruction, not copied opaque bytes. Its validated settings include F32->F16,
-PA sources/destination, XYZW selectors, END set and NOSCHED clear.
-
-The GXP writer now also models the fragment-specific secondary-code layout
-observed in `clear_f`: the single secondary qword lives at interface-record
-offset `+0x14` (`0xac` in that sample), while the primary stream begins at
-`0xb8`. This overlapping layout is deliberately limited to one secondary
-fragment instruction until more public samples establish a broader rule.
-
-A direct `FragmentIr` regression reproduces the complete 244-byte public MIT
-`clear_f.gxp` sample byte-for-byte, including header, embedded secondary code,
-primary code, containers, reflection metadata and names. A separate SPIR-V
-regression compiles the same shader graph through `vsc_compile_spirv()` and
-requires exact identity with direct fragment IR output. Unsupported fragment
-SPIR-V graphs fail closed with diagnostic `0x2220`; fragment IR failures use
-`0x2221`.
-
-### Fragment varying + texture milestone
-
-The validated fragment subset now includes three end-to-end shapes:
-
-- `float4 uniform -> COLOR` (`clear_f`)
-- `COLOR varying -> COLOR` (`color_f`)
-- `tex2D(sampler2D, TEXCOORD0) -> COLOR` (`texture_f`)
-
-`color_f` and `texture_f` are independently regenerated byte-for-byte from
-`FragmentIr` and the MIT libvita2d public samples.  The texture path records an
-important SGX/Vita convention: this simple dependent texture sample has no SMP
-instruction in the primary USSE stream (PHAS is the only primary instruction).
-The sample is represented by texture-unit/interface metadata, including an
-8-byte post-interface dependent-sampler record and sampler reflection semantic
-2.  The GXP writer models that layout explicitly.
-
-The dependency-free SPIR-V subset recognizes direct varying color stores and
-`OpImageSampleImplicitLod` from one combined sampled-image variable plus a
-`Location 0` float2 coordinate input. Unsupported texture graphs still fail
-closed.
-
-### Fragment texture-tint milestone
-
-The validated fragment subset now includes `texture(sampled_image, texcoord) * float4_uniform`.
-`texture_tint_f.gxp` is reconstructed byte-for-byte from `FragmentIr::TextureTint2D`, using semantic
-PHAS/NOP/VPCK/V32NMAD/VPCK emission and the observed dependent-sampler metadata. The SPIR-V subset
-recognizes `OpImageSampleImplicitLod` followed by `OpFMul` with a Location-0 float2 coordinate and a
-single float4 uniform, then lowers through the same IR path. Unsupported variants still fail closed.
-
-## Generic SPIR-V arithmetic DAG milestone
-
-The dependency-free fragment SPIR-V lowerer still has a generic expression-DAG fallback in addition to the seven canonical vita2d shape paths. The canonical paths are intentionally preserved so their byte-identical public-corpus regressions do not change.
-
-The initial DAG supports float4 Location 0 varying leaves, multiple float4 uniform leaves, `OpFMul`, `OpFAdd`, `OpDot`, and scalar splats represented by `OpCompositeConstruct`. Binary arithmetic nodes are assigned temporary USSE registers deterministically and lowered through semantic V32NMAD operations. A multiply followed by add therefore works as a general MAD expression today, but is deliberately emitted as separate MUL + ADD instructions; it is not fused to VMAD until GPI allocation/scheduling rules are independently validated.
-
-New non-corpus regressions compile `vColor * uScale + uBias` and `dot(vColor, uWeights).xxxx` through the public SPIR-V API and compare the result against direct DAG IR lowering. This proves the fallback is not another sample-name/shape matcher. These generic arithmetic GXPs are structurally generated and regression-tested on host, but unlike the seven public vita2d samples they do not yet have byte-identical Sony outputs or real-Vita `sceGxmProgramCheck` validation. Unsupported graphs still fail closed.
-
-
-### Generic arithmetic DAG checkpoint
-
-The dependency-free DAG keeps its liveness-based TEMP reuse path for portable
-fallback builds. When SPIRV-Cross is enabled, generic fragment arithmetic no
-longer round-trips through `FragmentIr`: TypedShader lowers its SSA values
-directly into Machine IR, appends the validated output VPCK, and shares only the
-final arithmetic GXP layout serializer with the legacy fallback. This direct
-path includes `Sub`, `Neg`, `Min`, `Max`, `Abs`, dot and splat operations.
-
-`GLSL.std.450` FMin/FMax/FAbs are parsed directly by the SPIRV-Cross adapter.
-Subtraction still lowers through V32NMAD ADD with a negated source, while unary
-negate/absolute use the validated V32NMAD source-modifier encoding and an
-immediate-zero add.
-
-A new non-corpus regression compiles `vColor - (-uBias)` from SPIR-V through
-the generic DAG. Existing seven vita2d canonical paths remain unchanged and
-continue to use their byte-identical regressions.
+The dependency-free recognizer covers the same public vertex/fragment shapes
+plus the existing generic arithmetic subset and now feeds `TypedShader`
+directly. Diagnostic families remain `0x2210/0x2211` for vertex recognition /
+lowering and `0x2220/0x2221` for fragment recognition / lowering.

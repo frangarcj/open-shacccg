@@ -1,5 +1,5 @@
 #include "backend/typed_ir.hpp"
-#include "backend/vita_ir.hpp"
+#include "backend/shader_profiles.hpp"
 
 #include <algorithm>
 #include <array>

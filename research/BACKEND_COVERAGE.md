@@ -157,7 +157,7 @@ inventing an SMP instruction that is absent from the public sample.
 
 The vertex, texture-tint and generic fragment arithmetic paths no longer carry
 their own TEMP/GPI free lists, direct register-bank selections or semantic USSE
-instruction construction in `vita_ir.cpp`. The public clear/color/texture vertex
+instruction construction in `shader_profiles.cpp`. The public clear/color/texture vertex
 and fragment GXPs remain byte-identical after the migration.
 
 Typed IR now lowers F32x4 mul/add/sub/min/max, scalar dot, negate and absolute
@@ -172,15 +172,15 @@ operation that derives the second consecutive F32 source register from the
 logical float4 value and emits the known F32->F16 VPCK form. Y/Z/W shuffles,
 arbitrary permutations and reverse/other float conversions remain fail-closed.
 
-Generic fragment TypedShader arithmetic now lowers directly to Machine IR and
-uses the shared arithmetic GXP finalizer. `FragmentIr` remains the portable
-dependency-free SPIR-V fallback and the path for the canonical sample-shaped
-fragment operations, rather than an obligatory expression bridge for the
-SPIRV-Cross Typed path.
+The stage-specific compatibility IR bridges have now been removed from runtime
+compilation. SPIRV-Cross and the dependency-free recognizer both produce
+`TypedShader` directly, and canonical vertex/fragment forms select compact
+Machine/GXP profiles without constructing `VertexIr` or `FragmentIr`. Generic
+arithmetic likewise remains SSA-like Typed/Machine IR end to end.
 
 ## Next backend order
 
-1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, then move the remaining canonical fragment/vertex TypedShader shapes off their compatibility IR bridges where that reduces duplication.
+1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, keeping the single Typed -> Machine lowering path fail-closed.
 2. **BR control flow.** Add raw and semantic BR only once branch offset/direction semantics are anchored by real words. Then lower structured `if/else`; loops come after branch back-edges are independently validated.
 3. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
 4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.

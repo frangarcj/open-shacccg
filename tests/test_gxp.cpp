@@ -1,7 +1,7 @@
 #include "gxp/gxp_reader.hpp"
 #include "gxp/gxp_writer.hpp"
 #include "backend/program_builder.hpp"
-#include "backend/vita_ir.hpp"
+#include "backend/shader_profiles.hpp"
 #include "usse/usse.hpp"
 
 #include <cstdio>
@@ -97,109 +97,54 @@ int test_gxp() {
 
     {
         auto expected = load("clear_f.gxp");
-        vsc::backend::FragmentIr ir;
-        ir.uniforms = {{"uClearColor",0}};
-        ir.binary_guid = 0xb0a7ca0e;
-        ir.source_guid = 0x1f6aa3af;
         vsc::backend::IrCompileResult generated;
-        if (!vsc::backend::compile_fragment_ir(ir,generated)) failures += fail("clear_f fragment IR compilation failed");
+        const std::vector<vsc::backend::IrUniformVec4> uniforms = {{"uClearColor",0}};
+        if (!vsc::backend::compile_fragment_machine_profile(vsc::backend::FragmentMachineProfile::UniformColor,
+                uniforms,{},0xb0a7ca0e,0x1f6aa3af,generated)) failures += fail("clear_f Machine profile compilation failed");
         else if (generated.gxp.size()!=expected.size() || std::memcmp(generated.gxp.data(),expected.data(),expected.size())!=0) {
             size_t first=0; while(first<generated.gxp.size() && first<expected.size() && generated.gxp[first]==expected[first]) ++first;
-            std::fprintf(stderr,"test_gxp: clear_f fragment IR differs at 0x%zx (generated=%zu expected=%zu)\n",first,generated.gxp.size(),expected.size());
+            std::fprintf(stderr,"test_gxp: clear_f Machine profile differs at 0x%zx (generated=%zu expected=%zu)\n",first,generated.gxp.size(),expected.size());
             ++failures;
         }
     }
 
     {
         auto expected = load("color_f.gxp");
-        vsc::backend::FragmentIr ir;
-        ir.op = vsc::backend::FragmentOpKind::VaryingColor;
-        ir.binary_guid = 0x989d839a;
-        ir.source_guid = 0x0027145a;
         vsc::backend::IrCompileResult generated;
-        if (!vsc::backend::compile_fragment_ir(ir,generated)) failures += fail("color_f fragment IR compilation failed");
+        if (!vsc::backend::compile_fragment_machine_profile(vsc::backend::FragmentMachineProfile::VaryingColor,
+                {},{},0x989d839a,0x0027145a,generated)) failures += fail("color_f Machine profile compilation failed");
         else if (generated.gxp.size()!=expected.size() || std::memcmp(generated.gxp.data(),expected.data(),expected.size())!=0) {
             size_t first=0; while(first<generated.gxp.size() && first<expected.size() && generated.gxp[first]==expected[first]) ++first;
-            std::fprintf(stderr,"test_gxp: color_f fragment IR differs at 0x%zx (generated=%zu expected=%zu)\n",first,generated.gxp.size(),expected.size());
+            std::fprintf(stderr,"test_gxp: color_f Machine profile differs at 0x%zx (generated=%zu expected=%zu)\n",first,generated.gxp.size(),expected.size());
             ++failures;
         }
     }
 
     {
         auto expected = load("texture_f.gxp");
-        vsc::backend::FragmentIr ir;
-        ir.op = vsc::backend::FragmentOpKind::Texture2D;
-        ir.samplers = {{"tex",0}};
-        ir.binary_guid = 0xa0cb639e;
-        ir.source_guid = 0x6033c77b;
         vsc::backend::IrCompileResult generated;
-        if (!vsc::backend::compile_fragment_ir(ir,generated)) failures += fail("texture_f fragment IR compilation failed");
+        const std::vector<vsc::backend::IrSampler2D> samplers = {{"tex",0}};
+        if (!vsc::backend::compile_fragment_machine_profile(vsc::backend::FragmentMachineProfile::Texture2D,
+                {},samplers,0xa0cb639e,0x6033c77b,generated)) failures += fail("texture_f Machine profile compilation failed");
         else if (generated.gxp.size()!=expected.size() || std::memcmp(generated.gxp.data(),expected.data(),expected.size())!=0) {
             size_t first=0; while(first<generated.gxp.size() && first<expected.size() && generated.gxp[first]==expected[first]) ++first;
-            std::fprintf(stderr,"test_gxp: texture_f fragment IR differs at 0x%zx (generated=%zu expected=%zu)\n",first,generated.gxp.size(),expected.size());
+            std::fprintf(stderr,"test_gxp: texture_f Machine profile differs at 0x%zx (generated=%zu expected=%zu)\n",first,generated.gxp.size(),expected.size());
             ++failures;
         }
     }
 
     {
         auto expected = load("texture_tint_f.gxp");
-        vsc::backend::FragmentIr ir;
-        ir.op = vsc::backend::FragmentOpKind::TextureTint2D;
-        ir.uniforms = {{"uTintColor",0}};
-        ir.samplers = {{"tex",0}};
-        ir.binary_guid = 0x69742226;
-        ir.source_guid = 0x35cc6eed;
         vsc::backend::IrCompileResult generated;
-        if (!vsc::backend::compile_fragment_ir(ir,generated)) failures += fail("texture_tint_f fragment IR compilation failed");
+        const std::vector<vsc::backend::IrUniformVec4> uniforms = {{"uTintColor",0}};
+        const std::vector<vsc::backend::IrSampler2D> samplers = {{"tex",0}};
+        if (!vsc::backend::compile_fragment_machine_profile(vsc::backend::FragmentMachineProfile::TextureTint2D,
+                uniforms,samplers,0x69742226,0x35cc6eed,generated)) failures += fail("texture_tint_f Machine profile compilation failed");
         else if (generated.gxp.size()!=expected.size() || std::memcmp(generated.gxp.data(),expected.data(),expected.size())!=0) {
             size_t first=0; while(first<generated.gxp.size() && first<expected.size() && generated.gxp[first]==expected[first]) ++first;
-            std::fprintf(stderr,"test_gxp: texture_tint_f fragment IR differs at 0x%zx (generated=%zu expected=%zu)\n",first,generated.gxp.size(),expected.size());
+            std::fprintf(stderr,"test_gxp: texture_tint_f Machine profile differs at 0x%zx (generated=%zu expected=%zu)\n",first,generated.gxp.size(),expected.size());
             ++failures;
         }
-    }
-
-    {
-        vsc::backend::FragmentIr ordered;
-        ordered.op = vsc::backend::FragmentOpKind::Arithmetic;
-        ordered.uniforms = {{"uScale",0},{"uBias",4}};
-        ordered.expressions = {
-            {vsc::backend::FragmentExprKind::Varying,0,0,4},
-            {vsc::backend::FragmentExprKind::Uniform,0,0,4},
-            {vsc::backend::FragmentExprKind::Mul,0,1,4},
-            {vsc::backend::FragmentExprKind::Uniform,1,0,4},
-            {vsc::backend::FragmentExprKind::Add,2,3,4},
-        };
-        ordered.root_expression = 4;
-
-        vsc::backend::FragmentIr shuffled = ordered;
-        shuffled.expressions = {
-            {vsc::backend::FragmentExprKind::Add,1,4,4},
-            {vsc::backend::FragmentExprKind::Mul,2,3,4},
-            {vsc::backend::FragmentExprKind::Varying,0,0,4},
-            {vsc::backend::FragmentExprKind::Uniform,0,0,4},
-            {vsc::backend::FragmentExprKind::Uniform,1,0,4},
-        };
-        shuffled.root_expression = 0;
-
-        vsc::backend::IrCompileResult a, b;
-        if (!vsc::backend::compile_fragment_ir(ordered,a) ||
-            !vsc::backend::compile_fragment_ir(shuffled,b)) {
-            failures += fail("arithmetic DAG allocation depends on topological storage order");
-        } else if (a.gxp != b.gxp) {
-            failures += fail("arithmetic DAG register allocation changed for equivalent node ordering");
-        }
-
-        vsc::backend::FragmentIr cyclic;
-        cyclic.op = vsc::backend::FragmentOpKind::Arithmetic;
-        cyclic.uniforms = {{"uBias",0}};
-        cyclic.expressions = {
-            {vsc::backend::FragmentExprKind::Add,0,1,4},
-            {vsc::backend::FragmentExprKind::Uniform,0,0,4},
-        };
-        cyclic.root_expression = 0;
-        vsc::backend::IrCompileResult rejected;
-        if (vsc::backend::compile_fragment_ir(cyclic,rejected))
-            failures += fail("cyclic arithmetic DAG was accepted");
     }
 
     {
@@ -412,65 +357,46 @@ int test_gxp_writer() {
     }
 
 
-    // One level above semantic USSE: describe the shader as Vita IR operations
-    // and require the backend to allocate/register-lower it into the same GXP.
+    // Machine-facing vertex profiles must reconstruct the public GXPs exactly.
     {
-        vsc::backend::VertexIr ir;
-        ir.binary_guid = 0xfa8e24ac;
-        ir.source_guid = 0x049b2668;
-        ir.attributes = {
-            {"aPosition", 3, 0},
-            {"aTexcoord", 2, 4},
-        };
-        ir.matrices = {{"wvp", 0}};
-        ir.ops = {
-            {vsc::backend::IrOpKind::TransformPosition, 0, 0},
-            {vsc::backend::IrOpKind::CopyVarying, 1, 0},
-        };
-
+        const vsc::backend::IrAttribute position{"aPosition",3,0};
+        vsc::backend::IrAttribute varying{"aTexcoord",2,4};
+        const vsc::backend::IrMatrix4Uniform matrix{"wvp",0};
         vsc::backend::IrCompileResult lowered;
-        if (!vsc::backend::compile_vertex_ir(ir, lowered)) {
-            std::fprintf(stderr, "test_gxp: IR lowering failed: %s\n", lowered.error.c_str());
+        if (!vsc::backend::compile_vertex_matrix_path(position,varying,matrix,
+                vsc::backend::IrVaryingSemantic::TexCoord,0xfa8e24ac,0x049b2668,lowered)) {
+            std::fprintf(stderr, "test_gxp: texture_v Machine profile failed: %s\n", lowered.error.c_str());
             ++failures;
         } else {
             const auto known = load("texture_v.gxp");
             if (lowered.gxp.size() != known.size() ||
                 std::memcmp(lowered.gxp.data(), known.data(), known.size()) != 0)
-                failures += fail("texture_v IR-lowered GXP is not byte-identical to public sample");
+                failures += fail("texture_v Machine-profile GXP is not byte-identical to public sample");
         }
 
-        // Same allocator/lowering path for color_v: only logical varying width
-        // and semantic differ from texture_v.
-        ir.binary_guid = 0x0f4c3f6b;
-        ir.source_guid = 0x41e359f5;
-        ir.attributes[1] = {"aColor", 4, 4};
-        ir.ops[1].semantic = vsc::backend::IrVaryingSemantic::Color;
-        if (!vsc::backend::compile_vertex_ir(ir, lowered)) {
-            failures += fail("color_v IR lowering failed");
+        varying={"aColor",4,4};
+        if (!vsc::backend::compile_vertex_matrix_path(position,varying,matrix,
+                vsc::backend::IrVaryingSemantic::Color,0x0f4c3f6b,0x41e359f5,lowered)) {
+            failures += fail("color_v Machine profile failed");
         } else {
             const auto known_color = load("color_v.gxp");
             if (lowered.gxp.size()!=known_color.size() || std::memcmp(lowered.gxp.data(),known_color.data(),known_color.size())!=0)
-                failures += fail("color_v IR-lowered GXP is not byte-identical to public sample");
+                failures += fail("color_v Machine-profile GXP is not byte-identical to public sample");
         }
 
-        // clear_v exercises the no-uniform construction path: float2 -> xy11.
-        vsc::backend::VertexIr clear_ir;
-        clear_ir.binary_guid=0x6bb0ce7e; clear_ir.source_guid=0xd84a6f2c;
-        clear_ir.attributes={{"aPosition",2,0}};
-        clear_ir.ops={{vsc::backend::IrOpKind::ConstructPosition,0,0}};
-        if (!vsc::backend::compile_vertex_ir(clear_ir, lowered)) {
-            std::fprintf(stderr,"test_gxp: clear_v IR lowering failed: %s\n",lowered.error.c_str()); ++failures;
+        const vsc::backend::IrAttribute clear_position{"aPosition",2,0};
+        if (!vsc::backend::compile_vertex_construct_position(clear_position,0x6bb0ce7e,0xd84a6f2c,lowered)) {
+            std::fprintf(stderr,"test_gxp: clear_v Machine profile failed: %s\n",lowered.error.c_str()); ++failures;
         } else {
             const auto known_clear=load("clear_v.gxp");
             if (lowered.gxp.size()!=known_clear.size() || std::memcmp(lowered.gxp.data(),known_clear.data(),known_clear.size())!=0)
-                failures += fail("clear_v IR-lowered GXP is not byte-identical to public sample");
+                failures += fail("clear_v Machine-profile GXP is not byte-identical to public sample");
         }
 
-        // The initial IR is deliberately fail-closed for graph shapes whose
-        // allocation rules have not been validated yet.
-        ir.ops.pop_back();
-        if (vsc::backend::compile_vertex_ir(ir, lowered))
-            failures += fail("unsupported incomplete vertex IR was accepted");
+        const vsc::backend::IrAttribute bad_varying{"aTexcoord",2,6};
+        if (vsc::backend::compile_vertex_matrix_path(position,bad_varying,matrix,
+                vsc::backend::IrVaryingSemantic::TexCoord,0,0,lowered))
+            failures += fail("unsupported vertex Machine profile was accepted");
     }
 
     return failures;

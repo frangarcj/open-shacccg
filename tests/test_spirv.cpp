@@ -1,5 +1,6 @@
 #include "openshacccg/compiler.h"
-#include "backend/vita_ir.hpp"
+#include "backend/shader_profiles.hpp"
+#include "backend/typed_ir.hpp"
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -168,27 +169,12 @@ std::vector<uint32_t> make_matrix_vertex(bool color) {
     append(m,61,{color?5u:3u,36,21}); append(m,62,{23,36}); append(m,253,{}); append(m,56,{}); return m;
 }
 
-int compare_to_ir(const std::vector<uint32_t>& spv, const vsc::backend::VertexIr& ir, const char *label) {
-    VscSpirvRequest req{}; req.words=spv.data(); req.word_count=spv.size(); req.entrypoint="main"; req.stage=VSC_STAGE_VERTEX;
+int compare_to_expected(const std::vector<uint32_t>& spv, VscStage stage,
+                        const vsc::backend::IrCompileResult& expected, const char *label) {
+    VscSpirvRequest req{}; req.words=spv.data(); req.word_count=spv.size(); req.entrypoint="main"; req.stage=stage;
     VscCompileResult out{}; const int rc=vsc_compile_spirv(&req,&out);
-    vsc::backend::IrCompileResult expected; const bool irok=vsc::backend::compile_vertex_ir(ir,expected);
     int fail=0;
-    if (rc!=0 || !irok || !out.gxp_data || out.diagnostic_count!=0) {
-        std::printf("test_spirv: %s did not compile",label);
-        if (out.diagnostic_count && out.diagnostics && out.diagnostics[0].message)
-            std::printf(": %s", out.diagnostics[0].message);
-        std::printf("\n"); fail=1;
-    }
-    else if (out.gxp_size!=expected.gxp.size() || std::memcmp(out.gxp_data,expected.gxp.data(),expected.gxp.size())!=0) { std::printf("test_spirv: %s SPIR-V lowering differs from direct IR\n",label); fail=1; }
-    vsc_destroy_result(&req.allocator,&out); return fail;
-}
-
-int compare_fragment_to_ir(const std::vector<uint32_t>& spv, const vsc::backend::FragmentIr& ir, const char *label) {
-    VscSpirvRequest req{}; req.words=spv.data(); req.word_count=spv.size(); req.entrypoint="main"; req.stage=VSC_STAGE_FRAGMENT;
-    VscCompileResult out{}; const int rc=vsc_compile_spirv(&req,&out);
-    vsc::backend::IrCompileResult expected; const bool irok=vsc::backend::compile_fragment_ir(ir,expected);
-    int fail=0;
-    if (rc!=0 || !irok || !out.gxp_data || out.diagnostic_count!=0) {
+    if (rc!=0 || expected.gxp.empty() || !out.gxp_data || out.diagnostic_count!=0) {
         std::printf("test_spirv: %s did not compile",label);
         if (out.diagnostic_count && out.diagnostics && out.diagnostics[0].message)
             std::printf(": %s", out.diagnostics[0].message);
@@ -196,7 +182,7 @@ int compare_fragment_to_ir(const std::vector<uint32_t>& spv, const vsc::backend:
     }
     else if (out.gxp_size!=expected.gxp.size() || std::memcmp(out.gxp_data,expected.gxp.data(),expected.gxp.size())!=0) {
         size_t first=0; while(first<out.gxp_size && first<expected.gxp.size() && out.gxp_data[first]==expected.gxp[first]) ++first;
-        std::printf("test_spirv: %s SPIR-V lowering differs from direct fragment IR at 0x%zx (%zu vs %zu)\n",label,first,out.gxp_size,expected.gxp.size()); fail=1;
+        std::printf("test_spirv: %s SPIR-V lowering differs from direct Typed/Machine output at 0x%zx (%zu vs %zu)\n",label,first,out.gxp_size,expected.gxp.size()); fail=1;
     }
     vsc_destroy_result(&req.allocator,&out); return fail;
 }
@@ -205,82 +191,119 @@ int compare_fragment_to_ir(const std::vector<uint32_t>& spv, const vsc::backend:
 int test_spirv() {
     int fail=0;
     {
-        auto spv=make_clear_fragment(); vsc::backend::FragmentIr ir; ir.uniforms={{"uClearColor",0}};
-        fail += compare_fragment_to_ir(spv,ir,"clear_f");
+        auto spv=make_clear_fragment();
+        vsc::backend::IrCompileResult expected;
+        const std::vector<vsc::backend::IrUniformVec4> uniforms={{"uClearColor",0}};
+        vsc::backend::compile_fragment_machine_profile(vsc::backend::FragmentMachineProfile::UniformColor,
+                                                       uniforms,{},0,0,expected);
+        fail += compare_to_expected(spv,VSC_STAGE_FRAGMENT,expected,"clear_f");
     }
     {
-        auto spv=make_color_fragment(); vsc::backend::FragmentIr ir; ir.op=vsc::backend::FragmentOpKind::VaryingColor;
-        fail += compare_fragment_to_ir(spv,ir,"color_f");
+        auto spv=make_color_fragment();
+        vsc::backend::IrCompileResult expected;
+        vsc::backend::compile_fragment_machine_profile(vsc::backend::FragmentMachineProfile::VaryingColor,
+                                                       {},{},0,0,expected);
+        fail += compare_to_expected(spv,VSC_STAGE_FRAGMENT,expected,"color_f");
     }
     {
-        auto spv=make_texture_fragment(); vsc::backend::FragmentIr ir; ir.op=vsc::backend::FragmentOpKind::Texture2D; ir.samplers={{"tex",0}};
-        fail += compare_fragment_to_ir(spv,ir,"texture_f");
+        auto spv=make_texture_fragment();
+        vsc::backend::IrCompileResult expected;
+        const std::vector<vsc::backend::IrSampler2D> samplers={{"tex",0}};
+        vsc::backend::compile_fragment_machine_profile(vsc::backend::FragmentMachineProfile::Texture2D,
+                                                       {},samplers,0,0,expected);
+        fail += compare_to_expected(spv,VSC_STAGE_FRAGMENT,expected,"texture_f");
     }
     {
-        auto spv=make_texture_tint_fragment(); vsc::backend::FragmentIr ir; ir.op=vsc::backend::FragmentOpKind::TextureTint2D; ir.uniforms={{"uTintColor",0}}; ir.samplers={{"tex",0}};
-        fail += compare_fragment_to_ir(spv,ir,"texture_tint_f");
+        auto spv=make_texture_tint_fragment();
+        vsc::backend::IrCompileResult expected;
+        const std::vector<vsc::backend::IrUniformVec4> uniforms={{"uTintColor",0}};
+        const std::vector<vsc::backend::IrSampler2D> samplers={{"tex",0}};
+        vsc::backend::compile_fragment_machine_profile(vsc::backend::FragmentMachineProfile::TextureTint2D,
+                                                       uniforms,samplers,0,0,expected);
+        fail += compare_to_expected(spv,VSC_STAGE_FRAGMENT,expected,"texture_tint_f");
     }
     {
         auto spv=make_generic_arithmetic_fragment();
-        vsc::backend::FragmentIr ir; ir.op=vsc::backend::FragmentOpKind::Arithmetic;
-        ir.uniforms={{"uScale",0},{"uBias",4}};
-        ir.expressions={
-            {vsc::backend::FragmentExprKind::Varying,0,0,4},
-            {vsc::backend::FragmentExprKind::Uniform,0,0,4},
-            {vsc::backend::FragmentExprKind::Mul,0,1,4},
-            {vsc::backend::FragmentExprKind::Uniform,1,0,4},
-            {vsc::backend::FragmentExprKind::Add,2,3,4},
-        };
-        ir.root_expression=4;
-        fail += compare_fragment_to_ir(spv,ir,"generic_arithmetic_f");
+        vsc::backend::TypedShader shader(vsc::backend::TypedStage::Fragment);
+        auto &p=shader.program();
+        const auto color=p.input<vsc::backend::TypedType::F32x4>(0);
+        const auto scale=p.uniform<vsc::backend::TypedType::F32x4>(0);
+        const auto bias=p.uniform<vsc::backend::TypedType::F32x4>(4);
+        shader.add_resource(vsc::backend::TypedResourceKind::Input,color,vsc::backend::TypedType::F32x4,"vColor",0);
+        shader.add_resource(vsc::backend::TypedResourceKind::Uniform,scale,vsc::backend::TypedType::F32x4,"uScale",0);
+        shader.add_resource(vsc::backend::TypedResourceKind::Uniform,bias,vsc::backend::TypedType::F32x4,"uBias",4);
+        const auto mul=p.make_value<vsc::backend::TypedType::F32x4>();
+        const auto sum=p.make_value<vsc::backend::TypedType::F32x4>();
+        p.emit<vsc::backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(vsc::backend::TypedFloatOp::Mul),mul,color,scale);
+        p.emit<vsc::backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(vsc::backend::TypedFloatOp::Add),sum,mul,bias);
+        const uint16_t output=shader.add_resource(vsc::backend::TypedResourceKind::Output,{},vsc::backend::TypedType::F32x4,"color",0,
+                                                  vsc::backend::TypedSemantic::Color,0);
+        p.emit<vsc::backend::TypedOpcode::StoreOutput>(0,{},sum,{},output);
+        vsc::backend::IrCompileResult expected; vsc::backend::compile_typed_shader(shader,expected);
+        fail += compare_to_expected(spv,VSC_STAGE_FRAGMENT,expected,"generic_arithmetic_f");
     }
     {
         auto spv=make_sub_neg_fragment();
-        vsc::backend::FragmentIr ir; ir.op=vsc::backend::FragmentOpKind::Arithmetic;
-        ir.uniforms={{"uBias",0}};
+        vsc::backend::TypedShader shader(vsc::backend::TypedStage::Fragment);
+        auto &p=shader.program();
+        const auto color=p.input<vsc::backend::TypedType::F32x4>(0);
+        const auto bias=p.uniform<vsc::backend::TypedType::F32x4>(0);
+        shader.add_resource(vsc::backend::TypedResourceKind::Input,color,vsc::backend::TypedType::F32x4,"vColor",0);
+        shader.add_resource(vsc::backend::TypedResourceKind::Uniform,bias,vsc::backend::TypedType::F32x4,"uBias",0);
+        vsc::backend::TypedValue result{};
 #if defined(OPENSHACCG_ENABLE_SPIRV_TOOLS)
         // -O canonicalizes vColor - (-uBias) to vColor + uBias.
-        ir.expressions={
-            {vsc::backend::FragmentExprKind::Varying,0,0,4},
-            {vsc::backend::FragmentExprKind::Uniform,0,0,4},
-            {vsc::backend::FragmentExprKind::Add,0,1,4},
-        };
-        ir.root_expression=2;
+        result=p.make_value<vsc::backend::TypedType::F32x4>();
+        p.emit<vsc::backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(vsc::backend::TypedFloatOp::Add),result,color,bias);
 #else
-        ir.expressions={
-            {vsc::backend::FragmentExprKind::Varying,0,0,4},
-            {vsc::backend::FragmentExprKind::Uniform,0,0,4},
-            {vsc::backend::FragmentExprKind::Neg,1,0,4},
-            {vsc::backend::FragmentExprKind::Sub,0,2,4},
-        };
-        ir.root_expression=3;
+        const auto neg=p.make_value<vsc::backend::TypedType::F32x4>();
+        result=p.make_value<vsc::backend::TypedType::F32x4>();
+        p.emit<vsc::backend::TypedOpcode::FloatUnary>(static_cast<uint8_t>(vsc::backend::TypedFloatUnaryOp::Neg),neg,bias);
+        p.emit<vsc::backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(vsc::backend::TypedFloatOp::Sub),result,color,neg);
 #endif
-        fail += compare_fragment_to_ir(spv,ir,"generic_sub_neg_f");
+        const uint16_t output=shader.add_resource(vsc::backend::TypedResourceKind::Output,{},vsc::backend::TypedType::F32x4,"color",0,
+                                                  vsc::backend::TypedSemantic::Color,0);
+        p.emit<vsc::backend::TypedOpcode::StoreOutput>(0,{},result,{},output);
+        vsc::backend::IrCompileResult expected; vsc::backend::compile_typed_shader(shader,expected);
+        fail += compare_to_expected(spv,VSC_STAGE_FRAGMENT,expected,"generic_sub_neg_f");
     }
     {
         auto spv=make_dot_fragment();
-        vsc::backend::FragmentIr ir; ir.op=vsc::backend::FragmentOpKind::Arithmetic;
-        ir.uniforms={{"uWeights",0}};
-        ir.expressions={
-            {vsc::backend::FragmentExprKind::Varying,0,0,4},
-            {vsc::backend::FragmentExprKind::Uniform,0,0,4},
-            {vsc::backend::FragmentExprKind::Dot,0,1,1},
-            {vsc::backend::FragmentExprKind::Splat,2,0,4},
-        };
-        ir.root_expression=3;
-        fail += compare_fragment_to_ir(spv,ir,"generic_dot_f");
+        vsc::backend::TypedShader shader(vsc::backend::TypedStage::Fragment);
+        auto &p=shader.program();
+        const auto color=p.input<vsc::backend::TypedType::F32x4>(0);
+        const auto weights=p.uniform<vsc::backend::TypedType::F32x4>(0);
+        shader.add_resource(vsc::backend::TypedResourceKind::Input,color,vsc::backend::TypedType::F32x4,"vColor",0);
+        shader.add_resource(vsc::backend::TypedResourceKind::Uniform,weights,vsc::backend::TypedType::F32x4,"uWeights",0);
+        const auto dot=p.make_value<vsc::backend::TypedType::F32>();
+        const auto splat=p.make_value<vsc::backend::TypedType::F32x4>();
+        p.emit<vsc::backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(vsc::backend::TypedFloatOp::Dot),dot,color,weights);
+        p.emit<vsc::backend::TypedOpcode::FloatSplat>(0,splat,dot);
+        const uint16_t output=shader.add_resource(vsc::backend::TypedResourceKind::Output,{},vsc::backend::TypedType::F32x4,"color",0,
+                                                  vsc::backend::TypedSemantic::Color,0);
+        p.emit<vsc::backend::TypedOpcode::StoreOutput>(0,{},splat,{},output);
+        vsc::backend::IrCompileResult expected; vsc::backend::compile_typed_shader(shader,expected);
+        fail += compare_to_expected(spv,VSC_STAGE_FRAGMENT,expected,"generic_dot_f");
     }
     {
-        auto spv=make_clear_vertex(); vsc::backend::VertexIr ir; ir.attributes={{"aPosition",2,0}}; ir.ops={{vsc::backend::IrOpKind::ConstructPosition,0,0}};
-        fail += compare_to_ir(spv,ir,"clear_v");
+        auto spv=make_clear_vertex();
+        vsc::backend::IrCompileResult expected;
+        vsc::backend::compile_vertex_construct_position({"aPosition",2,0},0,0,expected);
+        fail += compare_to_expected(spv,VSC_STAGE_VERTEX,expected,"clear_v");
     }
     {
-        auto spv=make_matrix_vertex(false); vsc::backend::VertexIr ir; ir.attributes={{"aPosition",3,0},{"aTexcoord",2,4}}; ir.matrices={{"wvp",0}}; ir.ops={{vsc::backend::IrOpKind::TransformPosition,0,0},{vsc::backend::IrOpKind::CopyVarying,1,0,vsc::backend::IrVaryingSemantic::TexCoord}};
-        fail += compare_to_ir(spv,ir,"texture_v");
+        auto spv=make_matrix_vertex(false);
+        vsc::backend::IrCompileResult expected;
+        vsc::backend::compile_vertex_matrix_path({"aPosition",3,0},{"aTexcoord",2,4},{"wvp",0},
+                                                 vsc::backend::IrVaryingSemantic::TexCoord,0,0,expected);
+        fail += compare_to_expected(spv,VSC_STAGE_VERTEX,expected,"texture_v");
     }
     {
-        auto spv=make_matrix_vertex(true); vsc::backend::VertexIr ir; ir.attributes={{"aPosition",3,0},{"aColor",4,4}}; ir.matrices={{"wvp",0}}; ir.ops={{vsc::backend::IrOpKind::TransformPosition,0,0},{vsc::backend::IrOpKind::CopyVarying,1,0,vsc::backend::IrVaryingSemantic::Color}};
-        fail += compare_to_ir(spv,ir,"color_v");
+        auto spv=make_matrix_vertex(true);
+        vsc::backend::IrCompileResult expected;
+        vsc::backend::compile_vertex_matrix_path({"aPosition",3,0},{"aColor",4,4},{"wvp",0},
+                                                 vsc::backend::IrVaryingSemantic::Color,0,0,expected);
+        fail += compare_to_expected(spv,VSC_STAGE_VERTEX,expected,"color_v");
     }
 
     // Structurally valid but semantically empty vertex module reaches the new

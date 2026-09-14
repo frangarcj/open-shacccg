@@ -22,7 +22,7 @@ set(OPENSHACCG_CORE_SOURCES
     src/backend/machine_ir.cpp
     src/backend/program_builder.cpp
     src/backend/typed_ir.cpp
-    src/backend/vita_ir.cpp
+    src/backend/shader_profiles.cpp
     src/gxp/gxp_writer.cpp
     src/gxp/gxp_reader.cpp
     src/usse/usse.cpp
