@@ -4,7 +4,8 @@ project(open_shacccg LANGUAGES C CXX)
 option(OPENSHACCG_BUILD_TESTS "Build host tests" ON)
 option(OPENSHACCG_BUILD_VITA_STATIC "Build Vita static libshacccg.a" OFF)
 option(OPENSHACCG_ENABLE_GLSLANG "Enable glslang frontend adapter" OFF)
-option(OPENSHACCG_ENABLE_SPIRV_CROSS "Enable SPIRV-Cross backend adapter" OFF)
+option(OPENSHACCG_ENABLE_SPIRV_TOOLS "Optimize SPIR-V with SPIRV-Tools before Vita lowering" OFF)
+option(OPENSHACCG_ENABLE_SPIRV_CROSS "Validate/reflect SPIR-V with SPIRV-Cross before Vita lowering" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,6 +15,8 @@ set(OPENSHACCG_CORE_SOURCES
     src/core/allocator.cpp
     src/core/compiler.cpp
     src/frontend/cg_compat.cpp
+    src/spirv/spirv_cross_adapter.cpp
+    src/spirv/spirv_pipeline.cpp
     src/spirv/spirv_reader.cpp
     src/backend/backend.cpp
     src/backend/machine_ir.cpp
@@ -24,6 +27,31 @@ set(OPENSHACCG_CORE_SOURCES
     src/gxp/gxp_reader.cpp
     src/usse/usse.cpp
 )
+
+if(OPENSHACCG_ENABLE_SPIRV_TOOLS)
+    find_package(SPIRV-Tools-opt CONFIG REQUIRED)
+endif()
+
+if(OPENSHACCG_ENABLE_SPIRV_CROSS)
+    find_path(OPENSHACCG_SPIRV_CROSS_INCLUDE_DIR spirv_cross/spirv_cross.hpp REQUIRED)
+    find_library(OPENSHACCG_SPIRV_CROSS_CORE_LIBRARY NAMES spirv-cross-core REQUIRED)
+endif()
+
+function(openshacccg_configure_target target)
+    target_include_directories(${target} PUBLIC include PRIVATE src)
+    target_compile_definitions(${target} PRIVATE
+        $<$<BOOL:${OPENSHACCG_ENABLE_GLSLANG}>:OPENSHACCG_ENABLE_GLSLANG=1>
+        $<$<BOOL:${OPENSHACCG_ENABLE_SPIRV_TOOLS}>:OPENSHACCG_ENABLE_SPIRV_TOOLS=1>
+        $<$<BOOL:${OPENSHACCG_ENABLE_SPIRV_CROSS}>:OPENSHACCG_ENABLE_SPIRV_CROSS=1>
+    )
+    if(OPENSHACCG_ENABLE_SPIRV_TOOLS)
+        target_link_libraries(${target} PRIVATE SPIRV-Tools-opt)
+    endif()
+    if(OPENSHACCG_ENABLE_SPIRV_CROSS)
+        target_include_directories(${target} PRIVATE ${OPENSHACCG_SPIRV_CROSS_INCLUDE_DIR})
+        target_link_libraries(${target} PRIVATE ${OPENSHACCG_SPIRV_CROSS_CORE_LIBRARY})
+    endif()
+endfunction()
 
 if(OPENSHACCG_BUILD_VITA_STATIC)
     if(NOT CMAKE_CXX_COMPILER MATCHES "arm-vita-eabi")
@@ -38,19 +66,11 @@ if(OPENSHACCG_BUILD_VITA_STATIC)
         ${OPENSHACCG_CORE_SOURCES}
         src/abi/sce_shacccg.cpp
     )
-    target_include_directories(shacccg PUBLIC include PRIVATE src)
-    target_compile_definitions(shacccg PRIVATE
-        $<$<BOOL:${OPENSHACCG_ENABLE_GLSLANG}>:OPENSHACCG_ENABLE_GLSLANG=1>
-        $<$<BOOL:${OPENSHACCG_ENABLE_SPIRV_CROSS}>:OPENSHACCG_ENABLE_SPIRV_CROSS=1>
-    )
+    openshacccg_configure_target(shacccg)
     set_target_properties(shacccg PROPERTIES OUTPUT_NAME shacccg)
 else()
     add_library(openshacccg_core STATIC ${OPENSHACCG_CORE_SOURCES})
-    target_include_directories(openshacccg_core PUBLIC include PRIVATE src)
-    target_compile_definitions(openshacccg_core PRIVATE
-        $<$<BOOL:${OPENSHACCG_ENABLE_GLSLANG}>:OPENSHACCG_ENABLE_GLSLANG=1>
-        $<$<BOOL:${OPENSHACCG_ENABLE_SPIRV_CROSS}>:OPENSHACCG_ENABLE_SPIRV_CROSS=1>
-    )
+    openshacccg_configure_target(openshacccg_core)
 
     add_library(openshacccg_abi STATIC src/abi/sce_shacccg.cpp)
     target_include_directories(openshacccg_abi PUBLIC include PRIVATE src)
@@ -71,6 +91,10 @@ if(OPENSHACCG_BUILD_TESTS AND NOT OPENSHACCG_BUILD_VITA_STATIC)
     )
     target_link_libraries(openshacccg_tests PRIVATE openshacccg_abi)
     target_include_directories(openshacccg_tests PRIVATE src)
-    target_compile_definitions(openshacccg_tests PRIVATE OPENSHACCG_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(openshacccg_tests PRIVATE
+        OPENSHACCG_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        $<$<BOOL:${OPENSHACCG_ENABLE_SPIRV_TOOLS}>:OPENSHACCG_ENABLE_SPIRV_TOOLS=1>
+        $<$<BOOL:${OPENSHACCG_ENABLE_SPIRV_CROSS}>:OPENSHACCG_ENABLE_SPIRV_CROSS=1>
+    )
     add_test(NAME openshacccg_tests COMMAND openshacccg_tests)
 endif()

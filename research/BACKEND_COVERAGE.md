@@ -92,9 +92,26 @@ dispatch mechanically; keep semantic decisions, hardware constraints and
 fail-closed policy handwritten. This preserves the useful separation found in
 compact ISA decoders without importing Vita3K's GPL implementation.
 
+## Optional optimized SPIR-V frontend
+
+The host build now has two independent optional stages before Vita lowering:
+
+- `OPENSHACCG_ENABLE_SPIRV_TOOLS` runs the SPIRV-Tools performance recipe with
+  validation enabled while preserving interfaces, bindings and specialization
+  constants.
+- `OPENSHACCG_ENABLE_SPIRV_CROSS` parses the resulting module and performs
+  entry-point/resource reflection. Its first direct adapter lowers scalar U32
+  stage inputs, bitwise operations, integer comparisons and a structured
+  conditional discard into the compact Typed Vita IR.
+
+A regression exercises the full development path `SPIR-V -> SPIRV-Tools ->
+SPIRV-Cross -> Typed IR -> Machine IR -> VBW/VTST/KILL`. The old dependency-free
+SPIR-V lowering remains the fallback and the default Vita static build does not
+link host SPIRV-Tools/SPIRV-Cross libraries.
+
 ## Next backend order
 
-1. **Broaden typed Vita IR.** The compact typed layer now covers U32 resources, bitwise, compare and discard. Add F32/F16/vector arithmetic and conversions without reintroducing node classes.
+1. **Broaden SPIRV-Cross -> typed Vita IR.** The compact typed layer and first Cross adapter now cover U32 inputs, bitwise, compare and conditional discard. Add F32/F16/vector arithmetic, uniforms/resources and conversions without reintroducing node classes.
 2. **Bank-aware value allocation.** U32 virtual values now receive TEMP registers from lifetimes. Extend the same allocator with per-op bank/width constraints for F32/F16 vectors, PA/SA/OUTPUT and GPI staging.
 3. **BR control flow.** Add raw and semantic BR only once branch offset/direction semantics are anchored by real words. Then lower structured `if/else`; loops come after branch back-edges are independently validated.
 4. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.

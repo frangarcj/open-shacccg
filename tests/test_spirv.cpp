@@ -17,7 +17,11 @@ void append_string_inst(std::vector<uint32_t>& m, uint16_t op, std::initializer_
     m.push_back(inst(uint16_t(1+prefix.size()+nw+suffix.size()),op));
     m.insert(m.end(),prefix.begin(),prefix.end()); m.insert(m.end(),sw.begin(),sw.end()); m.insert(m.end(),suffix.begin(),suffix.end());
 }
-std::vector<uint32_t> header(uint32_t bound) { return {0x07230203u,0x00010000u,0u,bound,0u}; }
+std::vector<uint32_t> header(uint32_t bound) {
+    std::vector<uint32_t> m={0x07230203u,0x00010000u,0u,bound,0u};
+    append(m,17,{1}); // OpCapability Shader
+    return m;
+}
 
 std::vector<uint32_t> make_clear_vertex() {
     auto m=header(32); append(m,14,{0,1});
@@ -36,6 +40,7 @@ std::vector<uint32_t> make_clear_vertex() {
 std::vector<uint32_t> make_clear_fragment() {
     auto m=header(32); append(m,14,{0,1});
     append_string_inst(m,15,{4,20},"main",{16});
+    append(m,16,{20,7}); // OriginUpperLeft
     append_string_inst(m,5,{15},"uClearColor");
     append(m,71,{16,30,0});
     append(m,22,{2,32}); append(m,23,{5,2,4});
@@ -50,6 +55,7 @@ std::vector<uint32_t> make_clear_fragment() {
 std::vector<uint32_t> make_color_fragment() {
     auto m=header(32); append(m,14,{0,1});
     append_string_inst(m,15,{4,20},"main",{15,16});
+    append(m,16,{20,7});
     append_string_inst(m,5,{15},"vColor");
     append(m,71,{15,30,0}); append(m,71,{16,30,0});
     append(m,22,{2,32}); append(m,23,{5,2,4});
@@ -64,6 +70,7 @@ std::vector<uint32_t> make_color_fragment() {
 std::vector<uint32_t> make_texture_fragment() {
     auto m=header(40); append(m,14,{0,1});
     append_string_inst(m,15,{4,30},"main",{15,17});
+    append(m,16,{30,7});
     append_string_inst(m,5,{15},"vTexcoord"); append_string_inst(m,5,{16},"tex");
     append(m,71,{15,30,0}); append(m,71,{17,30,0});
     append(m,22,{2,32}); append(m,23,{3,2,2}); append(m,23,{5,2,4});
@@ -80,6 +87,7 @@ std::vector<uint32_t> make_texture_fragment() {
 std::vector<uint32_t> make_texture_tint_fragment() {
     auto m=header(52); append(m,14,{0,1});
     append_string_inst(m,15,{4,40},"main",{15,18});
+    append(m,16,{40,7});
     append_string_inst(m,5,{15},"vTexcoord"); append_string_inst(m,5,{16},"tex"); append_string_inst(m,5,{17},"uTintColor");
     append(m,71,{15,30,0}); append(m,71,{18,30,0});
     append(m,22,{2,32}); append(m,23,{3,2,2}); append(m,23,{5,2,4});
@@ -99,6 +107,7 @@ std::vector<uint32_t> make_sub_neg_fragment() {
     // color = vColor - (-uBias)
     auto m=header(64); append(m,14,{0,1});
     append_string_inst(m,15,{4,50},"main",{15,17});
+    append(m,16,{50,7});
     append_string_inst(m,5,{15},"vColor"); append_string_inst(m,5,{16},"uBias");
     append(m,71,{15,30,0}); append(m,71,{17,30,0});
     append(m,22,{2,32}); append(m,23,{5,2,4});
@@ -115,6 +124,7 @@ std::vector<uint32_t> make_dot_fragment() {
     // color = dot(vColor, uWeights).xxxx
     auto m=header(64); append(m,14,{0,1});
     append_string_inst(m,15,{4,50},"main",{15,17});
+    append(m,16,{50,7});
     append_string_inst(m,5,{15},"vColor"); append_string_inst(m,5,{16},"uWeights");
     append(m,71,{15,30,0}); append(m,71,{17,30,0});
     append(m,22,{2,32}); append(m,23,{5,2,4});
@@ -131,6 +141,7 @@ std::vector<uint32_t> make_generic_arithmetic_fragment() {
     // color = vColor * uScale + uBias
     auto m=header(64); append(m,14,{0,1});
     append_string_inst(m,15,{4,50},"main",{15,18});
+    append(m,16,{50,7});
     append_string_inst(m,5,{15},"vColor"); append_string_inst(m,5,{16},"uScale"); append_string_inst(m,5,{17},"uBias");
     append(m,71,{15,30,0}); append(m,71,{18,30,0});
     append(m,22,{2,32}); append(m,23,{5,2,4});
@@ -145,7 +156,7 @@ std::vector<uint32_t> make_generic_arithmetic_fragment() {
 
 std::vector<uint32_t> make_matrix_vertex(bool color) {
     auto m=header(48); append(m,14,{0,1});
-    append_string_inst(m,15,{0,30},"main",{20,21,22,23,24});
+    append_string_inst(m,15,{0,30},"main",{20,21,22,23});
     append_string_inst(m,5,{20},"aPosition"); append_string_inst(m,5,{21},color?"aColor":"aTexcoord"); append_string_inst(m,5,{24},"wvp");
     append(m,71,{20,30,0}); append(m,71,{21,30,1}); append(m,71,{22,11,0}); append(m,71,{23,30,0});
     append(m,22,{2,32}); append(m,23,{3,2,2}); append(m,23,{4,2,3}); append(m,23,{5,2,4}); append(m,24,{6,5,4});
@@ -162,7 +173,12 @@ int compare_to_ir(const std::vector<uint32_t>& spv, const vsc::backend::VertexIr
     VscCompileResult out{}; const int rc=vsc_compile_spirv(&req,&out);
     vsc::backend::IrCompileResult expected; const bool irok=vsc::backend::compile_vertex_ir(ir,expected);
     int fail=0;
-    if (rc!=0 || !irok || !out.gxp_data || out.diagnostic_count!=0) { std::printf("test_spirv: %s did not compile\n",label); fail=1; }
+    if (rc!=0 || !irok || !out.gxp_data || out.diagnostic_count!=0) {
+        std::printf("test_spirv: %s did not compile",label);
+        if (out.diagnostic_count && out.diagnostics && out.diagnostics[0].message)
+            std::printf(": %s", out.diagnostics[0].message);
+        std::printf("\n"); fail=1;
+    }
     else if (out.gxp_size!=expected.gxp.size() || std::memcmp(out.gxp_data,expected.gxp.data(),expected.gxp.size())!=0) { std::printf("test_spirv: %s SPIR-V lowering differs from direct IR\n",label); fail=1; }
     vsc_destroy_result(&req.allocator,&out); return fail;
 }
@@ -172,7 +188,12 @@ int compare_fragment_to_ir(const std::vector<uint32_t>& spv, const vsc::backend:
     VscCompileResult out{}; const int rc=vsc_compile_spirv(&req,&out);
     vsc::backend::IrCompileResult expected; const bool irok=vsc::backend::compile_fragment_ir(ir,expected);
     int fail=0;
-    if (rc!=0 || !irok || !out.gxp_data || out.diagnostic_count!=0) { std::printf("test_spirv: %s did not compile\n",label); fail=1; }
+    if (rc!=0 || !irok || !out.gxp_data || out.diagnostic_count!=0) {
+        std::printf("test_spirv: %s did not compile",label);
+        if (out.diagnostic_count && out.diagnostics && out.diagnostics[0].message)
+            std::printf(": %s", out.diagnostics[0].message);
+        std::printf("\n"); fail=1;
+    }
     else if (out.gxp_size!=expected.gxp.size() || std::memcmp(out.gxp_data,expected.gxp.data(),expected.gxp.size())!=0) { std::printf("test_spirv: %s SPIR-V lowering differs from direct fragment IR\n",label); fail=1; }
     vsc_destroy_result(&req.allocator,&out); return fail;
 }
@@ -214,6 +235,15 @@ int test_spirv() {
         auto spv=make_sub_neg_fragment();
         vsc::backend::FragmentIr ir; ir.op=vsc::backend::FragmentOpKind::Arithmetic;
         ir.uniforms={{"uBias",0}};
+#if defined(OPENSHACCG_ENABLE_SPIRV_TOOLS)
+        // -O canonicalizes vColor - (-uBias) to vColor + uBias.
+        ir.expressions={
+            {vsc::backend::FragmentExprKind::Varying,0,0,4},
+            {vsc::backend::FragmentExprKind::Uniform,0,0,4},
+            {vsc::backend::FragmentExprKind::Add,0,1,4},
+        };
+        ir.root_expression=2;
+#else
         ir.expressions={
             {vsc::backend::FragmentExprKind::Varying,0,0,4},
             {vsc::backend::FragmentExprKind::Uniform,0,0,4},
@@ -221,6 +251,7 @@ int test_spirv() {
             {vsc::backend::FragmentExprKind::Sub,0,2,4},
         };
         ir.root_expression=3;
+#endif
         fail += compare_fragment_to_ir(spv,ir,"generic_sub_neg_f");
     }
     {
@@ -251,7 +282,7 @@ int test_spirv() {
 
     // Structurally valid but semantically empty vertex module reaches the new
     // fail-closed subset diagnostic rather than the old backend placeholder.
-    const uint32_t minimal[] = {0x07230203u,0x00010000u,0u,5u,0u, inst(3,14),0u,1u, inst(5,15),0u,1u,0x6e69616du,0u, inst(2,19),2u, inst(3,33),3u,2u, inst(5,54),2u,1u,0u,3u, inst(2,248),4u, inst(1,253), inst(1,56)};
+    const uint32_t minimal[] = {0x07230203u,0x00010000u,0u,5u,0u, inst(2,17),1u, inst(3,14),0u,1u, inst(5,15),0u,1u,0x6e69616du,0u, inst(2,19),2u, inst(3,33),3u,2u, inst(5,54),2u,1u,0u,3u, inst(2,248),4u, inst(1,253), inst(1,56)};
     VscSpirvRequest req{}; req.words=minimal; req.word_count=sizeof(minimal)/4; req.entrypoint="main"; req.stage=VSC_STAGE_VERTEX; VscCompileResult out{};
     int rc=vsc_compile_spirv(&req,&out); if(rc!=1 || !out.diagnostics || out.diagnostics[0].code!=0x2210) ++fail; vsc_destroy_result(&req.allocator,&out);
     req.stage=VSC_STAGE_FRAGMENT; rc=vsc_compile_spirv(&req,&out); if(rc!=1 || !out.diagnostics || out.diagnostics[0].code!=0x2201) ++fail; vsc_destroy_result(&req.allocator,&out);

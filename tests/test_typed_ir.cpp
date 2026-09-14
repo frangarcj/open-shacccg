@@ -1,13 +1,66 @@
 #include "backend/typed_ir.hpp"
+#include "spirv/spirv_cross_adapter.hpp"
+#include "spirv/spirv_pipeline.hpp"
 #include "usse/usse.hpp"
 
 #include <cstdio>
+#include <cstring>
+#include <vector>
 
 namespace {
 int fail(const char *message) {
     std::fprintf(stderr, "test_typed_ir: %s\n", message);
     return 1;
 }
+
+#if defined(OPENSHACCG_ENABLE_SPIRV_CROSS)
+constexpr uint32_t spv_inst(uint16_t wc, uint16_t op) { return (uint32_t(wc) << 16) | op; }
+void spv_append(std::vector<uint32_t> &m, uint16_t op, std::initializer_list<uint32_t> args) {
+    m.push_back(spv_inst(static_cast<uint16_t>(args.size() + 1), op));
+    m.insert(m.end(), args.begin(), args.end());
+}
+void spv_string(std::vector<uint32_t> &m, uint16_t op, std::initializer_list<uint32_t> prefix,
+                const char *text, std::initializer_list<uint32_t> suffix = {}) {
+    const size_t bytes = std::strlen(text) + 1;
+    std::vector<uint32_t> words((bytes + 3) / 4, 0);
+    std::memcpy(words.data(), text, bytes);
+    m.push_back(spv_inst(static_cast<uint16_t>(1 + prefix.size() + words.size() + suffix.size()), op));
+    m.insert(m.end(), prefix.begin(), prefix.end());
+    m.insert(m.end(), words.begin(), words.end());
+    m.insert(m.end(), suffix.begin(), suffix.end());
+}
+
+std::vector<uint32_t> make_u32_discard_spirv() {
+    std::vector<uint32_t> m={0x07230203u,0x00010000u,0u,32u,0u};
+    spv_append(m,17,{1});             // Capability Shader
+    spv_append(m,14,{0,1});           // MemoryModel Logical GLSL450
+    spv_string(m,15,{4,20},"main",{10,11});
+    spv_append(m,16,{20,7});          // OriginUpperLeft
+    spv_append(m,71,{10,30,0});       // Location 0
+    spv_append(m,71,{11,30,1});       // Location 1
+    spv_append(m,19,{1});             // void
+    spv_append(m,20,{2});             // bool
+    spv_append(m,21,{3,32,0});        // u32
+    spv_append(m,32,{4,1,3});         // ptr Input u32
+    spv_append(m,33,{5,1});           // void()
+    spv_append(m,59,{4,10,1});
+    spv_append(m,59,{4,11,1});
+    spv_append(m,54,{1,20,0,5});
+    spv_append(m,248,{21});
+    spv_append(m,61,{3,22,10});
+    spv_append(m,61,{3,23,11});
+    spv_append(m,197,{3,24,22,23});   // BitwiseOr
+    spv_append(m,170,{2,25,24,23});   // IEqual
+    spv_append(m,247,{27,0});         // SelectionMerge
+    spv_append(m,250,{25,26,27});     // BranchConditional
+    spv_append(m,248,{26});
+    spv_append(m,252,{});              // Kill
+    spv_append(m,248,{27});
+    spv_append(m,253,{});
+    spv_append(m,56,{});
+    return m;
+}
+#endif
 } // namespace
 
 int test_typed_ir() {
@@ -107,6 +160,39 @@ int test_typed_ir() {
         if (compile_typed_program(program, result))
             failures += fail("typed bitwise accepted unsupported F32 operands");
     }
+
+#if defined(OPENSHACCG_ENABLE_SPIRV_CROSS)
+    {
+        const auto source = make_u32_discard_spirv();
+        PreparedSpirv prepared;
+        Diagnostic diagnostic;
+        if (!prepare_spirv(VSC_STAGE_FRAGMENT, "main", source.data(), source.size(), prepared, diagnostic)) {
+            failures += fail("SPIR-V preparation rejected U32 discard fixture");
+        } else {
+            TypedProgram program;
+            std::string error;
+            if (!spirv_cross_to_typed_fragment(prepared.words, "main", program, error)) {
+                failures += fail("SPIRV-Cross did not lower U32 discard fixture to Typed IR");
+            } else {
+                MachineCompileResult result;
+                if (!compile_typed_program(program, result)) {
+                    failures += fail("SPIRV-Cross Typed IR did not compile to Machine IR");
+                } else if (result.words.size() != 3) {
+                    failures += fail("SPIRV-Cross U32 discard path emitted wrong instruction count");
+                } else {
+                    usse::VbwSemantic bitwise{};
+                    usse::VtstSemantic compare{};
+                    if (!usse::decode_vbw_semantic(result.words[0], &bitwise) || bitwise.op != usse::BitwiseOp::Or ||
+                        bitwise.dst.bank != usse::RegisterBank::Temp || bitwise.src1.bank != usse::RegisterBank::PrimaryAttribute)
+                        failures += fail("SPIRV-Cross Typed IR emitted unexpected VBW");
+                    if (!usse::decode_vtst_semantic(result.words[1], &compare) ||
+                        compare.lhs.bank != usse::RegisterBank::Temp || compare.rhs.bank != usse::RegisterBank::PrimaryAttribute)
+                        failures += fail("SPIRV-Cross Typed IR emitted unexpected VTST");
+                }
+            }
+        }
+    }
+#endif
 
     return failures;
 }

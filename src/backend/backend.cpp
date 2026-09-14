@@ -1,5 +1,6 @@
 #include "core/internal.hpp"
 #include "backend/vita_ir.hpp"
+#include "spirv/spirv_pipeline.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -468,6 +469,15 @@ bool spirv_to_gxp(VscStage stage, const char *entrypoint,
                   const uint32_t *words, size_t word_count,
                   BackendOutput &out) {
     out = {};
+    PreparedSpirv prepared;
+    Diagnostic prepare_error;
+    if (!prepare_spirv(stage, entrypoint, words, word_count, prepared, prepare_error)) {
+        out.diagnostics.push_back(std::move(prepare_error));
+        return false;
+    }
+    words = prepared.words.data();
+    word_count = prepared.words.size();
+
     SpirvSummary summary;
     Diagnostic parse_error;
     if (!parse_spirv(words, word_count, summary, parse_error)) {

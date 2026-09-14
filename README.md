@@ -14,7 +14,9 @@ Implemented now:
 - callback-based source acquisition, including stable diagnostic filename ownership after `releaseFile`
 - public compiler-core API independent of Sony ABI
 - direct `vsc_compile_spirv()` path so USSE/GXP development does not depend on the Cg frontend
-- dependency-free SPIR-V reader with entry-point/stage validation and a first vertex lowering subset
+- dependency-free SPIR-V reader/lowerer remains the portable fallback
+- optional SPIRV-Tools `-O`-style optimization and SPIRV-Cross parsing/reflection before Vita lowering
+- first SPIRV-Cross -> compact Typed Vita IR path for scalar U32 bitwise/compare/conditional discard
 - frontend -> SPIR-V and SPIR-V -> Vita IR -> USSE/GXP boundaries
 - independent structured GXP reader for real Vita program images
 - canonical GXP serializer for interface data, primary/secondary code, parameter containers and reflection names
@@ -46,6 +48,22 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+The external SPIR-V pipeline is optional. When SPIRV-Tools and SPIRV-Cross are
+installed on the host, it can be exercised with:
+
+```sh
+cmake -S . -B build-spv-pipeline \
+  -DOPENSHACCG_ENABLE_SPIRV_TOOLS=ON \
+  -DOPENSHACCG_ENABLE_SPIRV_CROSS=ON
+cmake --build build-spv-pipeline
+ctest --test-dir build-spv-pipeline --output-on-failure
+```
+
+SPIRV-Tools runs performance passes while preserving interfaces, bindings and
+specialization constants. SPIRV-Cross then parses/reflection-checks the selected
+module. Unsupported Typed IR shapes still fall back to the dependency-free
+lowerer; the Vita static build therefore does not require host SPIR-V libraries.
 
 ## GXP / USSE workbench
 
