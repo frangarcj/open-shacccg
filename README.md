@@ -30,6 +30,8 @@ Implemented now:
   compact Machine/Typed label tables and structured U32 conditional/unconditional branches
 - oracle-validated F32 VTST compare profiles for `==`, `!=`, `<`, `<=`, `>` and `>=`,
   exposed through Machine/Typed IR and the scalar control-flow SPIR-V adapter
+- structured fragment `if/else` from glslang: two-way `OpPhi` values that feed COLOR0 are
+  sunk into branch-local output packs, so real Cg conditionals reach Machine BR/GXP without a physical phi opcode
 - all seven public libvita2d Cg shaders now pass through the Typed Vita IR path; generated GXPs are
   byte-identical to the preserved public samples except for Sony's two 32-bit GUID fields
 - frontend -> SPIR-V and SPIR-V -> Vita IR -> USSE/GXP boundaries

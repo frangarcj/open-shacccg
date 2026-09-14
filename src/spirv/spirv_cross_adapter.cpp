@@ -190,16 +190,27 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             backend::TypedValue source{};
             uint32_t component = 0;
         };
+        struct PhiSink {
+            uint32_t merge_label = 0;
+            uint32_t value0 = 0;
+            uint32_t label0 = 0;
+            uint32_t value1 = 0;
+            uint32_t label1 = 0;
+            uint16_t output_resource = std::numeric_limits<uint16_t>::max();
+        };
 
         std::unordered_map<uint32_t, backend::TypedValue> values;
         std::unordered_map<uint32_t, std::vector<UniformMember>> uniform_blocks;
         std::unordered_map<uint32_t, UniformMember> access_chain_members;
+        std::unordered_map<uint32_t, ExtractInfo> input_access_chains;
         std::unordered_map<uint32_t, uint16_t> matrix_values;
         std::unordered_map<uint32_t, ExtractInfo> extracts;
         std::unordered_map<uint32_t, uint32_t> constants;
         std::unordered_set<uint32_t> float_ones;
         std::unordered_set<uint32_t> glsl450_imports;
         std::unordered_map<uint32_t, uint16_t> outputs;
+        std::unordered_map<uint32_t, PhiSink> phi_sinks;
+        std::unordered_map<uint32_t, uint16_t> block_labels;
 
         auto add_resource = [&](backend::TypedResourceKind kind, backend::TypedValue value,
                                 backend::TypedType type, const std::string &resource_name,
@@ -327,7 +338,62 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             offset += count;
         }
 
+        // Pre-scan structured control flow so two-way phis that feed the final
+        // fragment output can be sunk into their predecessor blocks. This keeps
+        // Typed/Machine IR SSA without inventing multi-definition virtual values.
+        if (stage == backend::TypedStage::Fragment) {
+            bool scan_function=false;
+            uint32_t scan_label=0;
+            std::vector<uint32_t> function_labels;
+            bool has_control=false;
+            for (size_t offset=5; offset<words.size();) {
+                const uint32_t first=words[offset];
+                const uint16_t count=static_cast<uint16_t>(first>>16);
+                const uint16_t op=static_cast<uint16_t>(first);
+                if (!count || offset+count>words.size()) { error="malformed SPIR-V control-flow stream"; return false; }
+                const uint32_t *args=words.data()+offset+1;
+                if (op==spv::OpFunction && count>=3) {
+                    scan_function=args[1]==function_id;
+                } else if (scan_function && op==spv::OpFunctionEnd) {
+                    scan_function=false;
+                    scan_label=0;
+                } else if (scan_function && op==spv::OpLabel && count==2) {
+                    scan_label=args[0];
+                    function_labels.push_back(scan_label);
+                } else if (scan_function && (op==spv::OpBranch || op==spv::OpBranchConditional)) {
+                    has_control=true;
+                } else if (scan_function && op==spv::OpPhi) {
+                    if (count!=7 || !scan_label) {
+                        error="only two-way structured OpPhi is supported";
+                        return false;
+                    }
+                    PhiSink phi{};
+                    phi.merge_label=scan_label;
+                    phi.value0=args[2]; phi.label0=args[3];
+                    phi.value1=args[4]; phi.label1=args[5];
+                    phi_sinks[args[1]]=phi;
+                } else if (scan_function && op==spv::OpStore && count>=3) {
+                    const auto phi=phi_sinks.find(args[1]);
+                    const auto output=outputs.find(args[0]);
+                    if (phi!=phi_sinks.end() && output!=outputs.end())
+                        phi->second.output_resource=output->second;
+                }
+                offset+=count;
+            }
+            if (has_control) {
+                for (uint32_t id:function_labels) {
+                    const uint16_t label=program.make_label();
+                    if (label==std::numeric_limits<uint16_t>::max()) {
+                        error="Typed shader control-flow label table overflow";
+                        return false;
+                    }
+                    block_labels[id]=label;
+                }
+            }
+        }
+
         bool in_function = false;
+        uint32_t current_label = 0;
         for (size_t offset = 5; offset < words.size();) {
             const uint32_t first = words[offset];
             const uint16_t count = static_cast<uint16_t>(first >> 16);
@@ -343,13 +409,32 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             if (!in_function) { offset += count; continue; }
             if (op == spv::OpFunctionEnd) break;
 
-            if (op == spv::OpAccessChain && count >= 4) {
+            if (op == spv::OpLabel && count == 2) {
+                current_label=args[0];
+                if (!block_labels.empty()) {
+                    const auto label=block_labels.find(current_label);
+                    if (label==block_labels.end() || !program.bind_label(label->second)) {
+                        error="failed to bind Typed shader control-flow label";
+                        return false;
+                    }
+                }
+            } else if (op == spv::OpAccessChain && count >= 4) {
                 const auto block = uniform_blocks.find(args[2]);
                 const auto index_it = constants.find(args[3]);
                 if (block != uniform_blocks.end() && index_it != constants.end()) {
                     const uint32_t member = index_it->second;
                     if (member >= block->second.size()) { error = "uniform access-chain member is out of range"; return false; }
                     access_chain_members[args[1]] = block->second[member];
+                } else if (index_it != constants.end()) {
+                    const auto input=values.find(args[2]);
+                    if (input!=values.end() && typed_is_float(input->second.type())) {
+                        const uint32_t component=index_it->second;
+                        if (component>=backend::typed_component_count(input->second.type())) {
+                            error="input access-chain component is out of range";
+                            return false;
+                        }
+                        input_access_chains[args[1]]={input->second,component};
+                    }
                 }
             } else if (op == spv::OpLoad && count >= 4) {
                 if (auto it = values.find(args[2]); it != values.end()) {
@@ -357,6 +442,17 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 } else if (auto it = access_chain_members.find(args[2]); it != access_chain_members.end()) {
                     if (it->second.matrix) matrix_values[args[1]] = it->second.resource;
                     else values[args[1]] = it->second.value;
+                } else if (auto it=input_access_chains.find(args[2]); it!=input_access_chains.end()) {
+                    if (it->second.component!=0 || typed_type(compiler.get_type(args[0]))!=backend::TypedType::F32) {
+                        error="only float-vector X access is validated for control-flow comparisons";
+                        return false;
+                    }
+                    const auto dst=program.make_value<backend::TypedType::F32>();
+                    if (!program.emit<backend::TypedOpcode::FloatExtractX>(0,dst,it->second.source)) {
+                        error="failed to emit Typed IR float X extraction";
+                        return false;
+                    }
+                    values[args[1]]=dst;
                 } else {
                     error = "Typed IR adapter could not resolve an OpLoad source";
                     return false;
@@ -520,50 +616,134 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     error = "failed to emit Typed IR float conversion"; return false;
                 }
                 values[args[1]] = dst;
-            } else if (op == spv::OpFNegate) {
-                if (count != 4) { error = "invalid floating unary instruction"; return false; }
-                const auto source = values.find(args[2]);
-                const auto result_type = typed_type(compiler.get_type(args[0]));
-                if (source == values.end() || result_type == backend::TypedType::Invalid ||
-                    source->second.type() != result_type || !backend::typed_is_float(result_type)) {
-                    error = "floating unary operand is unresolved or mismatched"; return false;
+            } else {
+                usse::CompareOp compare{};
+                if (map_float_compare(op,compare)) {
+                    if (count!=5) { error="invalid floating compare instruction"; return false; }
+                    auto resolve_scalar_f32 = [&](uint32_t id, backend::TypedValue &value) -> bool {
+                        if (auto it=values.find(id); it!=values.end() && it->second.type()==backend::TypedType::F32) {
+                            value=it->second;
+                            return true;
+                        }
+                        const auto ext=extracts.find(id);
+                        if (ext==extracts.end() || ext->second.component!=0 ||
+                            !backend::typed_is_float(ext->second.source.type()) ||
+                            backend::typed_component_count(ext->second.source.type())<2)
+                            return false;
+                        const auto scalar=program.make_value<backend::TypedType::F32>();
+                        if (!program.emit<backend::TypedOpcode::FloatExtractX>(0,scalar,ext->second.source)) return false;
+                        values[id]=scalar;
+                        value=scalar;
+                        return true;
+                    };
+                    backend::TypedValue lhs{},rhs{};
+                    if (!resolve_scalar_f32(args[2],lhs) || !resolve_scalar_f32(args[3],rhs)) {
+                        error="floating compare operands are unresolved or outside scalar F32 subset";
+                        return false;
+                    }
+                    const auto dst=program.make_predicate();
+                    if (!program.emit<backend::TypedOpcode::Compare>(static_cast<uint8_t>(compare),dst,lhs,rhs)) {
+                        error="failed to emit Typed IR F32 compare";
+                        return false;
+                    }
+                    values[args[1]]=dst;
+                } else if (op == spv::OpFNegate) {
+                    if (count != 4) { error = "invalid floating unary instruction"; return false; }
+                    const auto source = values.find(args[2]);
+                    const auto result_type = typed_type(compiler.get_type(args[0]));
+                    if (source == values.end() || result_type == backend::TypedType::Invalid ||
+                        source->second.type() != result_type || !backend::typed_is_float(result_type)) {
+                        error = "floating unary operand is unresolved or mismatched"; return false;
+                    }
+                    const auto dst = program.make_value(result_type);
+                    if (!program.emit<backend::TypedOpcode::FloatUnary>(
+                            static_cast<uint8_t>(backend::TypedFloatUnaryOp::Neg), dst, source->second)) {
+                        error = "failed to emit Typed IR float unary operation"; return false;
+                    }
+                    values[args[1]] = dst;
+                } else if (op == spv::OpFMul || op == spv::OpFAdd || op == spv::OpFSub) {
+                    if (count != 5) { error = "invalid floating binary instruction"; return false; }
+                    const auto lhs = values.find(args[2]);
+                    const auto rhs = values.find(args[3]);
+                    const auto result_type = typed_type(compiler.get_type(args[0]));
+                    if (lhs == values.end() || rhs == values.end() || result_type == backend::TypedType::Invalid ||
+                        lhs->second.type() != result_type || rhs->second.type() != result_type || !backend::typed_is_float(result_type)) {
+                        error = "floating binary operands are unresolved or mismatched"; return false;
+                    }
+                    backend::TypedFloatOp float_op = backend::TypedFloatOp::Mul;
+                    if (op == spv::OpFAdd) float_op = backend::TypedFloatOp::Add;
+                    else if (op == spv::OpFSub) float_op = backend::TypedFloatOp::Sub;
+                    const auto dst = program.make_value(result_type);
+                    if (!program.emit<backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(float_op), dst,
+                                                                         lhs->second, rhs->second)) {
+                        error = "failed to emit Typed IR float binary operation"; return false;
+                    }
+                    values[args[1]] = dst;
+                } else if (op == spv::OpSelectionMerge) {
+                    // Structured merge metadata is consumed by the control pre-pass.
+                } else if (op == spv::OpBranchConditional) {
+                    if (count!=4 || block_labels.empty()) { error="conditional branch is outside structured Typed shader subset"; return false; }
+                    const auto predicate=values.find(args[0]);
+                    const auto true_label=block_labels.find(args[1]);
+                    const auto false_label=block_labels.find(args[2]);
+                    if (predicate==values.end() || predicate->second.kind()!=backend::TypedValueKind::Predicate ||
+                        true_label==block_labels.end() || false_label==block_labels.end() ||
+                        !program.branch(true_label->second,predicate->second) || !program.jump(false_label->second)) {
+                        error="failed to emit Typed shader conditional control flow";
+                        return false;
+                    }
+                } else if (op == spv::OpBranch) {
+                    if (count!=2 || block_labels.empty()) { error="unconditional branch is outside structured Typed shader subset"; return false; }
+                    const uint32_t target_id=args[0];
+                    // If this predecessor contributes to a two-way phi that feeds
+                    // fragment COLOR0, sink the store before leaving the block.
+                    for (const auto &entry:phi_sinks) {
+                        const auto &phi=entry.second;
+                        if (phi.merge_label!=target_id || phi.output_resource==std::numeric_limits<uint16_t>::max()) continue;
+                        uint32_t incoming=0;
+                        if (phi.label0==current_label) incoming=phi.value0;
+                        else if (phi.label1==current_label) incoming=phi.value1;
+                        else continue;
+                        const auto value=values.find(incoming);
+                        if (value==values.end() || value->second.type()!=backend::TypedType::F32x4 ||
+                            !program.emit<backend::TypedOpcode::StoreOutput>(0,{},value->second,{},phi.output_resource)) {
+                            error="failed to sink phi-fed fragment output into predecessor";
+                            return false;
+                        }
+                    }
+                    const auto target=block_labels.find(target_id);
+                    if (target==block_labels.end() || !program.jump(target->second)) {
+                        error="failed to emit Typed shader jump";
+                        return false;
+                    }
+                } else if (op == spv::OpPhi) {
+                    const auto phi=phi_sinks.find(args[1]);
+                    if (phi==phi_sinks.end() || phi->second.output_resource==std::numeric_limits<uint16_t>::max()) {
+                        error="OpPhi is not the validated two-way fragment-output merge";
+                        return false;
+                    }
+                    // The corresponding stores were sunk into the predecessor blocks.
+                } else if (op == spv::OpStore && count >= 3) {
+                    const auto phi=phi_sinks.find(args[1]);
+                    if (phi!=phi_sinks.end() && phi->second.output_resource!=std::numeric_limits<uint16_t>::max()) {
+                        // Already materialized in each predecessor.
+                    } else {
+                        const auto output = outputs.find(args[0]);
+                        const auto value = values.find(args[1]);
+                        if (output == outputs.end() || value == values.end()) {
+                            error = "Typed IR adapter encountered a non-output store or unresolved value"; return false;
+                        }
+                        if (!program.emit<backend::TypedOpcode::StoreOutput>(0, {}, value->second, {}, output->second)) {
+                            error = "failed to emit Typed IR output store"; return false;
+                        }
+                    }
+                } else if (op == spv::OpSwitch) {
+                    error="OpSwitch control flow is not yet in the validated Typed shader subset";
+                    return false;
+                } else if (op != spv::OpReturn && op != spv::OpNop) {
+                    error = "unsupported instruction in SPIRV-Cross Typed shader subset";
+                    return false;
                 }
-                const auto dst = program.make_value(result_type);
-                if (!program.emit<backend::TypedOpcode::FloatUnary>(
-                        static_cast<uint8_t>(backend::TypedFloatUnaryOp::Neg), dst, source->second)) {
-                    error = "failed to emit Typed IR float unary operation"; return false;
-                }
-                values[args[1]] = dst;
-            } else if (op == spv::OpFMul || op == spv::OpFAdd || op == spv::OpFSub) {
-                if (count != 5) { error = "invalid floating binary instruction"; return false; }
-                const auto lhs = values.find(args[2]);
-                const auto rhs = values.find(args[3]);
-                const auto result_type = typed_type(compiler.get_type(args[0]));
-                if (lhs == values.end() || rhs == values.end() || result_type == backend::TypedType::Invalid ||
-                    lhs->second.type() != result_type || rhs->second.type() != result_type || !backend::typed_is_float(result_type)) {
-                    error = "floating binary operands are unresolved or mismatched"; return false;
-                }
-                backend::TypedFloatOp float_op = backend::TypedFloatOp::Mul;
-                if (op == spv::OpFAdd) float_op = backend::TypedFloatOp::Add;
-                else if (op == spv::OpFSub) float_op = backend::TypedFloatOp::Sub;
-                const auto dst = program.make_value(result_type);
-                if (!program.emit<backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(float_op), dst,
-                                                                     lhs->second, rhs->second)) {
-                    error = "failed to emit Typed IR float binary operation"; return false;
-                }
-                values[args[1]] = dst;
-            } else if (op == spv::OpStore && count >= 3) {
-                const auto output = outputs.find(args[0]);
-                const auto value = values.find(args[1]);
-                if (output == outputs.end() || value == values.end()) {
-                    error = "Typed IR adapter encountered a non-output store or unresolved value"; return false;
-                }
-                if (!program.emit<backend::TypedOpcode::StoreOutput>(0, {}, value->second, {}, output->second)) {
-                    error = "failed to emit Typed IR output store"; return false;
-                }
-            } else if (op != spv::OpLabel && op != spv::OpReturn && op != spv::OpNop) {
-                error = "unsupported instruction in SPIRV-Cross Typed shader subset";
-                return false;
             }
             offset += count;
         }

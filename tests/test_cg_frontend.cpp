@@ -1,8 +1,10 @@
 #include "core/internal.hpp"
 #include "backend/typed_ir.hpp"
 #include "backend/shader_profiles.hpp"
+#include "gxp/gxp_reader.hpp"
 #include "spirv/spirv_cross_adapter.hpp"
 #include "spirv/spirv_pipeline.hpp"
+#include "usse/usse.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -120,6 +122,59 @@ bool compile_matches_public_gxp(const char *name, VscStage stage) {
     vsc_destroy_result(&request.allocator, &result);
     return match;
 }
+
+bool compile_control_flow_gxp(const std::string &source) {
+    VscCompileRequest request{};
+    request.source_name="fp-if-big.cg";
+    request.source=source.data();
+    request.source_size=source.size();
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_FRAGMENT;
+    vsc::FrontendOutput front;
+    if (!vsc::cg_to_spirv(request,front) || front.spirv.empty()) return false;
+    vsc::PreparedSpirv prepared;
+    vsc::Diagnostic prepare_error;
+    if (!vsc::prepare_spirv(VSC_STAGE_FRAGMENT,"main",front.spirv.data(),front.spirv.size(),prepared,prepare_error))
+        return false;
+    vsc::backend::TypedShader typed(vsc::backend::TypedStage::Fragment);
+    std::string typed_error;
+    if (!vsc::spirv_cross_to_typed_shader(prepared.words,typed.stage(),"main",typed,typed_error)) {
+        std::fprintf(stderr,"test_cg_frontend: control-flow Typed adapter failed: %s\n",typed_error.c_str());
+        return false;
+    }
+    vsc::backend::IrCompileResult typed_result;
+    if (!vsc::backend::compile_typed_shader(typed,typed_result)) {
+        std::fprintf(stderr,"test_cg_frontend: control-flow Typed lowering failed: %s\n",typed_result.error.c_str());
+        return false;
+    }
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.diagnostic_count==0;
+    if (ok) {
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        ok=view.valid() && view.type()==vsc::gxp::ProgramType::Fragment &&
+            view.primary_register_count()==12 && view.flags()==0x00081003;
+        size_t branches=0;
+        bool oracle_compare=false;
+        const auto code=view.primary_program();
+        for (size_t offset=0; ok && offset+8<=code.size; offset+=8) {
+            uint64_t word=0;
+            std::memcpy(&word,code.data+offset,sizeof(word));
+            if (word==0x48088a81a0038002ULL) oracle_compare=true;
+            if (vsc::usse::classify_control(word)==vsc::usse::ControlClass::Branch) {
+                vsc::usse::BranchSemantic branch{};
+                if (!vsc::usse::decode_branch_semantic(word,&branch) || branch.offset==0) ok=false;
+                ++branches;
+            }
+        }
+        ok = ok && oracle_compare && branches>=3;
+    }
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: control-flow backend diagnostic=%s\n",
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
 #endif
 #endif
 } // namespace
@@ -154,6 +209,9 @@ int test_cg_frontend() {
     };
     for (const auto &shader : public_shaders)
         if (!compile_matches_public_gxp(shader.name, shader.stage)) ++failures;
+    const std::string control_source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-if-big.cg");
+    if (control_source.empty() || !compile_control_flow_gxp(control_source))
+        failures += fail("large Cg if/else did not compile through Typed/Machine BR to a control-flow GXP");
 #endif
     return failures;
 #endif

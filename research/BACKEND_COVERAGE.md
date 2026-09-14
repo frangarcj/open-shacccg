@@ -196,21 +196,29 @@ itself. Raw/semantic USSE codecs and compact Machine IR labels now reproduce
 these words exactly. Typed IR also owns label side tables plus conditional and
 unconditional jumps, and the SPIRV-Cross U32 control-flow adapter lowers a
 structured `SelectionMerge`/`BranchConditional` graph through those labels.
-P1/!P1 BR forms, phi values and general loops remain fail-closed until their
-oracle evidence/lowering rules are added.
+P1/!P1 BR forms, general phi values and loop-carried phis remain fail-closed
+until their oracle evidence/lowering rules are added.
 
 The same oracle corpus now carries six large F32 compare cases. They establish
 the VTST floating subtract/test profile for `==`, `!=`, `<`, `<=`, `>` and `>=`.
 All six share `precision=F32`, ALU select 0/op 14 and differ only in the
 sign/zero/CR-combine tests. Semantic USSE, Machine IR and Typed IR reproduce the
 oracle words exactly; the SPIRV-Cross scalar-F32 control adapter maps the ordered
-SPIR-V comparisons onto this profile. Phi/merge value transport is still the
-remaining blocker for arbitrary value-producing Cg `if/else` shaders.
+SPIR-V comparisons onto this profile.
+
+The first value-producing merge is now covered end to end. Glslang's validated
+fragment pattern (`BranchConditional`, two predecessor blocks, two-way `OpPhi`,
+single COLOR0 store) is lowered without inventing a physical phi instruction:
+the output store is sunk into each predecessor before its jump to the merge.
+`fp-if-big.cg` now compiles through `Cg -> SPIR-V -> Typed CFG -> Machine BR ->
+GXP`; the regression requires PA=12, the oracle control flags, the exact F32
+VTST anchor and decodable non-zero BR offsets. More general phi consumers and
+loop-carried values remain fail-closed.
 
 ## Next backend order
 
 1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, keeping the single Typed -> Machine lowering path fail-closed.
-2. **Complete structured control flow.** BR forward/backward offsets and the six F32 VTST compare forms are oracle-validated. Add phi/merge value lowering, then generalize loops beyond the current label/branch substrate.
+2. **Complete structured control flow.** BR forward/backward offsets, six F32 VTST compares and the direct COLOR0 two-way phi merge are validated. Generalize phi consumers/loop-carried values and then loops beyond the current label/branch substrate.
 3. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
 4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
 5. **Common missing ALU families.** Prioritize VCOMP, VMAD2 and VDUAL based on real traces, then remaining instruction families by corpus frequency.

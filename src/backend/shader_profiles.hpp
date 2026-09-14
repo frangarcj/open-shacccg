@@ -59,5 +59,9 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
                                          const std::vector<IrUniformVec4> &uniforms,
                                          uint32_t binary_guid, uint32_t source_guid,
                                          IrCompileResult &out);
+bool compile_fragment_control_machine(const MachineProgram &primary,
+                                      uint8_t float4_input_count,
+                                      uint32_t binary_guid, uint32_t source_guid,
+                                      IrCompileResult &out);
 
 } // namespace vsc::backend

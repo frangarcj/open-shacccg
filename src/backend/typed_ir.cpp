@@ -250,7 +250,9 @@ const std::string &TypedShader::resource_name(const TypedResource &resource) con
 
 static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &machine, std::string &error,
                                      bool reset_machine, MachineOperand *stored_output = nullptr,
-                                     TypedType *stored_type = nullptr, uint16_t *stored_resource = nullptr) {
+                                     TypedType *stored_type = nullptr, uint16_t *stored_resource = nullptr,
+                                     bool emit_fragment_stores = false,
+                                     uint16_t fragment_output_resource = std::numeric_limits<uint16_t>::max()) {
     if (reset_machine) machine = {};
     error.clear();
     if (stored_output) *stored_output = {};
@@ -330,6 +332,9 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             const auto bank = instruction.opcode() == TypedOpcode::Input ?
                 usse::RegisterBank::PrimaryAttribute : usse::RegisterBank::SecondaryAttribute;
             uint16_t physical_index = instruction.aux;
+            if (instruction.opcode() == TypedOpcode::Input && instruction.dst.type() == TypedType::F32x4) {
+                physical_index = static_cast<uint16_t>(instruction.aux * 2u);
+            }
             if (instruction.opcode() == TypedOpcode::Uniform && instruction.dst.type() == TypedType::F32x4) {
                 if ((instruction.aux & 3u) != 0) { error = "float4 uniform word offset is not vec4 aligned"; return false; }
                 physical_index = instruction.aux / 2u;
@@ -347,6 +352,23 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             error = "high-level typed shader operation requires compile_typed_shader";
             return false;
         case TypedOpcode::StoreOutput: {
+            if (emit_fragment_stores) {
+                if (instruction.aux != fragment_output_resource || instruction.src0.type() != TypedType::F32x4) {
+                    error = "direct fragment StoreOutput is outside the validated float4 Location 0 subset";
+                    return false;
+                }
+                const auto value = lower_value(typed,instruction.src0,values,literals,machine);
+                if (value.kind()==MachineOperandKind::None ||
+                    !machine.emit_config<MachineOpcode::Pack>(
+                        machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F16),
+                        machine_pack_config(0xF,true,false),
+                        machine.physical(machine_fragment_output(0),MachineType::F16),value,
+                        machine.physical(machine_immediate(0),MachineType::F32))) {
+                    error = "failed to lower branch-local fragment output pack";
+                    return false;
+                }
+                break;
+            }
             if (!stored_output || stored_output->kind() != MachineOperandKind::None) {
                 error = stored_output ? "typed fragment has multiple output stores" :
                     "high-level typed shader operation requires compile_typed_shader";
@@ -449,6 +471,24 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             values[instruction.dst.id()] = dst;
             value_types[instruction.dst.id()] = instruction.dst.type();
             value_defined[instruction.dst.id()] = true;
+            break;
+        }
+        case TypedOpcode::FloatExtractX: {
+            const auto components=typed_component_count(instruction.src0.type());
+            if (instruction.dst.type()!=TypedType::F32 || !typed_is_float(instruction.src0.type()) ||
+                components<2 || components>4) {
+                error = "typed float extract-X requires a float vector source and F32 destination";
+                return false;
+            }
+            const auto src=lower_value(typed,instruction.src0,values,literals,machine);
+            if (src.kind()==MachineOperandKind::None) {
+                error = "failed to lower float extract-X source";
+                return false;
+            }
+            // X aliases the base F32 register directly; no USSE instruction is needed.
+            values[instruction.dst.id()]=src;
+            value_types[instruction.dst.id()]=TypedType::F32;
+            value_defined[instruction.dst.id()]=true;
             break;
         }
         case TypedOpcode::FloatSplat: {
@@ -730,11 +770,52 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     for (const auto *resource : samplers)
         fragment_samplers.push_back({shader.resource_name(*resource), resource->index});
 
+    std::vector<const TypedInstruction *> output_stores;
+    for (const auto &instruction : instructions)
+        if (instruction.opcode() == TypedOpcode::StoreOutput) output_stores.push_back(&instruction);
+
+    if (!program.labels().empty()) {
+        if (output_stores.empty() || !uniforms.empty() || !samplers.empty() ||
+            inputs.size()<2 || inputs.size()>3) {
+            out.error = "typed fragment control path requires 2-3 float4 inputs, output stores and no uniforms/samplers";
+            return false;
+        }
+        for (size_t i=0;i<inputs.size();++i) {
+            if (inputs[i]->type!=TypedType::F32x4 || inputs[i]->index!=i) {
+                out.error = "typed fragment control inputs must be contiguous float4 locations";
+                return false;
+            }
+        }
+        const uint16_t output_resource=output_stores[0]->aux;
+        if (output_resource>=resources.size() || resources[output_resource].kind!=TypedResourceKind::Output ||
+            resources[output_resource].index!=0 || resources[output_resource].type!=TypedType::F32x4) {
+            out.error = "typed fragment control output must be float4 Location 0";
+            return false;
+        }
+        for (const auto *store : output_stores) {
+            if (store->aux!=output_resource || store->src0.type()!=TypedType::F32x4) {
+                out.error = "typed fragment control stores must target the same float4 output";
+                return false;
+            }
+        }
+        MachineProgram primary;
+        if (!primary.emit<MachineOpcode::Phase>()) {
+            out.error = "failed to start typed fragment control Machine IR";
+            return false;
+        }
+        std::string machine_error;
+        if (!lower_typed_program_impl(program,primary,machine_error,false,nullptr,nullptr,nullptr,
+                                      true,output_resource)) {
+            out.error=machine_error;
+            return false;
+        }
+        return compile_fragment_control_machine(primary,static_cast<uint8_t>(inputs.size()),0,0,out);
+    }
+
     const TypedInstruction *store = nullptr;
-    for (const auto &instruction : instructions) {
-        if (instruction.opcode() != TypedOpcode::StoreOutput) continue;
+    for (const auto *candidate : output_stores) {
         if (store) { out.error = "typed fragment shader has multiple output stores"; return false; }
-        store = &instruction;
+        store = candidate;
     }
     if (!store) { out.error = "typed fragment shader has no output store"; return false; }
     const TypedValue root = store->src0;

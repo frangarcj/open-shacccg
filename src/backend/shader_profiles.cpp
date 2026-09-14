@@ -426,4 +426,52 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
     return true;
 }
 
+bool compile_fragment_control_machine(const MachineProgram &primary,
+                                      uint8_t float4_input_count,
+                                      uint32_t binary_guid, uint32_t source_guid,
+                                      IrCompileResult &out) {
+    out = {};
+    if (float4_input_count < 2 || float4_input_count > 3) {
+        out.error = "fragment control profile currently covers two or three float4 inputs";
+        return false;
+    }
+
+    uint8_t interface_block[32]{};
+    interface_block[10]=1;
+    interface_block[11]=4;
+    interface_block[12]=float4_input_count;
+    interface_block[16]=4;
+    interface_block[20]=0x0f;
+    interface_block[21]=0x00;
+    interface_block[22]=0xc0;
+    interface_block[23]=0x0c;
+    interface_block[28]=0x30;
+
+    MachineCompileResult compiled;
+    if (!compile_words(primary,compiled,out,"fragment control Machine IR lowering failed")) return false;
+
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Fragment;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00081003;
+    image.primary_register_count=static_cast<uint16_t>(float4_input_count*4u);
+    image.secondary_register_count=0;
+    image.primary_phase_count=1;
+    image.data_buffer_count=2;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=compiled.words.data();
+    image.primary_instruction_count=compiled.words.size();
+
+    const size_t needed=gxp::required_size(image);
+    if(!needed){out.error="GXP writer rejected fragment control Machine IR";return false;}
+    out.gxp.resize(needed);
+    if(!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for fragment control Machine IR"; return false;
+    }
+    return true;
+}
+
 } // namespace vsc::backend
