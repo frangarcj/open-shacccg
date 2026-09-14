@@ -71,6 +71,27 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        if (!program.emit<MachineOpcode::DivF32x4>(0,
+                program.physical(machine_fragment_output(0),MachineType::F16),
+                program.physical(machine_primary(0),MachineType::F32),
+                program.physical(machine_primary(2),MachineType::F32))) {
+            failures += fail("could not construct oracle F32x4 division Machine IR");
+        } else {
+            MachineCompileResult result;
+            const uint64_t expected[]={
+                0x308008008f800101ULL,0x308008088f800102ULL,
+                0x308008008f800184ULL,0x308008088f800188ULL,
+                0x40800dbcafb98002ULL,0x10a4478600040f7cULL,
+            };
+            if (!compile_machine_program(program,result) || result.words.size()!=6)
+                failures += fail("oracle F32x4 division Machine IR did not compile");
+            else for (size_t i=0;i<6;++i)
+                if (result.words[i]!=expected[i]) failures += fail("oracle F32x4 division Machine word mismatch");
+        }
+    }
+
+    {
+        MachineProgram program;
         const auto gpi0=program.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
         if (!program.emit_config<MachineOpcode::Pack>(
                 machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F32),

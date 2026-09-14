@@ -622,6 +622,7 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
     if (uniforms.empty()) {
         image.sdk_version=0x0165;
         image.program_flags=float4_input_count==1 ? 0x00081001 : 0x00081005;
+        image.fragment_additional_float4_inputs=static_cast<uint8_t>(float4_input_count-1);
         image.primary_register_count=static_cast<uint16_t>(float4_input_count*4u);
         image.secondary_register_count=0;
         image.data_buffer_count=0;

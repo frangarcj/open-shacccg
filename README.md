@@ -29,6 +29,9 @@ Implemented now:
   so one/two/three-input float4 graphs lower without being blocked by unused Cg/HLSL parameters
 - `saturate(float4)` lowers fail-closed from GLSL.std.450 FClamp with exact 0/1 bounds to
   validated `MAX(x,0)` + `MIN(x,SPECIAL1.yyyy)` V32NMAD forms
+- oracle-exact direct F32x4 division: four scalar reciprocal VCOMP words, numerator staging
+  to GPI1 and the validated V16NMAD combine; half4 currently compiles through the F32 path
+  because the glslang HLSL frontend does not preserve half precision in SPIR-V
 - oracle-exact fragment profiles for `wzyx` and the constant `float4(1,0,0,1)`,
   including swizzled VPCK, literal-table placement and the primary/interface overlap convention
 - oracle-exact standalone vertex profiles for float4 position passthrough,

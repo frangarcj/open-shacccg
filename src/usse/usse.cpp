@@ -345,6 +345,59 @@ bool decode_v32nmad_semantic(uint64_t word, V32NmadSemantic *i) {
     i->skip_invalid=f.skip_invalid; i->no_schedule=f.no_schedule; return true;
 }
 
+bool encode_vcomp_rcp_f32(const VcompRcpF32Fields &f, uint64_t *word) {
+    if (!word || f.component>=4) return false;
+    static constexpr uint8_t kLaneLow[4]={0x01,0x02,0x84,0x88};
+    uint64_t encoded=0x308008008f800000ULL |
+        (static_cast<uint64_t>(f.source_pair)<<8) | kLaneLow[f.component];
+    if (f.component&1u) encoded|=uint64_t{1}<<35;
+    *word=encoded;
+    return true;
+}
+
+bool decode_vcomp_rcp_f32(uint64_t word, VcompRcpF32Fields *f) {
+    if (!f) return false;
+    constexpr uint64_t variable=(uint64_t{1}<<35)|(uint64_t{0xff}<<8)|uint64_t{0xff};
+    constexpr uint64_t base=0x308008008f800000ULL;
+    if ((word&~variable)!=(base&~variable)) return false;
+    const bool odd=((word>>35)&1u)!=0;
+    const uint8_t low=static_cast<uint8_t>(word);
+    uint8_t component=0xff;
+    if (!odd && low==0x01) component=0;
+    else if (odd && low==0x02) component=1;
+    else if (!odd && low==0x84) component=2;
+    else if (odd && low==0x88) component=3;
+    if (component==0xff) return false;
+    f->source_pair=static_cast<uint8_t>((word>>8)&0xffu);
+    f->component=component;
+    return true;
+}
+
+bool encode_vcomp_rcp_f32_semantic(const VcompRcpF32Semantic &i, uint64_t *word) {
+    if (i.src.bank!=RegisterBank::PrimaryAttribute || (i.src.num&1u) || i.component>=4)
+        return false;
+    return encode_vcomp_rcp_f32({static_cast<uint8_t>(i.src.num/2),i.component},word);
+}
+
+bool decode_vcomp_rcp_f32_semantic(uint64_t word, VcompRcpF32Semantic *i) {
+    if (!i) return false;
+    VcompRcpF32Fields f{};
+    if (!decode_vcomp_rcp_f32(word,&f) || f.source_pair>127) return false;
+    i->src={RegisterBank::PrimaryAttribute,static_cast<uint8_t>(f.source_pair*2)};
+    i->component=f.component;
+    return true;
+}
+
+bool encode_v16nmad_div_f32x4_semantic(const V16NmadDivF32x4Semantic &, uint64_t *word) {
+    if (!word) return false;
+    *word=0x10a4478600040f7cULL;
+    return true;
+}
+
+bool decode_v16nmad_div_f32x4_semantic(uint64_t word, V16NmadDivF32x4Semantic *i) {
+    return i && word==0x10a4478600040f7cULL;
+}
+
 bool encode_vmad_semantic(const VmadSemantic &i, uint64_t *word) {
     if (!word || i.dst.num>=64 || i.src1.num>=64 || i.gpi0>=4 || i.gpi1>=4 || i.write_mask>=16 || i.repeat_count>=4) return false;
     VmadFields f{};

@@ -307,6 +307,37 @@ int test_usse() {
     if (!encode_v32nmad_semantic(clear_mul,&mul_word) || mul_word != 0x08c51f889f240001ULL)
         failures += fail("semantic clear_v V32NMAD builder mismatch");
 
+    // F32 division oracle probes a/b vs b/a isolate the reciprocal VCOMP PA
+    // source-pair field independently from the four scalar lane selectors.
+    const uint64_t vcomp_pa0[] = {
+        0x308008008f800001ULL,0x308008088f800002ULL,
+        0x308008008f800084ULL,0x308008088f800088ULL,
+    };
+    const uint64_t vcomp_pa2[] = {
+        0x308008008f800101ULL,0x308008088f800102ULL,
+        0x308008008f800184ULL,0x308008088f800188ULL,
+    };
+    for (uint8_t lane=0;lane<4;++lane) {
+        for (uint8_t pair=0;pair<2;++pair) {
+            const uint64_t expected=pair ? vcomp_pa2[lane] : vcomp_pa0[lane];
+            VcompRcpF32Fields raw{pair,lane};
+            uint64_t word=0;
+            if (!encode_vcomp_rcp_f32(raw,&word) || word!=expected)
+                failures += fail("raw F32 reciprocal VCOMP oracle word mismatch");
+            VcompRcpF32Fields decoded{};
+            if (!decode_vcomp_rcp_f32(expected,&decoded) || decoded.source_pair!=pair || decoded.component!=lane)
+                failures += fail("raw F32 reciprocal VCOMP decode mismatch");
+            VcompRcpF32Semantic semantic{{RegisterBank::PrimaryAttribute,static_cast<uint8_t>(pair*2)},lane};
+            if (!encode_vcomp_rcp_f32_semantic(semantic,&word) || word!=expected)
+                failures += fail("semantic F32 reciprocal VCOMP oracle word mismatch");
+        }
+    }
+    V16NmadDivF32x4Semantic div_combine{};
+    uint64_t div_combine_word=0;
+    if (!encode_v16nmad_div_f32x4_semantic(div_combine,&div_combine_word) ||
+        div_combine_word!=0x10a4478600040f7cULL)
+        failures += fail("oracle F32x4 division V16NMAD combine mismatch");
+
     // Semantic VMAD: reconstruct the complete four-instruction matrix path.
     const uint64_t matrix_words[] = {
         0x18b18f80cf411100ULL,0x18b18f80cf451102ULL,

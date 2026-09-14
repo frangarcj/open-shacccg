@@ -488,6 +488,10 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         }
         case TypedOpcode::FloatBinary: {
             const auto float_op = static_cast<TypedFloatOp>(instruction.subop());
+            if (float_op==TypedFloatOp::Div) {
+                error="typed F32x4 division requires the shader-level oracle profile";
+                return false;
+            }
             const bool vector4 = instruction.dst.type() == TypedType::F32x4 &&
                 instruction.src0.type() == TypedType::F32x4 && instruction.src1.type() == TypedType::F32x4;
             const bool dot = float_op == TypedFloatOp::Dot && instruction.dst.type() == TypedType::F32 &&
@@ -519,6 +523,9 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             case TypedFloatOp::Min: machine_op = usse::VectorOp::Min; break;
             case TypedFloatOp::Max: machine_op = usse::VectorOp::Max; break;
             case TypedFloatOp::Dot: machine_op = usse::VectorOp::Dot; break;
+            case TypedFloatOp::Div:
+                error="typed division escaped the dedicated shader profile";
+                return false;
             }
             if (!machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(machine_op),
                     machine_vector_config(dot ? 0x1 : 0xF, MachineVectorSwizzle::Identity, src0_negative),
@@ -1000,6 +1007,38 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     if (root_def->opcode() == TypedOpcode::Sample2D) {
         return compile_fragment_machine_profile(FragmentMachineProfile::Texture2D,
                                                 fragment_uniforms,fragment_samplers,0,0,out);
+    }
+    if (root_def->opcode()==TypedOpcode::FloatBinary &&
+        root_def->subop()==static_cast<uint8_t>(TypedFloatOp::Div)) {
+        if (!uniforms.empty() || !samplers.empty()) {
+            out.error="typed direct F32x4 division profile does not accept uniforms/samplers";
+            return false;
+        }
+        const auto *numerator=resource_for_value(root_def->src0);
+        const auto *denominator=resource_for_value(root_def->src1);
+        if (!numerator || !denominator || numerator->kind!=TypedResourceKind::Input ||
+            denominator->kind!=TypedResourceKind::Input || numerator->type!=TypedType::F32x4 ||
+            denominator->type!=TypedType::F32x4 || numerator->index>2 || denominator->index>2 ||
+            numerator->index==denominator->index) {
+            out.error="typed F32x4 division currently requires two distinct direct float4 inputs";
+            return false;
+        }
+        if (store->aux>=resources.size() || resources[store->aux].kind!=TypedResourceKind::Output ||
+            resources[store->aux].index!=0 || resources[store->aux].type!=TypedType::F32x4) {
+            out.error="typed F32x4 division output must be float4 Location 0";
+            return false;
+        }
+        const uint8_t input_count=static_cast<uint8_t>(std::max(numerator->index,denominator->index)+1);
+        MachineProgram primary;
+        if (!primary.emit<MachineOpcode::Phase>() || !primary.emit<MachineOpcode::Nop>() ||
+            !primary.emit<MachineOpcode::DivF32x4>(0,
+                primary.physical(machine_fragment_output(0),MachineType::F16),
+                primary.physical(machine_primary(static_cast<uint8_t>(numerator->index*2)),MachineType::F32),
+                primary.physical(machine_primary(static_cast<uint8_t>(denominator->index*2)),MachineType::F32))) {
+            out.error="failed to build oracle F32x4 division Machine profile";
+            return false;
+        }
+        return compile_fragment_arithmetic_machine(primary,{},input_count,0,0,out);
     }
     if (root_def->opcode()==TypedOpcode::FloatSwizzle &&
         root_def->subop()==static_cast<uint8_t>(TypedFloatSwizzleOp::Wzyx) &&

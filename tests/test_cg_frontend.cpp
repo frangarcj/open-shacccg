@@ -400,9 +400,9 @@ int test_cg_frontend() {
     }
     {
         const char *alu_probes[]={
-            "fp-add-float4","fp-sub-float4","fp-mul-float4","fp-min-float4","fp-max-float4",
+            "fp-add-float4","fp-sub-float4","fp-mul-float4","fp-div-float4","fp-min-float4","fp-max-float4",
             "fp-sat-float4","fp-abs-float4","fp-neg-float4","fp-mad-float4","fp-dot-float4",
-            "fp-add-half4","fp-sub-half4","fp-mul-half4","fp-min-half4","fp-max-half4",
+            "fp-add-half4","fp-sub-half4","fp-mul-half4","fp-div-half4","fp-min-half4","fp-max-half4",
             "fp-sat-half4","fp-abs-half4","fp-neg-half4","fp-mad-half4","fp-dot-half4",
         };
         for (const char *probe:alu_probes) {
@@ -412,6 +412,18 @@ int test_cg_frontend() {
                 ++failures;
             }
         }
+    }
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-div-float4.cg");
+        const uint64_t words[]={
+            0xfa44070000000000ULL,0xf800094000000000ULL,
+            0x308008008f800101ULL,0x308008088f800102ULL,
+            0x308008008f800184ULL,0x308008088f800188ULL,
+            0x40800dbcafb98002ULL,0x10a4478600040f7cULL,
+        };
+        if (source.empty() || !compile_oracle_fragment_profile(source,"fp-div-float4.cg",
+                272,0x00081005,8,0,0,words,8))
+            failures += fail("Cg F32x4 division did not reproduce oracle profile");
     }
 #endif
     return failures;

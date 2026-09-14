@@ -732,6 +732,7 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
         uint32_t words=1;
         if (program.instructions()[i].opcode()==MachineOpcode::DependentSample) words=0;
         else if (program.instructions()[i].opcode()==MachineOpcode::LoopIncrement) words=2;
+        else if (program.instructions()[i].opcode()==MachineOpcode::DivF32x4) words=6;
         word_positions[i + 1] = word_positions[i] + words;
     }
     for (uint32_t position : program.labels()) {
@@ -915,6 +916,44 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                                     usse::SwizzleChannel::Y, usse::SwizzleChannel::Y}};
             }
             if (!builder.instruction(op)) { out.error = "failed to encode machine V32NMAD"; return false; }
+            break;
+        }
+        case MachineOpcode::DivF32x4: {
+            if (instruction.subop()!=0 || guard!=usse::Predicate::Always) {
+                out.error="F32x4 division pseudo-op does not accept subops/guards";
+                return false;
+            }
+            usse::RegisterRef dst{},numerator{},denominator{};
+            if (!resolve_register_value(instruction.dst,MachineType::F16,out.value_registers,&dst) ||
+                !resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&numerator) ||
+                !resolve_register_value(instruction.src1,MachineType::F32,out.value_registers,&denominator) ||
+                dst.bank!=usse::RegisterBank::PrimaryAttribute || dst.num!=0 ||
+                numerator.bank!=usse::RegisterBank::PrimaryAttribute || (numerator.num&1u) ||
+                denominator.bank!=usse::RegisterBank::PrimaryAttribute || (denominator.num&1u)) {
+                out.error="F32x4 division requires fragment output0 and even PA float4 inputs";
+                return false;
+            }
+            for (uint8_t lane=0;lane<4;++lane) {
+                usse::VcompRcpF32Semantic reciprocal{denominator,lane};
+                if (!builder.instruction(reciprocal)) {
+                    out.error="failed to encode F32x4 division reciprocal VCOMP";
+                    return false;
+                }
+            }
+            usse::VpckSemantic stage{};
+            stage.dst={usse::RegisterBank::Temp,125};
+            stage.src1=numerator;
+            stage.src2={numerator.bank,static_cast<uint8_t>(numerator.num+1)};
+            stage.src_format=usse::PackFormat::F32;
+            stage.dst_format=usse::PackFormat::F32;
+            stage.dest_mask=0xF;
+            stage.skip_invalid=true;
+            stage.no_schedule=false;
+            usse::V16NmadDivF32x4Semantic combine{};
+            if (!builder.instruction(stage) || !builder.instruction(combine)) {
+                out.error="failed to encode F32x4 division stage/combine";
+                return false;
+            }
             break;
         }
         case MachineOpcode::Vmad: {

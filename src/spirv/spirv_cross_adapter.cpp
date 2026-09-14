@@ -815,7 +815,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         error = "failed to emit Typed IR float unary operation"; return false;
                     }
                     values[args[1]] = dst;
-                } else if (op == spv::OpFMul || op == spv::OpFAdd || op == spv::OpFSub) {
+                } else if (op == spv::OpFMul || op == spv::OpFAdd || op == spv::OpFSub || op == spv::OpFDiv) {
                     if (count != 5) { error = "invalid floating binary instruction"; return false; }
                     const auto lhs = values.find(args[2]);
                     const auto rhs = values.find(args[3]);
@@ -827,6 +827,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     backend::TypedFloatOp float_op = backend::TypedFloatOp::Mul;
                     if (op == spv::OpFAdd) float_op = backend::TypedFloatOp::Add;
                     else if (op == spv::OpFSub) float_op = backend::TypedFloatOp::Sub;
+                    else if (op == spv::OpFDiv) float_op = backend::TypedFloatOp::Div;
                     const auto dst = program.make_value(result_type);
                     if (!program.emit<backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(float_op), dst,
                                                                          lhs->second, rhs->second)) {

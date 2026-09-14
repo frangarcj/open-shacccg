@@ -322,6 +322,38 @@ int test_gxp_writer() {
         }
     }
 
+    {
+        // SDK 1.6.5 fragment arithmetic/control profiles append one 16-byte
+        // descriptor per additional float4 input, then retain the normal
+        // 8-byte no-secondary anchor before primary code.
+        ProgramImage multi{};
+        multi.type=ProgramType::Fragment;
+        multi.interface_block=interface_block;
+        multi.interface_block_size=sizeof(interface_block);
+        multi.primary_instructions=primary;
+        multi.primary_instruction_count=2;
+        multi.fragment_additional_float4_inputs=2;
+        const size_t multi_need=required_size(multi);
+        std::vector<uint8_t> multi_bytes(multi_need);
+        if (!multi_need || !write_program(multi,multi_bytes.data(),multi_bytes.size())) {
+            failures += fail("fragment additional-input interface layout was rejected");
+        } else {
+            auto get_u32=[&](size_t off) {
+                uint32_t value=0;
+                std::memcpy(&value,multi_bytes.data()+off,sizeof(value));
+                return value;
+            };
+            const size_t primary_off=0x40u+get_u32(0x40);
+            const uint8_t expected_extra[32]={
+                0,0,0,0,0x0f,0x10,0xc0,0x0e,0,0,0,0,0x30,0,0,0,
+                0,0,0,0,0x0f,0x20,0xc0,0x0e,0,0,0,0,0x30,0,0,0,
+            };
+            if (primary_off!=0xe0 ||
+                std::memcmp(multi_bytes.data()+0xb8,expected_extra,sizeof(expected_extra))!=0)
+                failures += fail("fragment additional-input descriptors do not match oracle layout");
+        }
+    }
+
 
     // Full independent texture_v reconstruction. Every operand-bearing USSE
     // instruction is assembled from semantic operands, then serialized from

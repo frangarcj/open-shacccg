@@ -298,9 +298,35 @@ source spellings.
 GLSL.std.450 `FClamp` is accepted only for the exact vector constants 0 and 1,
 then lowered as the already validated V32NMAD `MAX(x,0)` followed by
 `MIN(x,SPECIAL1.yyyy)`. The SPECIAL1.y constant is independently anchored by
-the public clear_v homogeneous-position path. Division is now the only missing
-operation in the float4/half4 ALU slice and is the first case that genuinely
-requires VCOMP coverage.
+the public clear_v homogeneous-position path. Division is the first case in this
+slice that genuinely requires VCOMP coverage.
+
+## F32x4 reciprocal/division profile
+
+Differential `a/b` versus `b/a` probes isolate the reciprocal VCOMP source-pair
+field from its lane selector. For an even PrimaryAttribute float4 base, the four
+F32 reciprocal words use fixed base `0x308008008f800000`, encode `PA/2` in bits
+8..15, and use lane signatures `{0x01,0x02,0x84,0x88}` with bit 35 set for odd
+lanes. Both PA0 and PA2 variants are covered by raw and semantic round-trip
+tests.
+
+The direct `float4 a / float4 b` Sony sequence is reproduced exactly outside
+GUIDs: PHAS + NOP, four VCOMP reciprocal operations on `b.xyzw`, F32->F32 VPCK
+staging `a` into GPI1 (`TEMP125`), and V16NMAD combine
+`0x10a4478600040f7c`.
+
+The same probes expose the general SDK 1.6.5 multi-varying fragment layout:
+after the main 32-byte interface, each additional float4 input contributes a
+16-byte descriptor (`0f 10/20 c0 0e` plus `0x30` in the second qword), followed
+by the usual 8-byte zero-secondary anchor. `fp-add-float4`, `fp-mad-float4`,
+`fp-if-big` and `fp-div-float4` independently confirm this structure. The GXP
+writer models it explicitly instead of treating those bytes as padding.
+
+With this cut the `float4`/`half4` ALU slice compiles 22/22. F32x4 division is
+byte-identical outside GUIDs. `half4` still arrives from glslang HLSL as F32x4,
+so it intentionally uses the validated F32 profile until a frontend route that
+preserves half precision is available; Sony's half profile remains separately
+observable in the oracle corpus.
 
 Backend fallback diagnostics now retain the SPIRV-Cross Typed-path failure when
 the dependency-free parser also rejects a shader, so future oracle sweeps expose

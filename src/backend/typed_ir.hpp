@@ -95,6 +95,7 @@ enum class TypedFloatOp : uint8_t {
     Min,
     Max,
     Dot,
+    Div,
 };
 
 enum class TypedFloatUnaryOp : uint8_t {
