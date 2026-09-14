@@ -17,3 +17,26 @@ __pycache__/
 *.gcno
 *.profraw
 *.profdata
+
+# Private/proprietary Vita binaries and local oracle artifacts.
+# Keep the Sony SceShaccCg module and any patched/extracted copies outside Git.
+*.elf
+*.self
+*.suprx
+*.skprx
+*.prx
+*.oracle.*
+libshacccg.*
+
+# Generated shader binaries are local by default. The preserved libvita2d
+# regression corpus is public MIT-licensed data and is the only exception.
+*.gxp
+*_gxp.o
+!research/public_samples/libvita2d/*.gxp
+!research/public_samples/libvita2d/*_gxp.o
+
+# Local oracle work areas / environment files.
+oracle_private/
+.oracle/
+.env
+.env.*
