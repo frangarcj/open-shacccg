@@ -92,6 +92,34 @@ dispatch mechanically; keep semantic decisions, hardware constraints and
 fail-closed policy handwritten. This preserves the useful separation found in
 compact ISA decoders without importing Vita3K's GPL implementation.
 
+## glslang HLSL frontend validation
+
+An optional host-side Cg compatibility path now uses glslang 16.6.0 in HLSL
+DX9-compatible mode to produce SPIR-V. glslang's optimizer is disabled so the
+existing SPIRV-Tools stage remains the single explicit optimizer.
+
+Observed source acceptance during the initial probe:
+
+- `oracle_corpus_v2`: 87 / 87 compile unchanged;
+- `oracle_corpus`: 65 / 70 compile unchanged; the five rejected probes are the
+  scalar/narrow-vector `wzyx` cases whose component selections exceed the
+  declared value width;
+- public libvita2d Cg corpus: 5 / 7 compile unchanged and 7 / 7 after the sole
+  compatibility rewrite `TYPE out name` -> `out TYPE name` used by its two
+  vertex shaders.
+
+With glslang + SPIRV-Tools + SPIRV-Cross enabled together, public `color_f` and
+`texture_f` already compile end-to-end from original Cg source to GXP. Their
+primary USSE instruction streams match the preserved public GXPs exactly. The
+remaining public samples fail later in the current SPIR-V/Vita lowering because
+glslang expresses uniforms/position operations in shapes the old shape-specific
+lowerer does not yet recognize; these are backend gaps rather than Cg parse
+failures.
+
+The glslang HLSL frontend is intentionally experimental because its upstream
+HLSL mode is deprecated. It is still a high-value compatibility route and
+validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.
+
 ## Optional optimized SPIR-V frontend
 
 The host build now has two independent optional stages before Vita lowering:

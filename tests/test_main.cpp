@@ -1,5 +1,6 @@
 #include <cstdio>
 int test_abi();
+int test_cg_frontend();
 int test_compiler();
 int test_spirv();
 int test_gxp();
@@ -10,6 +11,7 @@ int test_usse();
 int main() {
     int failures = 0;
     failures += test_abi();
+    failures += test_cg_frontend();
     failures += test_compiler();
     failures += test_spirv();
     failures += test_gxp();

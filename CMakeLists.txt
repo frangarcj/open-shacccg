@@ -3,7 +3,7 @@ project(open_shacccg LANGUAGES C CXX)
 
 option(OPENSHACCG_BUILD_TESTS "Build host tests" ON)
 option(OPENSHACCG_BUILD_VITA_STATIC "Build Vita static libshacccg.a" OFF)
-option(OPENSHACCG_ENABLE_GLSLANG "Enable glslang frontend adapter" OFF)
+option(OPENSHACCG_ENABLE_GLSLANG "Enable experimental glslang HLSL/Cg frontend adapter" OFF)
 option(OPENSHACCG_ENABLE_SPIRV_TOOLS "Optimize SPIR-V with SPIRV-Tools before Vita lowering" OFF)
 option(OPENSHACCG_ENABLE_SPIRV_CROSS "Validate/reflect SPIR-V with SPIRV-Cross before Vita lowering" OFF)
 
@@ -32,6 +32,10 @@ if(OPENSHACCG_ENABLE_SPIRV_TOOLS)
     find_package(SPIRV-Tools-opt CONFIG REQUIRED)
 endif()
 
+if(OPENSHACCG_ENABLE_GLSLANG)
+    find_package(glslang CONFIG REQUIRED)
+endif()
+
 if(OPENSHACCG_ENABLE_SPIRV_CROSS)
     find_path(OPENSHACCG_SPIRV_CROSS_INCLUDE_DIR spirv_cross/spirv_cross.hpp REQUIRED)
     find_library(OPENSHACCG_SPIRV_CROSS_CORE_LIBRARY NAMES spirv-cross-core REQUIRED)
@@ -46,6 +50,13 @@ function(openshacccg_configure_target target)
     )
     if(OPENSHACCG_ENABLE_SPIRV_TOOLS)
         target_link_libraries(${target} PRIVATE SPIRV-Tools-opt)
+    endif()
+    if(OPENSHACCG_ENABLE_GLSLANG)
+        target_link_libraries(${target} PRIVATE
+            glslang::glslang
+            glslang::SPIRV
+            glslang::glslang-default-resource-limits
+        )
     endif()
     if(OPENSHACCG_ENABLE_SPIRV_CROSS)
         target_include_directories(${target} PRIVATE ${OPENSHACCG_SPIRV_CROSS_INCLUDE_DIR})
@@ -82,6 +93,7 @@ if(OPENSHACCG_BUILD_TESTS AND NOT OPENSHACCG_BUILD_VITA_STATIC)
     add_executable(openshacccg_tests
         tests/test_main.cpp
         tests/test_abi.cpp
+        tests/test_cg_frontend.cpp
         tests/test_compiler.cpp
         tests/test_spirv.cpp
         tests/test_gxp.cpp
@@ -93,6 +105,7 @@ if(OPENSHACCG_BUILD_TESTS AND NOT OPENSHACCG_BUILD_VITA_STATIC)
     target_include_directories(openshacccg_tests PRIVATE src)
     target_compile_definitions(openshacccg_tests PRIVATE
         OPENSHACCG_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        $<$<BOOL:${OPENSHACCG_ENABLE_GLSLANG}>:OPENSHACCG_ENABLE_GLSLANG=1>
         $<$<BOOL:${OPENSHACCG_ENABLE_SPIRV_TOOLS}>:OPENSHACCG_ENABLE_SPIRV_TOOLS=1>
         $<$<BOOL:${OPENSHACCG_ENABLE_SPIRV_CROSS}>:OPENSHACCG_ENABLE_SPIRV_CROSS=1>
     )

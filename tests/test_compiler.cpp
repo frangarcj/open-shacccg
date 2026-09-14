@@ -23,8 +23,15 @@ int test_compiler() {
 
     const SceShaccCgCompileOutput *out = sceShaccCgCompileProgram(&o, &c, 0);
     if (!out) return 1;
-    // Bootstrap is expected to fail cleanly until glslang + USSE backend land.
-    int fail = (out->programData != nullptr) || (out->diagnosticCount <= 0) || !out->diagnostics;
+    int fail = 0;
+#if defined(OPENSHACCG_ENABLE_GLSLANG)
+    if (out->programData)
+        fail = out->programSize == 0;
+    else
+        fail = (out->diagnosticCount <= 0) || !out->diagnostics;
+#else
+    fail = (out->programData != nullptr) || (out->diagnosticCount <= 0) || !out->diagnostics;
+#endif
     sceShaccCgDestroyCompileOutput(out);
     if (fail) std::printf("test_compiler: unexpected bootstrap result\n");
     return fail;

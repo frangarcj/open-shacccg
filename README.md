@@ -14,6 +14,7 @@ Implemented now:
 - callback-based source acquisition, including stable diagnostic filename ownership after `releaseFile`
 - public compiler-core API independent of Sony ABI
 - direct `vsc_compile_spirv()` path so USSE/GXP development does not depend on the Cg frontend
+- experimental glslang HLSL frontend for the Cg-compatible subset, enabled with `OPENSHACCG_ENABLE_GLSLANG`
 - dependency-free SPIR-V reader/lowerer remains the portable fallback
 - optional SPIRV-Tools `-O`-style optimization and SPIRV-Cross parsing/reflection before Vita lowering
 - first SPIRV-Cross -> compact Typed Vita IR path for scalar U32 bitwise/compare/conditional discard
@@ -32,7 +33,7 @@ Implemented now:
 
 Not implemented yet:
 
-- pinned Cg/HLSL frontend adapter
+- complete Cg compatibility beyond the glslang HLSL-compatible subset (callback includes, option defines, profile quirks and remaining Cg-only syntax)
 - broaden SPIR-V instruction selection beyond the validated vertex subset and add fragment lowering
 - bank-aware USSE register allocation
 - field-level USSE instruction encoding
@@ -64,6 +65,23 @@ SPIRV-Tools runs performance passes while preserving interfaces, bindings and
 specialization constants. SPIRV-Cross then parses/reflection-checks the selected
 module. Unsupported Typed IR shapes still fall back to the dependency-free
 lowerer; the Vita static build therefore does not require host SPIR-V libraries.
+
+The experimental Cg-compatible frontend can be enabled independently or as part
+of that full host pipeline:
+
+```sh
+cmake -S . -B build-glslang \
+  -DOPENSHACCG_ENABLE_GLSLANG=ON \
+  -DOPENSHACCG_ENABLE_SPIRV_TOOLS=ON \
+  -DOPENSHACCG_ENABLE_SPIRV_CROSS=ON
+cmake --build build-glslang
+ctest --test-dir build-glslang --output-on-failure
+```
+
+It feeds source to glslang's HLSL/DX9-compatible parser with glslang's internal
+optimizer disabled; SPIRV-Tools remains the explicit optimization stage. The
+current Cg shim only strips a UTF-8 BOM and rewrites the Cg parameter spelling
+`TYPE out name` to HLSL `out TYPE name`.
 
 ## GXP / USSE workbench
 
