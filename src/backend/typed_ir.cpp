@@ -602,7 +602,8 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         return compile_vertex_ir(vertex, out);
     }
 
-    FragmentIr fragment;
+    std::vector<IrUniformVec4> fragment_uniforms;
+    std::vector<IrSampler2D> fragment_samplers;
     std::vector<const TypedResource *> inputs;
     std::vector<const TypedResource *> uniforms;
     std::vector<const TypedResource *> samplers;
@@ -618,10 +619,10 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         if (resource->type != TypedType::F32x4 || resource->value.kind() != TypedValueKind::Value) {
             out.error = "typed fragment uniform is not a supported float4"; return false;
         }
-        fragment.uniforms.push_back({shader.resource_name(*resource), resource->index});
+        fragment_uniforms.push_back({shader.resource_name(*resource), resource->index});
     }
     for (const auto *resource : samplers)
-        fragment.samplers.push_back({shader.resource_name(*resource), resource->index});
+        fragment_samplers.push_back({shader.resource_name(*resource), resource->index});
 
     const TypedInstruction *store = nullptr;
     for (const auto &instruction : instructions) {
@@ -634,20 +635,20 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
 
     if (const auto *resource = resource_for_value(root)) {
         if (resource->kind == TypedResourceKind::Uniform && resource->type == TypedType::F32x4) {
-            fragment.op = FragmentOpKind::UniformColor;
-            return compile_fragment_ir(fragment, out);
+            return compile_fragment_machine_profile(FragmentMachineProfile::UniformColor,
+                                                    fragment_uniforms,fragment_samplers,0,0,out);
         }
         if (resource->kind == TypedResourceKind::Input && resource->type == TypedType::F32x4) {
-            fragment.op = FragmentOpKind::VaryingColor;
-            return compile_fragment_ir(fragment, out);
+            return compile_fragment_machine_profile(FragmentMachineProfile::VaryingColor,
+                                                    fragment_uniforms,fragment_samplers,0,0,out);
         }
     }
 
     const auto *root_def = definition(root);
     if (!root_def) { out.error = "typed fragment root has no defining operation"; return false; }
     if (root_def->opcode() == TypedOpcode::Sample2D) {
-        fragment.op = FragmentOpKind::Texture2D;
-        return compile_fragment_ir(fragment, out);
+        return compile_fragment_machine_profile(FragmentMachineProfile::Texture2D,
+                                                fragment_uniforms,fragment_samplers,0,0,out);
     }
     if (root_def->opcode() == TypedOpcode::FloatBinary &&
         root_def->subop() == static_cast<uint8_t>(TypedFloatOp::Mul)) {
@@ -658,8 +659,8 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         if (const auto *r = resource_for_value(root_def->src0); r && r->kind == TypedResourceKind::Uniform) tint = r;
         if (const auto *r = resource_for_value(root_def->src1); r && r->kind == TypedResourceKind::Uniform) tint = r;
         if (sample && tint && uniforms.size() == 1 && samplers.size() == 1) {
-            fragment.op = FragmentOpKind::TextureTint2D;
-            return compile_fragment_ir(fragment, out);
+            return compile_fragment_machine_profile(FragmentMachineProfile::TextureTint2D,
+                                                    fragment_uniforms,fragment_samplers,0,0,out);
         }
     }
 
@@ -707,7 +708,7 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         out.error = "failed to append typed arithmetic output pack";
         return false;
     }
-    return compile_fragment_arithmetic_machine(primary,fragment.uniforms,0,0,out);
+    return compile_fragment_arithmetic_machine(primary,fragment_uniforms,0,0,out);
 }
 
 } // namespace vsc::backend

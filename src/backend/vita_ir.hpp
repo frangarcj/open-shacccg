@@ -86,6 +86,13 @@ struct IrSampler2D {
     uint32_t resource_index = 0;
 };
 
+enum class FragmentMachineProfile : uint8_t {
+    UniformColor,
+    VaryingColor,
+    Texture2D,
+    TextureTint2D,
+};
+
 struct FragmentIr {
     FragmentOpKind op = FragmentOpKind::UniformColor;
     std::vector<IrUniformVec4> uniforms;
@@ -98,6 +105,11 @@ struct FragmentIr {
 
 bool compile_vertex_ir(const VertexIr &ir, IrCompileResult &out);
 bool compile_fragment_ir(const FragmentIr &ir, IrCompileResult &out);
+bool compile_fragment_machine_profile(FragmentMachineProfile profile,
+                                      const std::vector<IrUniformVec4> &uniforms,
+                                      const std::vector<IrSampler2D> &samplers,
+                                      uint32_t binary_guid, uint32_t source_guid,
+                                      IrCompileResult &out);
 bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
                                          const std::vector<IrUniformVec4> &uniforms,
                                          uint32_t binary_guid, uint32_t source_guid,

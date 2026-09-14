@@ -153,6 +153,178 @@ bool compile_vertex_ir(const VertexIr &ir, IrCompileResult &out) {
 
 namespace vsc::backend {
 
+bool compile_fragment_machine_profile(FragmentMachineProfile profile,
+                                      const std::vector<IrUniformVec4> &uniforms,
+                                      const std::vector<IrSampler2D> &samplers,
+                                      uint32_t binary_guid, uint32_t source_guid,
+                                      IrCompileResult &out) {
+    out = {};
+    MachineProgram primary;
+    MachineProgram secondary;
+    if (!primary.emit<MachineOpcode::Phase>()) {
+        out.error = "failed to append fragment PHAS";
+        return false;
+    }
+
+    uint8_t interface_block[32]{};
+    uint8_t fragment_extension[8]{};
+    std::vector<gxp::ParameterContainerDesc> containers;
+    std::vector<gxp::ParameterDesc> parameters;
+
+    gxp::ProgramImage image{};
+    image.type = gxp::ProgramType::Fragment;
+    image.binary_guid = binary_guid;
+    image.source_guid = source_guid;
+    image.primary_phase_count = 1;
+    image.data_buffer_count = 2;
+    image.interface_block = interface_block;
+    image.interface_block_size = sizeof(interface_block);
+
+    switch (profile) {
+    case FragmentMachineProfile::UniformColor:
+        if (uniforms.size() != 1 || !samplers.empty() || uniforms[0].name.empty() ||
+            uniforms[0].resource_index != 0) {
+            out.error = "uniform-color fragment profile requires one float4 uniform at resource 0";
+            return false;
+        }
+        if (!primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F16),
+                machine_move_config(0x5, 4),
+                primary.physical(machine_fragment_output(0), MachineType::F16),
+                primary.physical(machine_secondary(0), MachineType::F16)) ||
+            !secondary.emit_config<MachineOpcode::Pack>(
+                machine_pack_subop(usse::PackFormat::F32, usse::PackFormat::F16),
+                machine_pack_config(0xF, true, false, true),
+                secondary.physical(machine_fragment_output(0), MachineType::F16),
+                secondary.physical(machine_primary(0), MachineType::F32),
+                secondary.physical(machine_primary(1), MachineType::F32))) {
+            out.error = "failed to build uniform-color fragment Machine IR";
+            return false;
+        }
+        interface_block[10] = 1; interface_block[11] = 4; interface_block[16] = 4;
+        containers = {{14,0,0,4},{19,0,4,2}};
+        parameters.push_back({uniforms[0].name.c_str(),1,0,4,14,0,0,1,0});
+        image.buffer_flags = 0x10000000;
+        image.primary_register_count = 2;
+        image.secondary_register_count = 6;
+        image.default_uniform_buffer_count = 4;
+        image.compiler_version_raw = 4;
+        break;
+
+    case FragmentMachineProfile::VaryingColor:
+        if (!uniforms.empty() || !samplers.empty()) {
+            out.error = "varying-color fragment profile takes no uniforms or samplers";
+            return false;
+        }
+        if (!primary.emit_config<MachineOpcode::Pack>(
+                machine_pack_subop(usse::PackFormat::F32, usse::PackFormat::F16),
+                machine_pack_config(0xF, true, false),
+                primary.physical(machine_fragment_output(0), MachineType::F16),
+                primary.physical(machine_primary(0), MachineType::F32),
+                primary.physical(machine_primary(1), MachineType::F32))) {
+            out.error = "failed to build varying-color fragment Machine IR";
+            return false;
+        }
+        interface_block[10]=1; interface_block[11]=4; interface_block[12]=1; interface_block[16]=4;
+        interface_block[20]=0x0f; interface_block[21]=0xa0; interface_block[22]=0xd0; interface_block[23]=0x0e;
+        interface_block[28]=0x30;
+        containers={{19,0,0,2}};
+        image.program_flags=0x1000;
+        image.primary_register_count=4;
+        image.secondary_register_count=2;
+        image.compiler_version_raw=0;
+        break;
+
+    case FragmentMachineProfile::TextureTint2D: {
+        if (uniforms.size()!=1 || samplers.size()!=1 || uniforms[0].name.empty() ||
+            samplers[0].name.empty() || uniforms[0].resource_index!=0 || samplers[0].resource_index!=0) {
+            out.error="texture-tint fragment profile requires one float4 uniform and one sampler2D at resource 0";
+            return false;
+        }
+        const auto sample_gpi=primary.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
+        const auto sample_temp=primary.make_value<MachineType::F32>(
+            MachineRegisterClass::FloatTemp,2,MachineRegisterOrder::High);
+        const auto tinted=primary.make_value<MachineType::F32>(
+            MachineRegisterClass::FloatTemp,2,MachineRegisterOrder::High);
+        if (sample_gpi.kind()==MachineOperandKind::None || sample_temp.kind()==MachineOperandKind::None ||
+            tinted.kind()==MachineOperandKind::None || !primary.emit<MachineOpcode::Nop>() ||
+            !primary.emit_config<MachineOpcode::Pack>(
+                machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F32),
+                machine_pack_config(0xF),sample_gpi,
+                primary.physical(machine_primary(0),MachineType::F32),
+                primary.physical(machine_primary(1),MachineType::F32)) ||
+            !primary.emit<MachineOpcode::DependentSample>(0,sample_temp,sample_gpi) ||
+            !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Mul),
+                machine_vector_config(0xF),tinted,
+                primary.physical(machine_secondary(0),MachineType::F32),sample_temp) ||
+            !primary.emit_config<MachineOpcode::Pack>(
+                machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F16),
+                machine_pack_config(0xF,true,false),
+                primary.physical(machine_fragment_output(0),MachineType::F16),tinted,
+                primary.physical(machine_immediate(0),MachineType::F32))) {
+            out.error="failed to build texture-tint Machine IR";
+            return false;
+        }
+        interface_block[10]=1; interface_block[11]=4; interface_block[12]=1; interface_block[14]=1; interface_block[16]=4;
+        interface_block[20]=0x00; interface_block[21]=0xf9; interface_block[28]=0xc0;
+        fragment_extension[0]=0x30;
+        image.fragment_interface_extension=fragment_extension;
+        image.fragment_interface_extension_size=sizeof(fragment_extension);
+        containers={{14,0,0,4},{19,0,4,2}};
+        parameters.push_back({uniforms[0].name.c_str(),1,0,4,14,0,0,1,0});
+        parameters.push_back({samplers[0].name.c_str(),2,0,4,0,1,0,1,0});
+        image.program_flags=0x801;
+        image.buffer_flags=0x10000000;
+        image.texunit_flags[0]=1;
+        image.primary_register_count=4;
+        image.secondary_register_count=6;
+        image.default_uniform_buffer_count=4;
+        image.compiler_version_raw=4;
+        break;
+    }
+
+    case FragmentMachineProfile::Texture2D:
+        if (!uniforms.empty() || samplers.size()!=1 || samplers[0].name.empty() ||
+            samplers[0].resource_index!=0) {
+            out.error="texture fragment profile requires one sampler2D at resource 0";
+            return false;
+        }
+        interface_block[10]=1; interface_block[11]=4; interface_block[12]=1; interface_block[14]=1; interface_block[16]=4;
+        interface_block[20]=0x00; interface_block[21]=0xf9;
+        interface_block[28]=0x40;
+        fragment_extension[0]=0x20;
+        image.fragment_interface_extension=fragment_extension;
+        image.fragment_interface_extension_size=sizeof(fragment_extension);
+        containers={{19,0,0,2}};
+        parameters.push_back({samplers[0].name.c_str(),2,0,4,0,2,0,1,0});
+        image.program_flags=0x800;
+        image.texunit_flags[0]=1;
+        image.primary_register_count=2;
+        image.secondary_register_count=2;
+        image.compiler_version_raw=0;
+        break;
+    }
+
+    MachineCompileResult primary_compiled, secondary_compiled;
+    if (!compile_words(primary,primary_compiled,out,"fragment primary Machine IR lowering failed") ||
+        !compile_words(secondary,secondary_compiled,out,"fragment secondary Machine IR lowering failed")) return false;
+    image.secondary_instructions=secondary_compiled.words.data();
+    image.secondary_instruction_count=secondary_compiled.words.size();
+    image.primary_instructions=primary_compiled.words.data();
+    image.primary_instruction_count=primary_compiled.words.size();
+    image.containers=containers.data();
+    image.container_count=containers.size();
+    image.parameters=parameters.data();
+    image.parameter_count=parameters.size();
+
+    const size_t needed=gxp::required_size(image);
+    if(!needed){out.error="GXP writer rejected fragment Machine profile";return false;}
+    out.gxp.resize(needed);
+    if(!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for fragment Machine profile"; return false;
+    }
+    return true;
+}
+
 bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
                                          const std::vector<IrUniformVec4> &uniforms,
                                          uint32_t binary_guid, uint32_t source_guid,

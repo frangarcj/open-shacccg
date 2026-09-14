@@ -194,7 +194,10 @@ int compare_fragment_to_ir(const std::vector<uint32_t>& spv, const vsc::backend:
             std::printf(": %s", out.diagnostics[0].message);
         std::printf("\n"); fail=1;
     }
-    else if (out.gxp_size!=expected.gxp.size() || std::memcmp(out.gxp_data,expected.gxp.data(),expected.gxp.size())!=0) { std::printf("test_spirv: %s SPIR-V lowering differs from direct fragment IR\n",label); fail=1; }
+    else if (out.gxp_size!=expected.gxp.size() || std::memcmp(out.gxp_data,expected.gxp.data(),expected.gxp.size())!=0) {
+        size_t first=0; while(first<out.gxp_size && first<expected.gxp.size() && out.gxp_data[first]==expected.gxp[first]) ++first;
+        std::printf("test_spirv: %s SPIR-V lowering differs from direct fragment IR at 0x%zx (%zu vs %zu)\n",label,first,out.gxp_size,expected.gxp.size()); fail=1;
+    }
     vsc_destroy_result(&req.allocator,&out); return fail;
 }
 }
