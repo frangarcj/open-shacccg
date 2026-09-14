@@ -516,7 +516,8 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     };
 
     if (shader.stage() == TypedStage::Vertex) {
-        VertexIr vertex;
+        std::vector<IrAttribute> vertex_attributes;
+        std::vector<IrMatrix4Uniform> vertex_matrices;
         std::vector<const TypedResource *> inputs;
         std::vector<const TypedResource *> matrices;
         for (const auto &resource : resources) {
@@ -535,20 +536,27 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 out.error = "typed vertex input is not a supported float vector";
                 return false;
             }
-            const uint32_t attribute = static_cast<uint32_t>(vertex.attributes.size());
+            const uint32_t attribute = static_cast<uint32_t>(vertex_attributes.size());
             attribute_for_value[resource->value.id()] = attribute;
-            vertex.attributes.push_back({shader.resource_name(*resource), components,
+            vertex_attributes.push_back({shader.resource_name(*resource), components,
                                          static_cast<uint32_t>(resource->index) * 4u});
         }
 
         std::unordered_map<uint16_t, uint32_t> matrix_for_resource;
         for (const auto *resource : matrices) {
             const uint16_t resource_id = static_cast<uint16_t>(resource - resources.data());
-            matrix_for_resource[resource_id] = static_cast<uint32_t>(vertex.matrices.size());
-            vertex.matrices.push_back({shader.resource_name(*resource), resource->index});
+            matrix_for_resource[resource_id] = static_cast<uint32_t>(vertex_matrices.size());
+            vertex_matrices.push_back({shader.resource_name(*resource), resource->index});
         }
 
         bool position_written = false;
+        bool constructed_position = false;
+        bool transformed_position = false;
+        uint32_t position_attribute = 0;
+        uint32_t position_matrix = 0;
+        bool varying_written = false;
+        uint32_t varying_attribute = 0;
+        IrVaryingSemantic selected_varying_semantic = IrVaryingSemantic::TexCoord;
         for (const auto &instruction : instructions) {
             if (instruction.opcode() != TypedOpcode::StoreOutput) continue;
             if (instruction.aux >= resources.size()) { out.error = "typed vertex output resource is out of range"; return false; }
@@ -566,7 +574,8 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                     if (def->src0.kind() != TypedValueKind::Value || it == attribute_for_value.end()) {
                         out.error = "typed constructed position is not sourced by a vertex input"; return false;
                     }
-                    vertex.ops.push_back({IrOpKind::ConstructPosition, it->second, 0, IrVaryingSemantic::TexCoord});
+                    constructed_position = true;
+                    position_attribute = it->second;
                 } else if (def->opcode() == TypedOpcode::TransformPosition) {
                     TypedValue source = def->src0;
                     if (const auto *construct = definition(source); construct && construct->opcode() == TypedOpcode::ConstructPosition)
@@ -576,7 +585,9 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                     if (source.kind() != TypedValueKind::Value || attr_it == attribute_for_value.end() || matrix_it == matrix_for_resource.end()) {
                         out.error = "typed transformed position has unresolved input or matrix"; return false;
                     }
-                    vertex.ops.push_back({IrOpKind::TransformPosition, attr_it->second, matrix_it->second, IrVaryingSemantic::TexCoord});
+                    transformed_position = true;
+                    position_attribute = attr_it->second;
+                    position_matrix = matrix_it->second;
                 } else {
                     out.error = "typed vertex position producer is unsupported"; return false;
                 }
@@ -596,10 +607,28 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             if (semantic == TypedSemantic::Color) varying_semantic = IrVaryingSemantic::Color;
             else if (semantic == TypedSemantic::TexCoord) varying_semantic = IrVaryingSemantic::TexCoord;
             else { out.error = "typed vertex varying semantic is unknown"; return false; }
-            vertex.ops.push_back({IrOpKind::CopyVarying, source_it->second, 0, varying_semantic});
+            if (varying_written) { out.error = "typed vertex shader writes multiple varyings"; return false; }
+            varying_written = true;
+            varying_attribute = source_it->second;
+            selected_varying_semantic = varying_semantic;
         }
         if (!position_written) { out.error = "typed vertex shader does not write position"; return false; }
-        return compile_vertex_ir(vertex, out);
+        if (constructed_position) {
+            if (transformed_position || varying_written || vertex_attributes.size()!=1 || !vertex_matrices.empty() ||
+                position_attribute>=vertex_attributes.size()) {
+                out.error = "typed constructed-position vertex shape is unsupported";
+                return false;
+            }
+            return compile_vertex_construct_position(vertex_attributes[position_attribute],0,0,out);
+        }
+        if (!transformed_position || !varying_written || vertex_attributes.size()!=2 || vertex_matrices.size()!=1 ||
+            position_attribute>=vertex_attributes.size() || varying_attribute>=vertex_attributes.size() ||
+            position_attribute==varying_attribute || position_matrix!=0) {
+            out.error = "typed matrix vertex shape is unsupported";
+            return false;
+        }
+        return compile_vertex_matrix_path(vertex_attributes[position_attribute],vertex_attributes[varying_attribute],
+                                          vertex_matrices[0],selected_varying_semantic,0,0,out);
     }
 
     std::vector<IrUniformVec4> fragment_uniforms;

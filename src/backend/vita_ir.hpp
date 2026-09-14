@@ -104,6 +104,13 @@ struct FragmentIr {
 };
 
 bool compile_vertex_ir(const VertexIr &ir, IrCompileResult &out);
+bool compile_vertex_construct_position(const IrAttribute &position,
+                                       uint32_t binary_guid, uint32_t source_guid,
+                                       IrCompileResult &out);
+bool compile_vertex_matrix_path(const IrAttribute &position, const IrAttribute &varying,
+                                const IrMatrix4Uniform &matrix, IrVaryingSemantic semantic,
+                                uint32_t binary_guid, uint32_t source_guid,
+                                IrCompileResult &out);
 bool compile_fragment_ir(const FragmentIr &ir, IrCompileResult &out);
 bool compile_fragment_machine_profile(FragmentMachineProfile profile,
                                       const std::vector<IrUniformVec4> &uniforms,

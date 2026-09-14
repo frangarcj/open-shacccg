@@ -23,6 +23,180 @@ static bool compile_words(const MachineProgram &program, MachineCompileResult &c
 
 } // namespace
 
+bool compile_vertex_construct_position(const IrAttribute &position,
+                                       uint32_t binary_guid, uint32_t source_guid,
+                                       IrCompileResult &out) {
+    out = {};
+    if (!valid_attribute(position) || position.resource_index != 0 || position.components != 2) {
+        out.error = "constructed-position profile requires float2 position at resource 0";
+        return false;
+    }
+
+    MachineProgram code;
+    const auto position_temp = code.make_value<MachineType::F32>(
+        MachineRegisterClass::FloatTemp, 2, MachineRegisterOrder::High);
+    const auto input = code.physical(machine_primary(0), MachineType::F32);
+    const auto one = code.physical(machine_special(1), MachineType::F32);
+    if (position_temp.kind() == MachineOperandKind::None || !code.emit<MachineOpcode::Phase>() ||
+        !code.emit<MachineOpcode::Nop>() ||
+        !code.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Mul),
+            machine_vector_config(0xF, MachineVectorSwizzle::PositionXY11, false, false, false, true, true),
+            position_temp, input, one) ||
+        !code.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+            machine_move_config(3, 4), code.physical(machine_vertex_output(0), MachineType::F32), position_temp) ||
+        !code.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+            machine_move_config(3, 11), code.physical(machine_vertex_output(1), MachineType::F32), position_temp) ||
+        !code.emit<MachineOpcode::Emit>()) {
+        out.error = "failed to build constructed-position machine program";
+        return false;
+    }
+
+    uint8_t interface_block[32]{};
+    interface_block[0]=0x03; interface_block[16]=0x00; interface_block[17]=0x10;
+    interface_block[18]=0x00; interface_block[19]=0x04;
+    const gxp::ParameterContainerDesc containers[] = {{19,0,0,2}};
+    const gxp::ParameterDesc parameters[] = {
+        {position.name.c_str(),0,0,4,0,0,0,1,position.resource_index},
+    };
+
+    MachineCompileResult compiled;
+    if (!compile_words(code,compiled,out,"vertex Machine IR lowering failed")) return false;
+
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00010000;
+    image.data_buffer_count=2;
+    image.primary_phase_count=1;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=compiled.words.data();
+    image.primary_instruction_count=compiled.words.size();
+    image.containers=containers;
+    image.container_count=1;
+    image.parameters=parameters;
+    image.parameter_count=1;
+    image.primary_register_count=4;
+    image.secondary_register_count=2;
+    image.compiler_version_raw=0;
+
+    const size_t needed=gxp::required_size(image);
+    if(!needed){out.error="GXP writer rejected constructed-position profile";return false;}
+    out.gxp.resize(needed);
+    if(!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for constructed-position profile"; return false;
+    }
+    return true;
+}
+
+bool compile_vertex_matrix_path(const IrAttribute &position, const IrAttribute &varying,
+                                const IrMatrix4Uniform &matrix, IrVaryingSemantic semantic,
+                                uint32_t binary_guid, uint32_t source_guid,
+                                IrCompileResult &out) {
+    out = {};
+    if (!valid_attribute(position) || !valid_attribute(varying) ||
+        position.resource_index != 0 || varying.resource_index != 4 ||
+        position.components != 3 || (varying.components != 2 && varying.components != 4) ||
+        matrix.name.empty() || matrix.resource_index != 0) {
+        out.error = "matrix vertex profile has unsupported resources";
+        return false;
+    }
+
+    MachineProgram code;
+    const auto gpi0 = code.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
+    const auto gpi1 = code.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
+    const auto gpi_pair = code.pair(gpi0, gpi1);
+    if (gpi0.kind() == MachineOperandKind::None || gpi1.kind() == MachineOperandKind::None ||
+        gpi_pair.kind() == MachineOperandKind::None || !code.emit<MachineOpcode::Phase>() ||
+        !code.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+            machine_move_config(3, 4, varying.components==4 ? 1 : 0, true, true),
+            code.physical(machine_vertex_output(2), MachineType::F32),
+            code.physical(machine_primary(static_cast<uint8_t>(varying.resource_index/2)), MachineType::F32)) ||
+        !code.emit_config<MachineOpcode::Pack>(machine_pack_subop(usse::PackFormat::F32, usse::PackFormat::F32),
+            machine_pack_config(7), gpi0,
+            code.physical(machine_primary(0), MachineType::F32),
+            code.physical(machine_primary(1), MachineType::F32)) ||
+        !code.emit_config<MachineOpcode::Pack>(machine_pack_subop(usse::PackFormat::F32, usse::PackFormat::F32),
+            machine_pack_config(15), gpi1,
+            code.physical(machine_secondary(6), MachineType::F32),
+            code.physical(machine_secondary(7), MachineType::F32))) {
+        out.error = "failed to build matrix staging machine program";
+        return false;
+    }
+    for (size_t i=0;i<4;i++) {
+        MachineOperand dst;
+        uint8_t src_num;
+        uint8_t mask;
+        bool no_schedule;
+        if (i<2) {
+            dst=code.make_value<MachineType::F32>(MachineRegisterClass::VmadAccumulator);
+            src_num=static_cast<uint8_t>(i*2); mask=15; no_schedule=true;
+        } else {
+            dst=code.physical(machine_vertex_output(static_cast<uint8_t>(i-2)), MachineType::F32);
+            src_num=static_cast<uint8_t>(i+2); mask=3; no_schedule=false;
+        }
+        if (dst.kind() == MachineOperandKind::None ||
+            !code.emit_config<MachineOpcode::Vmad>(static_cast<uint8_t>(i),
+                machine_vmad_config(mask, no_schedule), dst,
+                code.physical(machine_secondary(src_num), MachineType::F32), gpi_pair)) {
+            out.error="failed to build matrix VMAD machine operation";
+            return false;
+        }
+    }
+    if (!code.emit<MachineOpcode::Emit>()) {
+        out.error="failed to append EMIT";
+        return false;
+    }
+
+    uint8_t interface_block[32]{};
+    if (semantic==IrVaryingSemantic::Color) {
+        interface_block[0]=0xf7; interface_block[16]=0x00; interface_block[17]=0x18;
+        interface_block[18]=0x00; interface_block[19]=0x08;
+    } else {
+        interface_block[0]=0x37; interface_block[16]=0x00; interface_block[17]=0x10;
+        interface_block[18]=0x00; interface_block[19]=0x06; interface_block[20]=0x01;
+    }
+    const gxp::ParameterContainerDesc containers[] = {{14,0,0,16},{19,0,16,2}};
+    const gxp::ParameterDesc parameters[] = {
+        {position.name.c_str(),0,0,4,0,0,0,1,position.resource_index},
+        {varying.name.c_str(),0,0,4,0,0,0,1,varying.resource_index},
+        {matrix.name.c_str(),1,0,4,14,0,0,4,0},
+    };
+
+    MachineCompileResult compiled;
+    if (!compile_words(code,compiled,out,"vertex Machine IR lowering failed")) return false;
+
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00010000;
+    image.buffer_flags=0x10000000;
+    image.data_buffer_count=2;
+    image.primary_phase_count=1;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=compiled.words.data();
+    image.primary_instruction_count=compiled.words.size();
+    image.containers=containers;
+    image.container_count=2;
+    image.parameters=parameters;
+    image.parameter_count=3;
+    image.primary_register_count=8;
+    image.secondary_register_count=18;
+    image.default_uniform_buffer_count=16;
+    image.compiler_version_raw=16;
+
+    const size_t needed=gxp::required_size(image);
+    if(!needed){out.error="GXP writer rejected matrix vertex profile";return false;}
+    out.gxp.resize(needed);
+    if(!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for matrix vertex profile"; return false;
+    }
+    return true;
+}
+
 bool compile_vertex_ir(const VertexIr &ir, IrCompileResult &out) {
     out = {};
     if (ir.attributes.empty() || ir.ops.empty()) { out.error="empty vertex IR"; return false; }
