@@ -48,6 +48,11 @@ Representative shaders also use integer/unsigned values, shifts and masks, integ
 - VBW rotated/inverted immediate encoding with fail-closed behavior for unrepresentable constants
 - KILL raw codec
 - semantic KILL for the short predicate forms
+- compact Machine IR: 32-bit operands, 16-byte generic instructions and
+  descriptor-driven use/def metadata
+- dynamic virtual-predicate allocation with lifetime reuse and opcode-specific
+  encodability constraints
+- machine lowering for U32 compare -> VTST and predicate -> KILL
 
 Exact external trace anchors used by tests include:
 
@@ -84,14 +89,15 @@ without importing Vita3K's GPL implementation.
 
 ## Next backend order
 
-1. **Typed Vita IR.** Replace the float4-only assumption in the generic fragment DAG with explicit scalar/vector types. Add U32 values and integer leaves without exposing physical USSE registers to the frontend.
-2. **Predicate values and control statements.** Lower Vita IR compares to VTST and `discard` to KILL. Keep predicate allocation explicit (four hardware predicate registers) and fail when pressure cannot be represented.
-3. **BR control flow.** Add raw and semantic BR only once branch offset/direction semantics are anchored by real words. Then lower structured `if/else`; loops come after branch back-edges are independently validated.
-4. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
-5. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
-6. **Common missing ALU families.** Prioritize VCOMP, VMAD2 and VDUAL based on real traces, then remaining instruction families by corpus frequency.
-7. **Resource/reflection generalization.** Derive register counts, parameter types, containers, uniform buffers, literals and dependent samplers from IR instead of current sample-shaped layouts.
-8. **Hardware gate.** Treat a capability as complete only after host regressions plus real-Vita `sceGxmProgramCheck`/render validation where possible.
+1. **Typed Vita IR.** Replace the float4-only assumption in the generic fragment DAG with explicit scalar/vector types. Add U32 values and integer leaves without exposing physical USSE registers to the frontend, then lower them into the compact Machine IR.
+2. **Virtual value allocation.** Extend the descriptor-driven Machine IR allocator from predicates to typed value lifetimes/banks, keeping physical register choices out of Vita IR.
+3. **Predicate values and control statements.** Route Vita IR compares and `discard` through the now-tested Machine IR VTST/KILL path instead of emitting semantic USSE directly.
+4. **BR control flow.** Add raw and semantic BR only once branch offset/direction semantics are anchored by real words. Then lower structured `if/else`; loops come after branch back-edges are independently validated.
+5. **Integer data movement/conversion.** Cover the VMOV/VPCK integer forms and bitcasts required to connect U32 computations to actual shader resources.
+6. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
+7. **Common missing ALU families.** Prioritize VCOMP, VMAD2 and VDUAL based on real traces, then remaining instruction families by corpus frequency.
+8. **Resource/reflection generalization.** Derive register counts, parameter types, containers, uniform buffers, literals and dependent samplers from IR instead of current sample-shaped layouts.
+9. **Hardware gate.** Treat a capability as complete only after host regressions plus real-Vita `sceGxmProgramCheck`/render validation where possible.
 
 ## Definition of progress
 

@@ -16,6 +16,7 @@ set(OPENSHACCG_CORE_SOURCES
     src/frontend/cg_compat.cpp
     src/spirv/spirv_reader.cpp
     src/backend/backend.cpp
+    src/backend/machine_ir.cpp
     src/backend/program_builder.cpp
     src/backend/vita_ir.cpp
     src/gxp/gxp_writer.cpp
@@ -64,6 +65,7 @@ if(OPENSHACCG_BUILD_TESTS AND NOT OPENSHACCG_BUILD_VITA_STATIC)
         tests/test_compiler.cpp
         tests/test_spirv.cpp
         tests/test_gxp.cpp
+        tests/test_machine_ir.cpp
         tests/test_usse.cpp
     )
     target_link_libraries(openshacccg_tests PRIVATE openshacccg_abi)

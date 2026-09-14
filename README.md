@@ -250,6 +250,23 @@ consistently in the public corpus: the uniform-buffer table anchor points at the
 parameter-table start, and a zero-length secondary program uses the word just
 before the primary instruction stream as its anchor.
 
+## Compact Machine IR milestone
+
+The backend now has a compact machine-facing IR between typed Vita IR and the
+semantic USSE builders. Operands are 32-bit tagged handles and every machine
+instruction is a generic 16-byte record (`opcode/subop/control + dst/src0/src1`),
+so adding instruction families does not require another parallel instruction
+class hierarchy. A small opcode descriptor table declares value/predicate
+use/def roles and drives validation plus allocation.
+
+Predicate registers are allocated dynamically from virtual lifetimes. Reads and
+writes use separate positions inside an instruction, allowing the real USSE
+pattern `!p0 CMP -> p0` to reuse the same hardware predicate when the old value
+dies at that instruction. The first machine path lowers U32 compare + discard to
+`VTST` + `KILL` and reproduces observed instruction words exactly. Physical
+value allocation remains deliberately fail-closed until the typed value
+allocator is introduced.
+
 ## Vita IR lowering milestone
 
 A first stage-specific backend IR now sits above the semantic USSE assembler.
