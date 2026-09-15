@@ -270,6 +270,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
         std::unordered_map<uint32_t, uint32_t> loop_headers;
         std::unordered_set<uint32_t> kill_labels;
         std::unordered_set<uint32_t> s32_loop_state_ids;
+        bool structured_control=false;
         std::unordered_set<uint32_t> narrow_u16_ids;
         std::unordered_set<uint32_t> narrow_s16_ids;
 
@@ -633,6 +634,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 }
             }
             if (has_control) {
+                structured_control=true;
                 for (uint32_t id:function_labels) {
                     const uint16_t label=program.make_label();
                     if (label==std::numeric_limits<uint16_t>::max()) {
@@ -1759,7 +1761,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         return false;
                     }
                     const uint8_t components=backend::typed_component_count(lhs->second.type());
-                    if (stage==backend::TypedStage::Vertex && components<4) {
+                    if ((stage==backend::TypedStage::Vertex || structured_control) && components<4) {
                         std::array<backend::TypedValue,3> products{};
                         bool ok=true;
                         for (uint8_t lane=0;lane<components;++lane) {
@@ -1906,7 +1908,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         offset+=count;
                         continue;
                     }
-                    if (stage==backend::TypedStage::Vertex && op==spv::OpFDiv &&
+                    if ((stage==backend::TypedStage::Vertex || structured_control) && op==spv::OpFDiv &&
                         result_type==backend::TypedType::F32x3) {
                         std::array<backend::TypedValue,3> lanes{};
                         bool ok=true;

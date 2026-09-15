@@ -105,7 +105,8 @@ bool valid_desc(const ProgramImage &image) {
         (image.type!=ProgramType::Fragment || !image.secondary_instruction_count ||
          image.fragment_interface_extension || image.fragment_primary_overlaps_interface))
         return false;
-    if (image.fragment_additional_inputs > 2 || image.fragment_input_components < 1 ||
+    const uint8_t max_additional_inputs=image.fragment_additional_input_records ? 8 : 2;
+    if (image.fragment_additional_inputs > max_additional_inputs || image.fragment_input_components < 1 ||
         image.fragment_input_components > 4 ||
         (image.fragment_additional_inputs &&
          (image.type != ProgramType::Fragment || image.secondary_instruction_count != 0 ||

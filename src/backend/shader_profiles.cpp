@@ -2027,6 +2027,91 @@ bool compile_fragment_texture_control_machine(const MachineProgram &primary,
     return true;
 }
 
+bool compile_fragment_lighting_machine(const MachineProgram &primary,
+                                       const std::vector<IrUniformFloat> &uniforms,
+                                       const std::vector<IrLiteralF32> &literal_values,
+                                       uint32_t binary_guid, uint32_t source_guid,
+                                       IrCompileResult &out) {
+    out={};
+    uint32_t uniform_words=0;
+    for (const auto &uniform:uniforms) {
+        if (uniform.name.empty() || uniform.components<1 || uniform.components>4) {
+            out.error="fragment lighting uniform metadata is invalid";
+            return false;
+        }
+        uniform_words=std::max<uint32_t>(uniform_words,uniform.resource_index+uniform.components);
+    }
+    uniform_words=(uniform_words+1u)&~1u;
+    if (uniform_words!=26 || uniform_words+literal_values.size()>0xffffu) {
+        out.error="fragment lighting profile requires the validated 26-word uniform footprint";
+        return false;
+    }
+
+    MachineCompileResult compiled;
+    if (!compile_words(primary,compiled,out,"fragment lighting Machine IR lowering failed")) return false;
+
+    std::vector<gxp::ParameterDesc> parameters;
+    parameters.reserve(uniforms.size());
+    for (const auto &uniform:uniforms)
+        parameters.push_back({uniform.name.c_str(),1,0,uniform.components,14,0,0,1,uniform.resource_index});
+    std::vector<gxp::LiteralDesc> literals;
+    literals.reserve(literal_values.size());
+    for (const auto &literal:literal_values) {
+        if (literal.resource_index>=literal_values.size()) {
+            out.error="fragment lighting literal resource index is out of range";
+            return false;
+        }
+        literals.push_back({literal.resource_index,literal.value_bits});
+    }
+    std::vector<gxp::ParameterContainerDesc> containers={{14,0,0,static_cast<uint16_t>(uniform_words)}};
+    if (!literals.empty())
+        containers.push_back({19,0,static_cast<uint16_t>(uniform_words),static_cast<uint16_t>(literals.size())});
+
+    const uint8_t interface_block[32]={
+        0,0,0,0,0,0,0,0,0,0,1,4,6,0,0,0,
+        4,0,0,0,0x0f,0x20,0xc0,0x0c,0,0,0,0,0x30,0,0,0,
+    };
+    const uint8_t additional_inputs[5*16]={
+        0,0,0,0,0x0f,0x30,0xc0,0x0c,0,0,0,0,0x30,0,0,0,
+        0,0,0,0,0x0f,0x40,0xc0,0x0c,0,0,0,0,0x30,0,0,0,
+        0,0,0,0,0x0f,0x50,0xc0,0x0c,0,0,0,0,0x30,0,0,0,
+        0,0,0,0,0x0f,0x60,0xc0,0x0c,0,0,0,0,0x30,0,0,0,
+        0,0,0,0,0x0f,0xa0,0xd0,0x0e,0,0,0,0,0x30,0,0,0,
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Fragment;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid; image.source_guid=source_guid;
+    image.program_flags=0x00081007;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=24;
+    image.secondary_register_count=static_cast<uint16_t>(uniform_words+literals.size());
+    image.temp_register_count=9;
+    image.primary_phase_count=1;
+    image.data_buffer_count=static_cast<uint32_t>(literals.size());
+    image.default_uniform_buffer_count=uniform_words;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.fragment_additional_inputs=5;
+    image.fragment_input_components=4;
+    image.fragment_additional_input_records=additional_inputs;
+    image.fragment_additional_input_records_size=sizeof(additional_inputs);
+    image.primary_instructions=compiled.words.data();
+    image.primary_instruction_count=compiled.words.size();
+    image.containers=containers.data(); image.container_count=containers.size();
+    image.parameters=parameters.data(); image.parameter_count=parameters.size();
+    image.literals=literals.data(); image.literal_count=literals.size();
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected fragment lighting profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for fragment lighting profile"; return false;
+    }
+    return true;
+}
+
 bool compile_fragment_machine_profile(FragmentMachineProfile profile,
                                       const std::vector<IrUniformVec4> &uniforms,
                                       const std::vector<IrSampler2D> &samplers,

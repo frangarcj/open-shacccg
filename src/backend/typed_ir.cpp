@@ -2385,14 +2385,15 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         }
         if (resource->type==TypedType::F32x4)
             fragment_uniforms.push_back({shader.resource_name(*resource),resource->index});
-        else if (resource->type==TypedType::F32)
-            fragment_float_uniforms.push_back({shader.resource_name(*resource),1,resource->index});
+        else if (resource->type==TypedType::F32 || resource->type==TypedType::F32x2 ||
+                 resource->type==TypedType::F32x3)
+            fragment_float_uniforms.push_back({shader.resource_name(*resource),typed_component_count(resource->type),resource->index});
         else if (resource->type==TypedType::S32)
             fragment_s32_uniforms.push_back({shader.resource_name(*resource),resource->index});
         else if (resource->type==TypedType::U32x2)
             fragment_i32x2_uniforms.push_back({shader.resource_name(*resource),resource->index});
         else {
-            out.error="typed fragment uniform type is outside validated F32/float4/S32/int2 profiles";
+            out.error="typed fragment uniform type is outside validated F32-vector/float4/S32/int2 profiles";
             return false;
         }
     }
@@ -2402,6 +2403,94 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     std::vector<const TypedInstruction *> output_stores;
     for (const auto &instruction : instructions)
         if (instruction.opcode() == TypedOpcode::StoreOutput) output_stores.push_back(&instruction);
+
+    // One-light Phong fragment FFP: six interpolators feed a structured
+    // lighting loop and one final float4 COLOR store. This is deliberately
+    // matched by resource/control shape rather than shader name; the same
+    // generic Typed->Machine CFG path used by vertex smooth lighting does the
+    // arithmetic, while the fragment profile only supplies iterator metadata.
+    if (!program.labels().empty() && inputs.size()==6 && uniforms.size()==7 && samplers.empty() &&
+        output_stores.size()==1) {
+        const uint8_t expected_components[]={3,3,4,4,4,4};
+        bool lighting_shape=true;
+        for (size_t i=0;i<inputs.size();++i)
+            lighting_shape = lighting_shape && inputs[i]->index==i &&
+                typed_component_count(inputs[i]->type)==expected_components[i];
+        lighting_shape = lighting_shape &&
+            std::any_of(uniforms.begin(),uniforms.end(),[&](const TypedResource *r) {
+                return shader.resource_name(*r)=="Elights_attenuations" && r->type==TypedType::F32x3;
+            }) &&
+            std::any_of(uniforms.begin(),uniforms.end(),[&](const TypedResource *r) {
+                return shader.resource_name(*r)=="Gshininess" && r->type==TypedType::F32;
+            });
+        const auto *store=output_stores[0];
+        lighting_shape = lighting_shape && store->aux<resources.size() &&
+            resources[store->aux].kind==TypedResourceKind::Output &&
+            resources[store->aux].index==0 && store->src0.type()==TypedType::F32x4;
+        if (lighting_shape) {
+            uint32_t uniform_words=0;
+            for (const auto *uniform:uniforms)
+                uniform_words=std::max<uint32_t>(uniform_words,
+                    uniform->index+typed_component_count(uniform->type));
+            uniform_words=(uniform_words+1u)&~1u;
+            if (uniform_words!=26) {
+                out.error="fragment lighting shape has an unexpected uniform footprint";
+                return false;
+            }
+
+            MachineProgram primary;
+            if (!primary.emit<MachineOpcode::Phase>()) {
+                out.error="failed to start fragment lighting Machine program";
+                return false;
+            }
+            std::vector<MachineOperand> literal_bindings(program.literals().size());
+            std::vector<IrLiteralF32> literal_meta;
+            std::unordered_map<uint32_t,uint32_t> literal_index_by_bits;
+            auto bind_literal=[&](TypedValue value) -> bool {
+                if (value.kind()!=TypedValueKind::Literal || value.id()>=program.literals().size()) return true;
+                if (value.type()!=TypedType::F32 && value.type()!=TypedType::S32) return true;
+                if (literal_bindings[value.id()].kind()!=MachineOperandKind::None) return true;
+                const uint32_t bits=program.literals()[value.id()];
+                if (value.type()==TypedType::F32 && bits==0) {
+                    literal_bindings[value.id()]=primary.physical(machine_immediate(0),MachineType::F32);
+                    return true;
+                }
+                auto [it,inserted]=literal_index_by_bits.emplace(bits,static_cast<uint32_t>(literal_meta.size()));
+                if (inserted) literal_meta.push_back({it->second,bits});
+                const uint32_t word=uniform_words+it->second;
+                if (word>=254) return false;
+                literal_bindings[value.id()]=primary.physical(machine_secondary(static_cast<uint8_t>(word/2u)),
+                    value.type()==TypedType::S32?MachineType::S32:MachineType::F32,
+                    static_cast<uint8_t>(word&1u));
+                return true;
+            };
+            for (const auto &instruction:instructions)
+                if (!bind_literal(instruction.dst) || !bind_literal(instruction.src0) || !bind_literal(instruction.src1)) {
+                    out.error="fragment lighting literal table exceeds compact SA subset"; return false;
+                }
+            for (const auto &composite:program.float3_composites())
+                for (const auto component:composite)
+                    if (!bind_literal(component)) { out.error="fragment lighting float3 literal table overflow"; return false; }
+            for (const auto &composite:program.float4_composites())
+                for (const auto component:composite)
+                    if (!bind_literal(component)) { out.error="fragment lighting float4 literal table overflow"; return false; }
+            for (const auto &select:program.float_selects())
+                if (!bind_literal(select.true_value) || !bind_literal(select.false_value)) {
+                    out.error="fragment lighting select literal table overflow"; return false;
+                }
+
+            std::string machine_error;
+            if (!lower_typed_program_impl(program,primary,machine_error,false,nullptr,nullptr,nullptr,
+                    true,store->aux,&literal_bindings)) {
+                out.error="fragment lighting Typed->Machine lowering failed: "+machine_error;
+                return false;
+            }
+            std::vector<IrUniformFloat> uniform_meta;
+            for (const auto *uniform:uniforms)
+                uniform_meta.push_back({shader.resource_name(*uniform),typed_component_count(uniform->type),uniform->index});
+            return compile_fragment_lighting_machine(primary,uniform_meta,literal_meta,0,0,out);
+        }
+    }
 
     auto texture_tint_alpha_discard_shape=[&]() -> bool {
         if (instructions.size()!=11 || inputs.size()!=1 || inputs[0]->index!=0 ||
