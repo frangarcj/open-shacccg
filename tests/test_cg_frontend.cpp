@@ -892,6 +892,14 @@ int test_cg_frontend() {
         failures += fail("vitaGL public blit vertex profile did not reproduce its observed v1.5 GXP shape");
     if (!compile_texture_tint_alpha_discard_profile())
         failures += fail("texture-tint alpha discard profile did not reproduce the oracle-derived semantic stream");
+    if (!compile_fragment_gxp(
+            "float4 main(float4 color:COLOR0,float4 coords:WPOS,uniform float4 fog_color,"
+            "uniform float fog_range,uniform float fog_far):COLOR0{"
+            "float4 out_color=color;float d=coords.z/coords.w;"
+            "float f=clamp((fog_far-d)/fog_range,0.0f,1.0f);"
+            "out_color.rgb=lerp(fog_color.rgb,color.rgb,f);return out_color;}",
+            "float3-fmix-replace-rgb.cg"))
+        failures += fail("float3 FMix + RGB replacement did not compile end to end");
     if (!compile_matrix_point_size_profile(false))
         failures += fail("oracle matrix + uniform PSIZE vertex profile did not reproduce the validated stream");
     if (!compile_matrix_point_size_profile(true))

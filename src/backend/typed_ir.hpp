@@ -111,6 +111,7 @@ enum class TypedFloatUnaryOp : uint8_t {
 enum class TypedFloatSwizzleOp : uint8_t {
     Wzyx,
     XY,
+    XYZ,
 };
 
 enum class TypedFloatConvertOp : uint8_t {

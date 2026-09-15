@@ -233,6 +233,11 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             uint32_t count = 0;
             std::vector<backend::TypedValue> values;
         };
+        struct RgbInsertChain {
+            backend::TypedValue base{};
+            backend::TypedValue rgb{};
+            uint8_t mask = 0;
+        };
 
         std::unordered_map<uint32_t, backend::TypedValue> values;
         std::unordered_map<uint32_t, std::vector<UniformMember>> uniform_blocks;
@@ -242,6 +247,8 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
         std::unordered_map<uint32_t, ExtractInfo> input_access_chains;
         std::unordered_map<uint32_t, uint16_t> matrix_values;
         std::unordered_map<uint32_t, ExtractInfo> extracts;
+        std::unordered_map<uint32_t, RgbInsertChain> rgb_insert_chains;
+        std::unordered_set<uint32_t> composite_insert_operands;
         std::unordered_map<uint32_t, uint32_t> constants;
         std::unordered_map<uint32_t, std::array<uint32_t,4>> float_vector_constants;
         std::unordered_set<uint32_t> float_ones;
@@ -477,6 +484,8 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     bits[lane]=scalar->second;
                 }
                 if (resolved) float_vector_constants[args[1]]=bits;
+            } else if (op==spv::OpCompositeInsert && count==6) {
+                composite_insert_operands.insert(args[2]);
             }
             offset += count;
         }
@@ -703,10 +712,56 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 const uint8_t components=backend::typed_component_count(source->second.type());
                 if (result_type==backend::TypedType::F32 && backend::typed_is_float(source->second.type()) &&
                     components>=2 && components<=4 && args[3]<components) {
+                    // SPIRV-Tools rewrites `float4.rgb = float3` as three
+                    // extract/insert pairs. Keep those extracts symbolic so the
+                    // complete chain can become one Typed FloatReplaceRGB.
+                    if (source->second.type()==backend::TypedType::F32x3 &&
+                        composite_insert_operands.count(args[1])) {
+                        offset+=count;
+                        continue;
+                    }
                     const auto dst=program.make_value<backend::TypedType::F32>();
                     if (dst.kind()==backend::TypedValueKind::None ||
                         !program.emit<backend::TypedOpcode::FloatExtract>(static_cast<uint8_t>(args[3]),dst,source->second)) {
                         error="failed to emit Typed float component extraction";
+                        return false;
+                    }
+                    values[args[1]]=dst;
+                }
+            } else if (op==spv::OpCompositeInsert && count==6) {
+                const auto result_type=typed_type(compiler.get_type(args[0]));
+                const auto extracted=extracts.find(args[2]);
+                if (result_type!=backend::TypedType::F32x4 || extracted==extracts.end() ||
+                    extracted->second.source.type()!=backend::TypedType::F32x3 || args[4]>=3 ||
+                    extracted->second.component!=args[4]) {
+                    error="OpCompositeInsert is outside the validated float3-to-RGB chain";
+                    return false;
+                }
+                RgbInsertChain chain{};
+                if (args[4]==0) {
+                    const auto base=values.find(args[3]);
+                    if (base==values.end() || base->second.type()!=backend::TypedType::F32x4) {
+                        error="RGB insert chain has unresolved float4 base";
+                        return false;
+                    }
+                    chain={base->second,extracted->second.source,1};
+                } else {
+                    const auto prior=rgb_insert_chains.find(args[3]);
+                    const uint8_t expected_mask=static_cast<uint8_t>((1u<<args[4])-1u);
+                    if (prior==rgb_insert_chains.end() || prior->second.mask!=expected_mask ||
+                        prior->second.rgb.bits!=extracted->second.source.bits) {
+                        error="RGB insert chain is non-contiguous or mixes float3 sources";
+                        return false;
+                    }
+                    chain=prior->second;
+                    chain.mask=static_cast<uint8_t>(chain.mask | (1u<<args[4]));
+                }
+                rgb_insert_chains[args[1]]=chain;
+                if (chain.mask==0x7) {
+                    const auto dst=program.make_value<backend::TypedType::F32x4>();
+                    if (dst.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::FloatReplaceRGB>(0,dst,chain.base,chain.rgb)) {
+                        error="failed to emit Typed RGB replacement";
                         return false;
                     }
                     values[args[1]]=dst;
@@ -724,6 +779,15 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     if (!program.emit<backend::TypedOpcode::FloatSwizzle>(
                             static_cast<uint8_t>(backend::TypedFloatSwizzleOp::XY),dst,source->second)) {
                         error="failed to emit Typed IR float4.xy swizzle";
+                        return false;
+                    }
+                    values[args[1]]=dst;
+                } else if (count==8 && result_type==backend::TypedType::F32x3 &&
+                           args[4]==0 && args[5]==1 && args[6]==2) {
+                    const auto dst=program.make_value<backend::TypedType::F32x3>();
+                    if (!program.emit<backend::TypedOpcode::FloatSwizzle>(
+                            static_cast<uint8_t>(backend::TypedFloatSwizzleOp::XYZ),dst,source->second)) {
+                        error="failed to emit Typed IR float4.xyz swizzle";
                         return false;
                     }
                     values[args[1]]=dst;
@@ -1008,6 +1072,34 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         error="FClamp bounds are outside the validated vector zero/one subset";
                         return false;
                     }
+                } else if (ext==GLSLstd450FMix) {
+                    if (count!=8 || !result_float || result_scalar) {
+                        error="GLSL.std.450 FMix is outside the validated F32-vector subset";
+                        return false;
+                    }
+                    const auto x=values.find(args[4]);
+                    const auto y=values.find(args[5]);
+                    const auto a=values.find(args[6]);
+                    if (x==values.end() || y==values.end() || a==values.end() ||
+                        x->second.type()!=result_type || y->second.type()!=result_type || a->second.type()!=result_type) {
+                        error="FMix operands are unresolved or type-mismatched";
+                        return false;
+                    }
+                    const auto delta=program.make_value(result_type);
+                    const auto scaled=program.make_value(result_type);
+                    const auto dst=program.make_value(result_type);
+                    if (delta.kind()==backend::TypedValueKind::None || scaled.kind()==backend::TypedValueKind::None ||
+                        dst.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::FloatBinary>(
+                            static_cast<uint8_t>(backend::TypedFloatOp::Sub),delta,y->second,x->second) ||
+                        !program.emit<backend::TypedOpcode::FloatBinary>(
+                            static_cast<uint8_t>(backend::TypedFloatOp::Mul),scaled,delta,a->second) ||
+                        !program.emit<backend::TypedOpcode::FloatBinary>(
+                            static_cast<uint8_t>(backend::TypedFloatOp::Add),dst,x->second,scaled)) {
+                        error="failed to desugar F32-vector FMix";
+                        return false;
+                    }
+                    values[args[1]]=dst;
                 } else {
                     error = "GLSL.std.450 instruction is not in the validated Typed IR subset";
                     return false;

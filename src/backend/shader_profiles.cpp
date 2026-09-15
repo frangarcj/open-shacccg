@@ -1911,7 +1911,7 @@ bool compile_fragment_s32x2_machine(const MachineProgram &primary, const Machine
 }
 
 bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
-                                         const std::vector<IrUniformVec4> &uniforms,
+                                         const std::vector<IrUniformFloat> &uniforms,
                                          uint8_t float_input_count,
                                          uint8_t float_components,
                                          uint32_t binary_guid, uint32_t source_guid,
@@ -1921,8 +1921,10 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
         out.error="fragment arithmetic profile currently covers one to three F32 inputs of width 1..4";
         return false;
     }
-    if (!uniforms.empty() && (float_input_count!=1 || float_components!=4)) {
-        out.error="uniform arithmetic profile currently requires one float4 input";
+    const bool classic_uniform_profile=!uniforms.empty() && float_input_count==1 && float_components==4 &&
+        std::all_of(uniforms.begin(),uniforms.end(),[](const IrUniformFloat &u) { return u.components==4; });
+    if (!uniforms.empty() && float_components!=4) {
+        out.error="uniform arithmetic profile currently requires float4 output/input width";
         return false;
     }
     uint8_t interface_block[32]{};
@@ -1937,15 +1939,35 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
         interface_block[22]=component_code;
         interface_block[23]=float_input_count==1 ? 0x0e : 0x0c;
         interface_block[28]=component_tail;
-    } else {
+    } else if (classic_uniform_profile) {
         interface_block[21]=0xa0; interface_block[22]=0xd0; interface_block[23]=0x0e;
         interface_block[28]=0xb0;
         containers.push_back({19,0,0,2});
         containers.insert(containers.begin(),{14,0,0,static_cast<uint16_t>(4*uniforms.size())});
+    } else {
+        interface_block[21]=0xa0; interface_block[22]=0xd0;
+        interface_block[23]=float_input_count==1 ? 0x0e : 0x0c;
+        interface_block[28]=0x30;
+        uint32_t uniform_words=0;
+        for (const auto &uniform:uniforms) {
+            if (uniform.name.empty() || uniform.components<1 || uniform.components>4 ||
+                uniform.resource_index<uniform_words) {
+                out.error="mixed arithmetic uniform metadata is invalid or overlapping";
+                return false;
+            }
+            uniform_words=std::max<uint32_t>(uniform_words,uniform.resource_index+uniform.components);
+        }
+        uniform_words=(uniform_words+1u)&~1u;
+        if (uniform_words>0xffffu) { out.error="mixed arithmetic uniform footprint is too large"; return false; }
+        containers.push_back({14,0,0,static_cast<uint16_t>(uniform_words)});
     }
     for(size_t i=0;i<uniforms.size();++i) {
         if(uniforms[i].name.empty()) { out.error="arithmetic uniform name cannot be empty"; return false; }
-        parameters.push_back({uniforms[i].name.c_str(),1,0,4,14,0,0,1,static_cast<uint32_t>(i*4)});
+        if (classic_uniform_profile && uniforms[i].resource_index!=i*4u) {
+            out.error="classic arithmetic float4 uniforms must use contiguous 4-word offsets";
+            return false;
+        }
+        parameters.push_back({uniforms[i].name.c_str(),1,0,uniforms[i].components,14,0,0,1,uniforms[i].resource_index});
     }
 
     MachineCompileResult compiled;
@@ -1968,7 +1990,7 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
         image.secondary_register_count=0;
         image.data_buffer_count=0;
         image.compiler_version_raw=0x0002df30;
-    } else {
+    } else if (classic_uniform_profile) {
         image.program_flags=0x1000;
         image.primary_register_count=4;
         image.secondary_register_count=static_cast<uint16_t>(2 + uniforms.size()*2);
@@ -1976,6 +1998,21 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
         image.compiler_version_raw=static_cast<uint32_t>(4*uniforms.size());
         image.buffer_flags=0x10000000;
         image.default_uniform_buffer_count=4*uniforms.size();
+    } else {
+        uint32_t uniform_words=0;
+        for (const auto &uniform:uniforms)
+            uniform_words=std::max<uint32_t>(uniform_words,uniform.resource_index+uniform.components);
+        uniform_words=(uniform_words+1u)&~1u;
+        image.sdk_version=0x0165;
+        image.program_flags=0x00081001;
+        image.buffer_flags=0x10000000;
+        image.primary_register_count=static_cast<uint16_t>(float_input_count*4u);
+        image.secondary_register_count=static_cast<uint16_t>(uniform_words);
+        image.fragment_additional_inputs=static_cast<uint8_t>(float_input_count-1);
+        image.fragment_input_components=4;
+        image.default_uniform_buffer_count=uniform_words;
+        image.data_buffer_count=0;
+        image.compiler_version_raw=0x0002df30;
     }
     image.primary_instructions=compiled.words.data();
     image.primary_instruction_count=compiled.words.size();

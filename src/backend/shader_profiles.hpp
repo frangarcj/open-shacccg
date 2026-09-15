@@ -158,7 +158,7 @@ bool compile_fragment_s32x2_machine(const MachineProgram &primary, const Machine
                                     uint32_t binary_guid, uint32_t source_guid,
                                     IrCompileResult &out);
 bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
-                                         const std::vector<IrUniformVec4> &uniforms,
+                                         const std::vector<IrUniformFloat> &uniforms,
                                          uint8_t float_input_count,
                                          uint8_t float_components,
                                          uint32_t binary_guid, uint32_t source_guid,

@@ -781,9 +781,31 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             value_defined[instruction.dst.id()] = true;
             break;
         }
-        case TypedOpcode::FloatSwizzle:
+        case TypedOpcode::FloatSwizzle: {
+            const auto swizzle=static_cast<TypedFloatSwizzleOp>(instruction.subop());
+            if (swizzle==TypedFloatSwizzleOp::XY && instruction.dst.type()==TypedType::F32x2 &&
+                instruction.src0.type()==TypedType::F32x4) {
+                const auto src=lower_value(typed,instruction.src0,values,literals,machine);
+                if (src.kind()==MachineOperandKind::None) { error="failed to lower float4.xy alias"; return false; }
+                values[instruction.dst.id()]=src;
+                value_types[instruction.dst.id()]=TypedType::F32x2;
+                value_defined[instruction.dst.id()]=true;
+                break;
+            }
+            if (swizzle==TypedFloatSwizzleOp::XYZ && instruction.dst.type()==TypedType::F32x3 &&
+                instruction.src0.type()==TypedType::F32x4) {
+                const auto src=lower_value(typed,instruction.src0,values,literals,machine);
+                if (src.kind()==MachineOperandKind::None) { error="failed to lower float4.xyz alias"; return false; }
+                values[instruction.dst.id()]=src;
+                value_types[instruction.dst.id()]=TypedType::F32x3;
+                value_defined[instruction.dst.id()]=true;
+                break;
+            }
+            error="high-level float swizzle requires compile_typed_shader";
+            return false;
+        }
         case TypedOpcode::FloatConstant:
-            error="high-level float swizzle/constant requires compile_typed_shader";
+            error="high-level float constant requires compile_typed_shader";
             return false;
         case TypedOpcode::FloatCompose: {
             if (instruction.dst.type()!=TypedType::F32x4 || instruction.aux>=typed.float4_composites().size()) {
@@ -835,6 +857,29 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             value_types[instruction.dst.id()]=TypedType::F32x4;
             value_defined[instruction.dst.id()]=true;
             compose_indices[instruction.dst.id()]=instruction.aux;
+            break;
+        }
+        case TypedOpcode::FloatReplaceRGB: {
+            if (instruction.dst.type()!=TypedType::F32x4 || instruction.src0.type()!=TypedType::F32x4 ||
+                instruction.src1.type()!=TypedType::F32x3) {
+                error="typed RGB replacement requires float4 base and float3 RGB";
+                return false;
+            }
+            const auto base=lower_value(typed,instruction.src0,values,literals,machine);
+            const auto rgb=lower_value(typed,instruction.src1,values,literals,machine);
+            const auto dst=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+            if (base.kind()==MachineOperandKind::None || rgb.kind()==MachineOperandKind::None ||
+                dst.kind()==MachineOperandKind::None ||
+                !machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                    machine_move_config(0xF),dst,base) ||
+                !machine.emit_config<MachineOpcode::MoveUpdate>(static_cast<uint8_t>(usse::DataType::F32),
+                    machine_move_config(0x7),dst,rgb)) {
+                error="failed to lower typed RGB replacement";
+                return false;
+            }
+            values[instruction.dst.id()]=dst;
+            value_types[instruction.dst.id()]=TypedType::F32x4;
+            value_defined[instruction.dst.id()]=true;
             break;
         }
         case TypedOpcode::FloatSelect: {
@@ -902,21 +947,25 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             break;
         }
         case TypedOpcode::FloatSplat: {
-            if (instruction.dst.type() != TypedType::F32x4 ||
-                (instruction.src0.type() != TypedType::F32 && instruction.src0.type() != TypedType::F32x4)) {
-                error = "typed float splat currently supports F32/F32x4 to F32x4";
+            const uint8_t components=typed_component_count(instruction.dst.type());
+            const bool dst_vector=instruction.dst.type()==TypedType::F32x2 ||
+                instruction.dst.type()==TypedType::F32x3 || instruction.dst.type()==TypedType::F32x4;
+            if (!dst_vector || (instruction.src0.type()!=TypedType::F32 &&
+                instruction.src0.type()!=instruction.dst.type() && instruction.src0.type()!=TypedType::F32x4)) {
+                error = "typed float splat currently supports F32/F32-vector sources";
                 return false;
             }
             const auto src = lower_value(typed, instruction.src0, values, literals, machine);
-            const auto dst = machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp, 2);
+            const auto dst = machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,
+                static_cast<uint8_t>(components>2 ? 2 : 1));
             if (src.kind() == MachineOperandKind::None || dst.kind() == MachineOperandKind::None ||
                 !machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
-                    machine_move_config(0xF, 0, 0, true, false), dst, src)) {
-                error = "failed to lower typed float splat to Machine IR";
+                    machine_move_config(static_cast<uint8_t>((1u<<components)-1u),0,0,true,false),dst,src)) {
+                error = "failed to lower typed float-vector splat to Machine IR";
                 return false;
             }
             values[instruction.dst.id()] = dst;
-            value_types[instruction.dst.id()] = TypedType::F32x4;
+            value_types[instruction.dst.id()] = instruction.dst.type();
             value_defined[instruction.dst.id()] = true;
             break;
         }
@@ -2361,11 +2410,15 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             return false;
         }
     }
-    for (size_t i=0;i<uniforms.size();++i) {
-        if (uniforms[i]->index != i*4u) {
-            out.error = "typed arithmetic float4 uniforms must use contiguous word offsets";
+    std::vector<IrUniformFloat> arithmetic_uniforms;
+    arithmetic_uniforms.reserve(uniforms.size());
+    for (const auto *uniform:uniforms) {
+        const uint8_t components=typed_component_count(uniform->type);
+        if (!typed_is_float(uniform->type) || components<1 || components>4) {
+            out.error="typed arithmetic uniforms must be F32 scalars/vectors";
             return false;
         }
+        arithmetic_uniforms.push_back({shader.resource_name(*uniform),components,uniform->index});
     }
     if (store->aux >= resources.size() || resources[store->aux].kind != TypedResourceKind::Output ||
         resources[store->aux].index != 0 || resources[store->aux].type != arithmetic_type) {
@@ -2410,7 +2463,7 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         out.error = "failed to append typed arithmetic output pack";
         return false;
     }
-    return compile_fragment_arithmetic_machine(primary,fragment_uniforms,
+    return compile_fragment_arithmetic_machine(primary,arithmetic_uniforms,
                                                static_cast<uint8_t>(used_input_locations.size()),
                                                arithmetic_components,0,0,out);
 }
