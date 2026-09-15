@@ -33,19 +33,16 @@ bool compile_vertex_construct_position(const IrAttribute &position,
     }
 
     MachineProgram code;
-    const auto position_temp = code.make_value<MachineType::F32>(
-        MachineRegisterClass::FloatTemp, 2, MachineRegisterOrder::High);
     const auto input = code.physical(machine_primary(0), MachineType::F32);
     const auto one = code.physical(machine_special(1), MachineType::F32);
-    if (position_temp.kind() == MachineOperandKind::None || !code.emit<MachineOpcode::Phase>() ||
-        !code.emit<MachineOpcode::Nop>() ||
+    if (!code.emit<MachineOpcode::Phase>() ||
         !code.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Mul),
-            machine_vector_config(0xF, MachineVectorSwizzle::PositionXY11, false, false, false, true, true),
-            position_temp, input, one) ||
-        !code.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
-            machine_move_config(3, 4), code.physical(machine_vertex_output(0), MachineType::F32), position_temp) ||
-        !code.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
-            machine_move_config(3, 11), code.physical(machine_vertex_output(1), MachineType::F32), position_temp) ||
+            machine_vector_config(3, MachineVectorSwizzle::Source2YYYY),
+            code.physical(machine_vertex_output(0),MachineType::F32), input, one) ||
+        !code.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Mul),
+            machine_vector_config(3, MachineVectorSwizzle::Source1OneOneXX),
+            code.physical(machine_vertex_output(1),MachineType::F32),
+            code.physical(machine_immediate(0),MachineType::F32), one) ||
         !code.emit<MachineOpcode::Emit>()) {
         out.error = "failed to build constructed-position machine program";
         return false;
@@ -54,7 +51,6 @@ bool compile_vertex_construct_position(const IrAttribute &position,
     uint8_t interface_block[32]{};
     interface_block[0]=0x03; interface_block[16]=0x00; interface_block[17]=0x10;
     interface_block[18]=0x00; interface_block[19]=0x04;
-    const gxp::ParameterContainerDesc containers[] = {{19,0,0,2}};
     const gxp::ParameterDesc parameters[] = {
         {position.name.c_str(),0,0,4,0,0,0,1,position.resource_index},
     };
@@ -64,22 +60,22 @@ bool compile_vertex_construct_position(const IrAttribute &position,
 
     gxp::ProgramImage image{};
     image.type=gxp::ProgramType::Vertex;
+    image.minor_version=5;
+    image.sdk_version=0x0300;
     image.binary_guid=binary_guid;
     image.source_guid=source_guid;
-    image.program_flags=0x00010000;
-    image.data_buffer_count=2;
+    image.program_flags=0x00190004;
+    image.data_buffer_count=0;
     image.primary_phase_count=1;
     image.interface_block=interface_block;
     image.interface_block_size=sizeof(interface_block);
     image.primary_instructions=compiled.words.data();
     image.primary_instruction_count=compiled.words.size();
-    image.containers=containers;
-    image.container_count=1;
     image.parameters=parameters;
     image.parameter_count=1;
     image.primary_register_count=4;
-    image.secondary_register_count=2;
-    image.compiler_version_raw=0;
+    image.secondary_register_count=0;
+    image.compiler_version_raw=0x00033a90;
 
     const size_t needed=gxp::required_size(image);
     if(!needed){out.error="GXP writer rejected constructed-position profile";return false;}

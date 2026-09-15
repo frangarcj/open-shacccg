@@ -137,7 +137,7 @@ static_assert(sizeof(MachineInstruction) == 16, "machine instructions must stay 
 
 enum class MachineVectorSwizzle : uint8_t {
     Identity,
-    PositionXY11,
+    Source1OneOneXX,
     Source2YYYY,
     PositionZW01,
 };

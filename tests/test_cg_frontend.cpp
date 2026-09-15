@@ -1008,12 +1008,30 @@ int test_cg_frontend() {
         failures += fail("matrix + normal + dense multivarying vertex profile did not preserve the Sony reflection layout");
     if (!compile_indexed_clear_vertex_profile())
         failures += fail("indexed clear vertex profile did not reproduce the public vitaGL semantic stream");
-    struct PublicShader { const char *name; VscStage stage; };
-    const PublicShader public_shaders[] = {
-        {"clear_v", VSC_STAGE_VERTEX},
-    };
-    for (const auto &shader : public_shaders)
-        if (!compile_matches_public_gxp(shader.name, shader.stage)) ++failures;
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/research/public_samples/libvita2d/clear_v.cg");
+        VscCompileRequest request{};
+        request.source_name="clear_v"; request.source=source.data(); request.source_size=source.size();
+        request.entrypoint="main"; request.stage=VSC_STAGE_VERTEX;
+        VscCompileResult result{};
+        bool ok=!source.empty() && vsc_compile(&request,&result)==0 && result.gxp_data && result.diagnostic_count==0;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            const uint64_t words[]={
+                0xfa44070000000000ULL,0x08a5118590040001ULL,
+                0x0883118190568001ULL,0xfb275000a0200000ULL,
+            };
+            const auto code=view.primary_program();
+            ok=view.valid() && result.gxp_size==252 && view.logical_size()==250 &&
+                view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00190004 &&
+                view.primary_register_count()==4 && view.secondary_register_count()==0 &&
+                view.container_count()==0 && view.parameter_count()==1 &&
+                view.compiler_version_raw()==0x00033a90 && code.size==sizeof(words) &&
+                std::memcmp(code.data,words,sizeof(words))==0;
+        }
+        if (!ok) failures += fail("clear_v did not reproduce SDK 3.0.0 constructed-position profile");
+        vsc_destroy_result(&request.allocator,&result);
+    }
     {
         struct MatrixVertexProbe { const char *name; uint32_t logical_size; uint64_t move_word; };
         const MatrixVertexProbe probes[]={

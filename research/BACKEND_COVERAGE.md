@@ -110,12 +110,11 @@ Observed source acceptance during the initial probe:
 
 With glslang + SPIRV-Tools + SPIRV-Cross enabled together, all seven public
 libvita2d shaders now compile end-to-end from original Cg source through the
-compact Typed Vita IR. `clear_v` still matches its preserved public sample
-byte-for-byte outside the two Sony GUID fields. The other six profiles now
-deliberately target the newer SDK 3.0.0 oracle: `clear_f`, `color_f`, `texture_f`,
-`texture_tint_f`, `color_v` and `texture_v` are byte-identical to ShaccCg 3.0.0
-output, including v1.5 metadata and USSE. Sony GUID generation remains unknown
-and open-shacccg currently emits zero there.
+compact Typed Vita IR. All seven now deliberately target the newer SDK 3.0.0
+oracle and are byte-identical to ShaccCg 3.0.0 output for their validated GXP
+metadata and USSE. The preserved public v1.4 binaries remain historical decoder
+and compatibility fixtures. Sony GUID generation remains unknown and open-shacccg
+currently emits zero there.
 
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
@@ -158,10 +157,10 @@ inventing an SMP instruction that is absent from the public sample.
 
 The vertex, texture-tint and generic fragment arithmetic paths no longer carry
 their own TEMP/GPI free lists, direct register-bank selections or semantic USSE
-instruction construction in `shader_profiles.cpp`. `clear_v` remains the sole
-historical libvita2d byte-identity target. `color_v`, `texture_v` and all four
-fragment profiles track the SDK 3.0.0 v1.5 oracle layouts; the two matrix vertex
-profiles share the same 3.0.0 VMAD lane/source ordering and SA=16 metadata.
+instruction construction in `shader_profiles.cpp`. All seven public libvita2d
+profiles track the SDK 3.0.0 v1.5 oracle layouts. The two matrix vertex profiles
+share the same 3.0.0 VMAD lane/source ordering and SA=16 metadata, while `clear_v`
+uses the compact two-V32NMAD constructed-position form with no secondary state.
 
 Typed IR now lowers F32x4 mul/add/sub/min/max, scalar dot, negate and absolute
 through the same Machine IR. SPIRV-Cross also recognizes `OpFNegate` without

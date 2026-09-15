@@ -703,12 +703,22 @@ int test_gxp_writer() {
         }
 
         const vsc::backend::IrAttribute clear_position{"aPosition",2,0};
-        if (!vsc::backend::compile_vertex_construct_position(clear_position,0x6bb0ce7e,0xd84a6f2c,lowered)) {
+        if (!vsc::backend::compile_vertex_construct_position(clear_position,0,0,lowered)) {
             std::fprintf(stderr,"test_gxp: clear_v Machine profile failed: %s\n",lowered.error.c_str()); ++failures;
         } else {
-            const auto known_clear=load("clear_v.gxp");
-            if (lowered.gxp.size()!=known_clear.size() || std::memcmp(lowered.gxp.data(),known_clear.data(),known_clear.size())!=0)
-                failures += fail("clear_v Machine-profile GXP is not byte-identical to public sample");
+            ProgramView view(lowered.gxp.data(),lowered.gxp.size());
+            const uint64_t words[]={
+                0xfa44070000000000ULL,0x08a5118590040001ULL,
+                0x0883118190568001ULL,0xfb275000a0200000ULL,
+            };
+            const auto code=view.primary_program();
+            if (!view.valid() || lowered.gxp.size()!=252 || view.logical_size()!=250 ||
+                view.minor_version()!=5 || view.sdk_version()!=0x0300 || view.flags()!=0x00190004 ||
+                view.primary_register_count()!=4 || view.secondary_register_count()!=0 ||
+                view.container_count()!=0 || view.parameter_count()!=1 ||
+                view.compiler_version_raw()!=0x00033a90 || code.size!=sizeof(words) ||
+                std::memcmp(code.data,words,sizeof(words))!=0)
+                failures += fail("clear_v Machine profile does not match SDK 3.0.0");
         }
 
         const vsc::backend::IrAttribute bad_varying{"aTexcoord",2,6};
