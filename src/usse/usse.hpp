@@ -37,6 +37,15 @@ struct RegisterRef {
     uint8_t num = 0;
 };
 
+// Two PHAS control words are independently observed in Sony 1.6.5 output:
+// mode 1 starts control/discard work and mode 7 resumes the normal main phase.
+// Keep the field semantic-but-opaque until the hardware meaning is known.
+enum class PhaseMode : uint8_t { Control = 1, Main = 7 };
+
+struct PhaseSemantic {
+    PhaseMode mode = PhaseMode::Main;
+};
+
 struct NopSemantic {
     bool no_schedule = true;
     bool end = false;
@@ -229,6 +238,18 @@ struct VtstF32Semantic {
     uint8_t predicate_destination = 0;
     uint8_t component = 0;
     bool skip_invalid = false;
+};
+
+// Oracle-validated packed F32 lane < scalar comparison. Sony uses the VTST
+// vector/scalar source2 form for e.g. `color.a < uniform_cut`, with the vector
+// lane supplied by one PA register and the scalar by an SA register.
+struct VtstF32LaneLessScalarSemantic {
+    RegisterRef vector_lane{};
+    RegisterRef scalar{};
+    Predicate predicate = Predicate::Always;
+    uint8_t predicate_destination = 0;
+    uint8_t lane = 0; // x/y lane within `vector_lane`
+    bool skip_invalid = true;
 };
 
 // Oracle-validated signed-32 loop compare. The first supported form is the
@@ -570,6 +591,8 @@ bool decode_src1_bank(uint8_t selector, bool extended, RegisterBank *bank);
 // controls for differential testing.
 bool encode_vmov_semantic(const VmovSemantic &instruction, uint64_t *word);
 bool decode_vmov_semantic(uint64_t word, VmovSemantic *instruction);
+bool encode_phase_semantic(const PhaseSemantic &instruction, uint64_t *word);
+bool decode_phase_semantic(uint64_t word, PhaseSemantic *instruction);
 bool encode_nop_semantic(const NopSemantic &instruction, uint64_t *word);
 bool decode_nop_semantic(uint64_t word, NopSemantic *instruction);
 bool encode_vpck_semantic(const VpckSemantic &instruction, uint64_t *word);
@@ -600,6 +623,8 @@ bool encode_vtst_semantic(const VtstSemantic &instruction, uint64_t *word);
 bool decode_vtst_semantic(uint64_t word, VtstSemantic *instruction);
 bool encode_vtst_f32_semantic(const VtstF32Semantic &instruction, uint64_t *word);
 bool decode_vtst_f32_semantic(uint64_t word, VtstF32Semantic *instruction);
+bool encode_vtst_f32_lane_less_scalar_semantic(const VtstF32LaneLessScalarSemantic &instruction, uint64_t *word);
+bool decode_vtst_f32_lane_less_scalar_semantic(uint64_t word, VtstF32LaneLessScalarSemantic *instruction);
 bool encode_vtst_s32_semantic(const VtstS32Semantic &instruction, uint64_t *word);
 bool decode_vtst_s32_semantic(uint64_t word, VtstS32Semantic *instruction);
 bool encode_i32mad2_semantic(const I32Mad2Semantic &instruction, uint64_t *word);
@@ -612,6 +637,7 @@ bool encode_branch_semantic(const BranchSemantic &instruction, uint64_t *word);
 bool decode_branch_semantic(uint64_t word, BranchSemantic *instruction);
 
 inline bool encode_semantic(const VmovSemantic &i, uint64_t *word) { return encode_vmov_semantic(i, word); }
+inline bool encode_semantic(const PhaseSemantic &i, uint64_t *word) { return encode_phase_semantic(i, word); }
 inline bool encode_semantic(const NopSemantic &i, uint64_t *word) { return encode_nop_semantic(i, word); }
 inline bool encode_semantic(const VpckSemantic &i, uint64_t *word) { return encode_vpck_semantic(i, word); }
 inline bool encode_semantic(const V32NmadSemantic &i, uint64_t *word) { return encode_v32nmad_semantic(i, word); }
@@ -627,6 +653,7 @@ inline bool encode_semantic(const Vmad2S32ToF32Semantic &i, uint64_t *word) { re
 inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return encode_vmad_semantic(i, word); }
 inline bool encode_semantic(const VtstSemantic &i, uint64_t *word) { return encode_vtst_semantic(i, word); }
 inline bool encode_semantic(const VtstF32Semantic &i, uint64_t *word) { return encode_vtst_f32_semantic(i, word); }
+inline bool encode_semantic(const VtstF32LaneLessScalarSemantic &i, uint64_t *word) { return encode_vtst_f32_lane_less_scalar_semantic(i, word); }
 inline bool encode_semantic(const VtstS32Semantic &i, uint64_t *word) { return encode_vtst_s32_semantic(i, word); }
 inline bool encode_semantic(const I32Mad2Semantic &i, uint64_t *word) { return encode_i32mad2_semantic(i, word); }
 inline bool encode_semantic(const VbwSemantic &i, uint64_t *word) { return encode_vbw_semantic(i, word); }

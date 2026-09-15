@@ -305,8 +305,8 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             members.resize(struct_type.member_types.size());
             uint16_t packed_word=0;
             auto allocate_uniform_words=[&](uint16_t words,bool register_aligned) -> uint16_t {
-                if (register_aligned || static_cast<uint16_t>((packed_word&3u)+words)>4u)
-                    packed_word=static_cast<uint16_t>((packed_word+3u)&~3u);
+                if (register_aligned || static_cast<uint16_t>((packed_word&1u)+words)>2u)
+                    packed_word=static_cast<uint16_t>((packed_word+1u)&~1u);
                 const uint16_t index=packed_word;
                 packed_word=static_cast<uint16_t>(packed_word+words);
                 return index;

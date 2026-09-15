@@ -585,6 +585,22 @@ int test_usse() {
             decoded.rhs.bank!=RegisterBank::Special || decoded.rhs.num!=12)
             failures += fail("oracle F32 uniform > 0.5 VTST mismatch");
     }
+    {
+        VtstF32LaneLessScalarSemantic alpha_cmp{};
+        alpha_cmp.vector_lane={RegisterBank::PrimaryAttribute,1};
+        alpha_cmp.scalar={RegisterBank::SecondaryAttribute,0};
+        alpha_cmp.predicate_destination=1;
+        alpha_cmp.lane=1;
+        uint64_t word=0;
+        VtstF32LaneLessScalarSemantic decoded{};
+        if (!encode_vtst_f32_lane_less_scalar_semantic(alpha_cmp,&word) ||
+            word!=0x4888c915b0038080ULL ||
+            !decode_vtst_f32_lane_less_scalar_semantic(word,&decoded) ||
+            decoded.vector_lane.bank!=RegisterBank::PrimaryAttribute || decoded.vector_lane.num!=1 ||
+            decoded.scalar.bank!=RegisterBank::SecondaryAttribute || decoded.scalar.num!=0 ||
+            decoded.predicate_destination!=1 || decoded.lane!=1)
+            failures += fail("oracle F32 lane < scalar VTST mismatch");
+    }
 
     VtstS32Semantic scmp{};
     scmp.lhs={RegisterBank::Temp,0};
@@ -776,6 +792,14 @@ int test_usse() {
         failures += fail("color_v semantic repeated VMOV mismatch");
 
     uint64_t encoded = 0;
+    PhaseSemantic control_phase{PhaseMode::Control};
+    PhaseSemantic main_phase{PhaseMode::Main};
+    PhaseSemantic decoded_phase{};
+    if (!encode_phase_semantic(control_phase,&encoded) || encoded!=0xfa44010000000000ULL ||
+        !decode_phase_semantic(encoded,&decoded_phase) || decoded_phase.mode!=PhaseMode::Control ||
+        !encode_phase_semantic(main_phase,&encoded) || encoded!=0xfa44070000000000ULL ||
+        !decode_phase_semantic(encoded,&decoded_phase) || decoded_phase.mode!=PhaseMode::Main)
+        failures += fail("oracle PHAS semantic modes mismatch");
     Instruction ins;
     ins.opcode = Opcode::Phase;
     if (!encode(ins, &encoded) || encoded != 0xfa44070000000000ULL)

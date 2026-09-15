@@ -242,6 +242,48 @@ bool compile_vitagl_blit_vertex_profile() {
     return ok;
 }
 
+bool compile_texture_tint_alpha_discard_profile() {
+    static constexpr const char *source=
+        "uniform sampler2D tex:TEXUNIT0;uniform float cut;uniform float4 tint;"
+        "float4 main(float2 uv:TEXCOORD0):COLOR0{float4 c=tex2D(tex,uv)*tint;"
+        "if(c.a<cut)discard;return c;}";
+    VscCompileRequest request{};
+    request.source_name="texture-tint-alpha-discard.cg";
+    request.source=source;
+    request.source_size=std::strlen(source);
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_FRAGMENT;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.gxp_size==348 && result.diagnostic_count==0;
+    if (ok) {
+        const uint64_t words[]={
+            0xfa44010000000000ULL,0x08a44186e0040040ULL,0x08c0418ae0440081ULL,
+            0x4888c915b0038080ULL,0xf9300406f0000000ULL,0xf804014000000000ULL,
+            0xfa44070000000000ULL,0x40800d7ea0198002ULL,
+        };
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        vsc::gxp::ParameterView cut{},tint{},tex{};
+        const auto primary=view.primary_program();
+        ok=view.valid() && view.logical_size()==345 && view.sdk_version()==0x0165 &&
+            view.flags()==0x00080809 && view.primary_register_count()==4 &&
+            view.secondary_register_count()==7 && view.primary_instruction_count()==8 &&
+            view.secondary_instruction_count()==0 && view.literal_count()==1 &&
+            view.container_count()==2 && view.parameter_count()==3 &&
+            primary.size==sizeof(words) && std::memcmp(primary.data,words,sizeof(words))==0 &&
+            view.parameter(0,cut) && cut.name=="cut" && cut.category==1 && cut.component_count==1 &&
+            cut.container_index==14 && cut.resource_index==0 &&
+            view.parameter(1,tint) && tint.name=="tint" && tint.category==1 && tint.component_count==4 &&
+            tint.container_index==14 && tint.resource_index==2 &&
+            view.parameter(2,tex) && tex.name=="tex" && tex.category==2 && tex.resource_index==0;
+    }
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: texture alpha-discard diagnostic=%s\n",
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
+
 bool compile_vertex_gxp(const std::string &source, const char *name) {
     VscCompileRequest request{};
     request.source_name=name;
@@ -848,6 +890,8 @@ int test_cg_frontend() {
         failures += fail("constant sampler2D[2] element 1 / TEXCOORD1 did not lower through direct texture profile");
     if (!compile_vitagl_blit_vertex_profile())
         failures += fail("vitaGL public blit vertex profile did not reproduce its observed v1.5 GXP shape");
+    if (!compile_texture_tint_alpha_discard_profile())
+        failures += fail("texture-tint alpha discard profile did not reproduce the oracle-derived semantic stream");
     if (!compile_matrix_point_size_profile(false))
         failures += fail("oracle matrix + uniform PSIZE vertex profile did not reproduce the validated stream");
     if (!compile_matrix_point_size_profile(true))

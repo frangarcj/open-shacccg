@@ -1257,6 +1257,121 @@ bool compile_fragment_texture_alpha_select_machine(const IrUniformFloat &uniform
     return true;
 }
 
+bool compile_fragment_texture_tint_alpha_discard(const IrUniformFloat &cut,
+                                                 const IrUniformVec4 &tint,
+                                                 const IrSampler2D &sampler,
+                                                 uint32_t binary_guid, uint32_t source_guid,
+                                                 IrCompileResult &out) {
+    out={};
+    if (cut.name.empty() || cut.components!=1 || cut.resource_index!=0 ||
+        tint.name.empty() || tint.resource_index!=2 ||
+        sampler.name.empty() || sampler.resource_index!=0) {
+        out.error="texture-tint alpha-discard profile requires cut@0, float4 tint@2 and sampler0";
+        return false;
+    }
+
+    ProgramBuilder primary;
+    const usse::PhaseSemantic control_phase{usse::PhaseMode::Control};
+    const usse::PhaseSemantic main_phase{usse::PhaseMode::Main};
+    usse::V32NmadSemantic mul0{};
+    mul0.op=usse::VectorOp::Mul;
+    mul0.dst={usse::RegisterBank::PrimaryAttribute,0};
+    mul0.src1={usse::RegisterBank::SecondaryAttribute,1};
+    mul0.src2={usse::RegisterBank::PrimaryAttribute,0};
+    mul0.dest_mask=3;
+    mul0.skip_invalid=true;
+    usse::V32NmadSemantic mul1=mul0;
+    mul1.dst.num=1;
+    mul1.src1.num=2;
+    mul1.src2.num=1;
+    mul1.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                        usse::SwizzleChannel::Zero,usse::SwizzleChannel::Zero}};
+    usse::VtstF32LaneLessScalarSemantic alpha_test{};
+    alpha_test.vector_lane={usse::RegisterBank::PrimaryAttribute,1};
+    alpha_test.scalar={usse::RegisterBank::SecondaryAttribute,0};
+    alpha_test.predicate_destination=1;
+    alpha_test.lane=1;
+    usse::KillSemantic kill{};
+    kill.predicate=usse::Predicate::P1;
+    usse::NopSemantic barrier{};
+    barrier.no_schedule=false;
+    barrier.end=true;
+    usse::VpckSemantic output{};
+    output.dst={usse::RegisterBank::PrimaryAttribute,0};
+    output.src1={usse::RegisterBank::PrimaryAttribute,0};
+    output.src2={usse::RegisterBank::PrimaryAttribute,1};
+    output.src_format=usse::PackFormat::F32;
+    output.dst_format=usse::PackFormat::F16;
+    output.dest_mask=0xF;
+    output.no_schedule=false;
+    output.end=false;
+    if (!primary.instruction(control_phase) || !primary.instruction(mul0) ||
+        !primary.instruction(mul1) || !primary.instruction(alpha_test) ||
+        !primary.instruction(kill) || !primary.instruction(barrier) ||
+        !primary.instruction(main_phase) || !primary.instruction(output)) {
+        out.error="failed to build texture-tint alpha-discard semantic stream";
+        return false;
+    }
+    const uint64_t expected_primary[]={
+        0xfa44010000000000ULL,0x08a44186e0040040ULL,0x08c0418ae0440081ULL,
+        0x4888c915b0038080ULL,0xf9300406f0000000ULL,0xf804014000000000ULL,
+        0xfa44070000000000ULL,0x40800d7ea0198002ULL,
+    };
+    if (primary.words().size()!=std::size(expected_primary) ||
+        !std::equal(primary.words().begin(),primary.words().end(),std::begin(expected_primary))) {
+        out.error="texture-tint alpha-discard semantic stream no longer matches validated words";
+        return false;
+    }
+
+    const uint8_t interface_block[32]={
+        0,0,0,0,0,0,0,0,0,0,1,4,1,0,1,0,
+        4,0,0,0,0,0xf9,0,0,0,0,0,0,0xc0,0,0,0,
+    };
+    const uint8_t extension[8]={0x30,0,0,0,0,0,0,0};
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,6},{19,0,6,1}};
+    const gxp::LiteralDesc literals[]={{0,0x0000e000u}};
+    const gxp::ParameterDesc parameters[]={
+        {cut.name.c_str(),1,0,1,14,0,0,1,0},
+        {tint.name.c_str(),1,0,4,14,0,0,1,2},
+        {sampler.name.c_str(),2,0,4,0,1,0,1,0},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Fragment;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00080809;
+    image.buffer_flags=0x10000000;
+    image.texunit_flags[0]=1;
+    image.primary_register_count=4;
+    image.secondary_register_count=7;
+    image.primary_phase_count=2;
+    image.data_buffer_count=1;
+    image.default_uniform_buffer_count=6;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.fragment_interface_extension=extension;
+    image.fragment_interface_extension_size=sizeof(extension);
+    image.fragment_primary_prefix_word=6;
+    image.primary_instructions=primary.words().data();
+    image.primary_instruction_count=primary.words().size();
+    image.containers=containers;
+    image.container_count=2;
+    image.parameters=parameters;
+    image.parameter_count=3;
+    image.literals=literals;
+    image.literal_count=1;
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected texture-tint alpha-discard profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for texture-tint alpha-discard profile"; return false;
+    }
+    return true;
+}
+
 bool compile_fragment_texture_control_machine(const MachineProgram &primary,
                                               const std::vector<IrUniformFloat> &uniforms,
                                               const std::vector<IrLiteralF32> &literal_values,

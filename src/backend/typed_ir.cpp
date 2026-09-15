@@ -445,8 +445,8 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                     physical_component=static_cast<uint8_t>(instruction.aux&1u);
                 } else {
                     if (instruction.aux & 1u) { error="float-vector uniform word offset is not register aligned"; return false; }
-                    if (instruction.dst.type()==TypedType::F32x4 && (instruction.aux & 3u)) {
-                        error="float4 uniform word offset is not vec4 aligned";
+                    if (instruction.dst.type()==TypedType::F32x4 && (instruction.aux & 1u)) {
+                        error="float4 uniform word offset is not SA-register aligned";
                         return false;
                     }
                     physical_index=instruction.aux/2u;
@@ -1769,6 +1769,59 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     std::vector<const TypedInstruction *> output_stores;
     for (const auto &instruction : instructions)
         if (instruction.opcode() == TypedOpcode::StoreOutput) output_stores.push_back(&instruction);
+
+    auto texture_tint_alpha_discard_shape=[&]() -> bool {
+        if (instructions.size()!=11 || inputs.size()!=1 || inputs[0]->index!=0 ||
+            inputs[0]->type!=TypedType::F32x2 || inputs[0]->semantic!=TypedSemantic::TexCoord ||
+            samplers.size()!=1 || samplers[0]->index!=0 || output_stores.size()!=1 ||
+            uniforms.size()!=2 || fragment_float_uniforms.size()!=1 || fragment_uniforms.size()!=1 ||
+            fragment_float_uniforms[0].resource_index!=0 || fragment_uniforms[0].resource_index!=2)
+            return false;
+        const auto *store=output_stores[0];
+        if (store->aux>=resources.size() || resources[store->aux].kind!=TypedResourceKind::Output ||
+            resources[store->aux].index!=0 || store->src0.type()!=TypedType::F32x4)
+            return false;
+        const auto *mul=definition(store->src0);
+        if (!mul || mul->opcode()!=TypedOpcode::FloatBinary ||
+            mul->subop()!=static_cast<uint8_t>(TypedFloatOp::Mul)) return false;
+        const TypedInstruction *sample=nullptr;
+        const TypedResource *tint=nullptr;
+        for (TypedValue value:{mul->src0,mul->src1}) {
+            if (const auto *def=definition(value); def && def->opcode()==TypedOpcode::Sample2D) sample=def;
+            if (const auto *resource=resource_for_value(value); resource &&
+                resource->kind==TypedResourceKind::Uniform && resource->type==TypedType::F32x4 && resource->index==2)
+                tint=resource;
+        }
+        if (!sample || !tint) return false;
+        const auto *sample_sampler=resource_for_value(sample->src0);
+        const auto *sample_coord=resource_for_value(sample->src1);
+        if (!sample_sampler || sample_sampler!=samplers[0] || !sample_coord || sample_coord!=inputs[0]) return false;
+
+        const TypedInstruction *extract=nullptr,*compare=nullptr,*discard=nullptr;
+        for (const auto &instruction:instructions) {
+            if (instruction.opcode()==TypedOpcode::FloatExtract && instruction.subop()==3 &&
+                instruction.src0.bits==store->src0.bits) extract=&instruction;
+        }
+        if (!extract) return false;
+        for (const auto &instruction:instructions) {
+            if (instruction.opcode()==TypedOpcode::Compare &&
+                instruction.subop()==static_cast<uint8_t>(usse::CompareOp::Less) &&
+                instruction.src0.bits==extract->dst.bits) {
+                const auto *cut=resource_for_value(instruction.src1);
+                if (cut && cut->kind==TypedResourceKind::Uniform && cut->type==TypedType::F32 && cut->index==0)
+                    compare=&instruction;
+            }
+        }
+        if (!compare) return false;
+        for (const auto &instruction:instructions)
+            if (instruction.opcode()==TypedOpcode::Discard && instruction.src0.bits==compare->dst.bits)
+                discard=&instruction;
+        return discard!=nullptr;
+    };
+
+    if (texture_tint_alpha_discard_shape())
+        return compile_fragment_texture_tint_alpha_discard(fragment_float_uniforms[0],fragment_uniforms[0],
+                                                           fragment_samplers[0],0,0,out);
 
     if (!program.labels().empty()) {
         const bool loop_control=std::any_of(instructions.begin(),instructions.end(),[](const TypedInstruction &instruction) {

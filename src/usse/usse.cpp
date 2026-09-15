@@ -185,6 +185,23 @@ bool decode_src0_bank(uint8_t selector, bool extended, RegisterBank *bank) {
 }
 } // namespace
 
+bool encode_phase_semantic(const PhaseSemantic &i, uint64_t *word) {
+    if (!word || (i.mode!=PhaseMode::Control && i.mode!=PhaseMode::Main)) return false;
+    *word=0xfa44000000000000ULL |
+        (static_cast<uint64_t>(static_cast<uint8_t>(i.mode))<<40);
+    return true;
+}
+
+bool decode_phase_semantic(uint64_t word, PhaseSemantic *i) {
+    if (!i || classify_control(word)!=ControlClass::Phase ||
+        (word & ~(uint64_t{0x7}<<40))!=0xfa44000000000000ULL) return false;
+    const uint8_t mode=static_cast<uint8_t>((word>>40)&0x7u);
+    if (mode!=static_cast<uint8_t>(PhaseMode::Control) &&
+        mode!=static_cast<uint8_t>(PhaseMode::Main)) return false;
+    i->mode=static_cast<PhaseMode>(mode);
+    return true;
+}
+
 bool encode_nop_semantic(const NopSemantic &i, uint64_t *word) {
     if (!word) return false;
     *word=0xf800094000000000ULL;
@@ -737,6 +754,55 @@ bool decode_vtst_f32_semantic(uint64_t word, VtstF32Semantic *i) {
     i->predicate=static_cast<Predicate>(f.pred);
     i->predicate_destination=f.predicate_destination;
     i->component=f.channel;
+    i->skip_invalid=f.skip_invalid;
+    return true;
+}
+
+bool encode_vtst_f32_lane_less_scalar_semantic(const VtstF32LaneLessScalarSemantic &i,
+                                                uint64_t *word) {
+    if (!word || i.vector_lane.num>=128 || i.scalar.num>=128 ||
+        i.predicate_destination>=4 || i.lane>=2) return false;
+    VtstFields f{};
+    if (!encode_src1_bank(i.vector_lane.bank,&f.src1_bank,&f.src1_ext) ||
+        !encode_src1_bank(i.scalar.bank,&f.src2_bank,&f.src2_ext)) return false;
+    f.pred=static_cast<uint8_t>(i.predicate);
+    f.skip_invalid=i.skip_invalid;
+    f.dest_ext=true;
+    f.precision=true;
+    f.src2_vector_scalar_component=true;
+    // The vector/scalar VTST profile implements logical `lane < scalar` with
+    // the observed reversed subtract test: zero=1/sign=2/crcomb=OR.
+    f.zero_test=1;
+    f.sign_test=2;
+    f.test_crcomb_and=false;
+    f.channel=i.lane;
+    f.predicate_destination=i.predicate_destination;
+    f.dest_bank=1;
+    f.dest_num=0;
+    f.test_write_enable=false;
+    f.alu_select=0;
+    f.alu_op=14;
+    f.src1_num=i.vector_lane.num;
+    f.src2_num=i.scalar.num;
+    return encode_vtst(f,word);
+}
+
+bool decode_vtst_f32_lane_less_scalar_semantic(uint64_t word,
+                                                VtstF32LaneLessScalarSemantic *i) {
+    if (!i) return false;
+    VtstFields f{};
+    if (!decode_vtst(word,&f) || !f.dest_ext || f.dest_bank!=1 || f.dest_num!=0 ||
+        f.test_write_enable || f.alu_select!=0 || f.alu_op!=14 || !f.precision ||
+        f.src1_negative || !f.src2_vector_scalar_component || f.repeat_count!=0 ||
+        f.once_only || f.sync_start || f.channel>=2 || f.zero_test!=1 ||
+        f.sign_test!=2 || f.test_crcomb_and) return false;
+    if (!decode_src1_bank(f.src1_bank,f.src1_ext,&i->vector_lane.bank) ||
+        !decode_src1_bank(f.src2_bank,f.src2_ext,&i->scalar.bank)) return false;
+    i->vector_lane.num=f.src1_num;
+    i->scalar.num=f.src2_num;
+    i->predicate=static_cast<Predicate>(f.pred);
+    i->predicate_destination=f.predicate_destination;
+    i->lane=f.channel;
     i->skip_invalid=f.skip_invalid;
     return true;
 }

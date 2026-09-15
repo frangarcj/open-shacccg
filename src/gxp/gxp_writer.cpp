@@ -97,6 +97,10 @@ bool valid_desc(const ProgramImage &image) {
         return false;
     if (image.fragment_interface_extension && image.type != ProgramType::Fragment)
         return false;
+    if (image.fragment_primary_prefix_word &&
+        (image.type!=ProgramType::Fragment || image.secondary_instruction_count!=0 ||
+         image.fragment_primary_overlaps_interface))
+        return false;
     if (image.fragment_secondary_prefix_word &&
         (image.type!=ProgramType::Fragment || !image.secondary_instruction_count ||
          image.fragment_interface_extension || image.fragment_primary_overlaps_interface))
@@ -207,11 +211,15 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
         if (image.type == ProgramType::Fragment && image.secondary_instruction_count == 0) {
             if (!add_size(cursor, static_cast<size_t>(image.fragment_additional_inputs) * 16u)) return false;
             if (!add_size(cursor, sizeof(uint64_t))) return false;
+            if (image.fragment_primary_prefix_word && !add_size(cursor,sizeof(uint32_t))) return false;
         } else if (image.type == ProgramType::Vertex && image.vertex_primary_padding_word &&
                    image.secondary_instruction_count == 0) {
             if (!add_size(cursor, sizeof(uint32_t))) return false;
         }
         l.secondary_off = image.secondary_instruction_count ? cursor : cursor - 4;
+        if (image.type==ProgramType::Fragment && !image.secondary_instruction_count &&
+            image.fragment_primary_prefix_word)
+            l.secondary_off-=sizeof(uint32_t);
         if (!mul_size(image.secondary_instruction_count, sizeof(uint64_t), bytes) || !add_size(cursor, bytes)) return false;
         l.secondary_end = image.secondary_instruction_count ? cursor : l.secondary_off;
         // SDK 1.6.5 vertex programs keep the same 32-bit primary padding word
@@ -314,6 +322,11 @@ bool write_program(const ProgramImage &image, uint8_t *output, size_t capacity,
     if (image.fragment_interface_extension)
         std::memcpy(output + l.interface_off + kInterfaceSize,
                     image.fragment_interface_extension, 8);
+    if (image.fragment_primary_prefix_word) {
+        const size_t prefix=l.interface_off+kInterfaceSize+
+            static_cast<size_t>(image.fragment_additional_inputs)*16u+sizeof(uint64_t);
+        binary::store<uint32_t>(output,prefix,image.fragment_primary_prefix_word);
+    }
     const uint8_t component_code=image.fragment_input_components==1 ? 0x00 :
         (image.fragment_input_components==2 ? 0x40 : 0xc0);
     const uint8_t component_tail=image.fragment_input_components==1 ? 0x00 :

@@ -75,6 +75,11 @@ struct ProgramImage {
     const uint8_t *fragment_interface_extension = nullptr;
     size_t fragment_interface_extension_size = 0;
 
+    // Oracle-observed no-secondary control layout: one 32-bit control word can
+    // follow the normal 8-byte fragment extension/anchor immediately before
+    // primary code (alpha/discard probes use values 4 and 6).
+    uint32_t fragment_primary_prefix_word = 0;
+
     // Oracle-observed sampler/control layout with a secondary stream: one
     // 32-bit interface word follows the canonical 32-byte block, then secondary
     // code begins immediately. Zero keeps the older in-interface secondary
