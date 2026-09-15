@@ -2248,27 +2248,28 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
             out.error = "uniform-color fragment profile requires one float4 uniform at resource 0";
             return false;
         }
-        if (!primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F16),
-                machine_move_config(0x5, 4),
-                primary.physical(machine_fragment_output(0), MachineType::F16),
-                primary.physical(machine_secondary(0), MachineType::F16)) ||
-            !secondary.emit_config<MachineOpcode::Pack>(
+        if (!primary.emit_config<MachineOpcode::Pack>(
                 machine_pack_subop(usse::PackFormat::F32, usse::PackFormat::F16),
-                machine_pack_config(0xF, true, false, true),
-                secondary.physical(machine_fragment_output(0), MachineType::F16),
-                secondary.physical(machine_primary(0), MachineType::F32),
-                secondary.physical(machine_primary(1), MachineType::F32))) {
+                machine_pack_config(0xF, true, false),
+                primary.physical(machine_fragment_output(0), MachineType::F16),
+                primary.physical(machine_secondary(0), MachineType::F32),
+                primary.physical(machine_secondary(1), MachineType::F32))) {
             out.error = "failed to build uniform-color fragment Machine IR";
             return false;
         }
         interface_block[10] = 1; interface_block[11] = 4; interface_block[16] = 4;
-        containers = {{14,0,0,4},{19,0,4,2}};
+        containers = {{14,0,0,4}};
         parameters.push_back({uniforms[0].name.c_str(),1,0,4,14,0,0,1,0});
+        image.minor_version=5;
+        image.sdk_version=0x0300;
+        image.program_flags=0x00180000;
         image.buffer_flags = 0x10000000;
         image.primary_register_count = 2;
-        image.secondary_register_count = 6;
+        image.secondary_register_count = 4;
+        image.data_buffer_count=0;
         image.default_uniform_buffer_count = 4;
-        image.compiler_version_raw = 4;
+        image.compiler_version_raw = 0x00033a90;
+        image.fragment_primary_overlaps_interface=true;
         break;
 
     case FragmentMachineProfile::VaryingColor:

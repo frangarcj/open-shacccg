@@ -1010,7 +1010,6 @@ int test_cg_frontend() {
         failures += fail("indexed clear vertex profile did not reproduce the public vitaGL semantic stream");
     struct PublicShader { const char *name; VscStage stage; };
     const PublicShader public_shaders[] = {
-        {"clear_f", VSC_STAGE_FRAGMENT},
         {"clear_v", VSC_STAGE_VERTEX},
         {"color_v", VSC_STAGE_VERTEX},
         {"texture_v", VSC_STAGE_VERTEX},
@@ -1082,6 +1081,27 @@ int test_cg_frontend() {
                 code.size==sizeof(words) && std::memcmp(code.data,words,sizeof(words))==0;
         }
         if (!ok) failures += fail("color_f did not reproduce the SDK 3.0.0 varying-color profile");
+        vsc_destroy_result(&request.allocator,&result);
+    }
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/research/public_samples/libvita2d/clear_f.cg");
+        VscCompileRequest request{};
+        request.source_name="clear_f.cg"; request.source=source.data(); request.source_size=source.size();
+        request.entrypoint="main"; request.stage=VSC_STAGE_FRAGMENT;
+        VscCompileResult result{};
+        bool ok=!source.empty() && vsc_compile(&request,&result)==0 && result.gxp_data && result.diagnostic_count==0;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            const uint64_t words[]={0xfa44070000000000ULL,0x40800d7ef0198002ULL};
+            const auto code=view.primary_program();
+            ok=view.valid() && result.gxp_size==232 && view.logical_size()==232 &&
+                view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00180001 &&
+                view.primary_register_count()==2 && view.secondary_register_count()==4 &&
+                view.secondary_instruction_count()==0 && view.container_count()==1 &&
+                view.compiler_version_raw()==0x00033a90 && code.size==sizeof(words) &&
+                std::memcmp(code.data,words,sizeof(words))==0;
+        }
+        if (!ok) failures += fail("clear_f did not reproduce the SDK 3.0.0 uniform-color profile");
         vsc_destroy_result(&request.allocator,&result);
     }
     const std::string control_source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-if-big.cg");
