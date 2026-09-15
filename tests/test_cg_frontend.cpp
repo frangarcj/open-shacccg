@@ -836,6 +836,11 @@ int test_cg_frontend() {
             "uniform float2 dead_scale; uniform float4 live_color; float4 main():COLOR0{return live_color;}",
             "dead-prefix-uniform.cg",VSC_STAGE_FRAGMENT))
         failures += fail("dead supported uniform prefix was not removed before compact reflection/lowering");
+    if (!compile_shader_gxp(
+            "uniform sampler2D tex[1]; uniform float4 tint; "
+            "float4 main(float2 uv:TEXCOORD0):COLOR0{return tex2D(tex[0],uv)*tint;}",
+            "sampler-array1-texture-tint.cg",VSC_STAGE_FRAGMENT))
+        failures += fail("constant sampler2D[1] element 0 did not lower through texture-tint profile");
     if (!compile_vitagl_blit_vertex_profile())
         failures += fail("vitaGL public blit vertex profile did not reproduce its observed v1.5 GXP shape");
     if (!compile_matrix_point_size_profile(false))

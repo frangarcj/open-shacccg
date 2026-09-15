@@ -89,6 +89,8 @@ backend::TypedSemantic semantic_from_text(const std::string &text, uint8_t &inde
         return backend::TypedSemantic::Color;
     if (base.find("TEXCOORD") != std::string::npos || base == "UV")
         return backend::TypedSemantic::TexCoord;
+    if (base.find("SPRITECOORD") != std::string::npos)
+        return backend::TypedSemantic::PointCoord;
     if (base.find("PSIZE") != std::string::npos || base.find("POINTSIZE") != std::string::npos)
         return backend::TypedSemantic::PointSize;
     return backend::TypedSemantic::None;
@@ -225,10 +227,18 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             uint32_t false_value = 0;
             uint16_t output_resource = std::numeric_limits<uint16_t>::max();
         };
+        struct SamplerArrayInfo {
+            std::string name;
+            uint16_t binding = 0;
+            uint32_t count = 0;
+            std::vector<backend::TypedValue> values;
+        };
 
         std::unordered_map<uint32_t, backend::TypedValue> values;
         std::unordered_map<uint32_t, std::vector<UniformMember>> uniform_blocks;
         std::unordered_map<uint32_t, UniformMember> access_chain_members;
+        std::unordered_map<uint32_t, SamplerArrayInfo> sampler_arrays;
+        std::unordered_map<uint32_t, backend::TypedValue> sampler_access_chains;
         std::unordered_map<uint32_t, ExtractInfo> input_access_chains;
         std::unordered_map<uint32_t, uint16_t> matrix_values;
         std::unordered_map<uint32_t, ExtractInfo> extracts;
@@ -371,6 +381,20 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             if (compiler.has_decoration(resource.id, spv::DecorationBinding))
                 binding = compiler.get_decoration(resource.id, spv::DecorationBinding);
             if (binding > std::numeric_limits<uint16_t>::max()) { error = "sampler binding is too large"; return false; }
+            const auto &resource_type=compiler.get_type(resource.type_id);
+            if (!resource_type.array.empty()) {
+                if (resource_type.array.size()!=1 || resource_type.array[0]<1 || resource_type.array[0]>3) {
+                    error="sampler array is outside the validated 1-3 element subset";
+                    return false;
+                }
+                SamplerArrayInfo info{};
+                info.name=resource.name;
+                info.binding=static_cast<uint16_t>(binding);
+                info.count=resource_type.array[0];
+                info.values.resize(info.count);
+                sampler_arrays.emplace(resource.id,std::move(info));
+                continue;
+            }
             const auto value = program.sampler(static_cast<uint16_t>(binding));
             if (value.kind() == backend::TypedValueKind::None) { error = "failed to create Typed IR sampler"; return false; }
             uint16_t resource_id = 0;
@@ -571,7 +595,30 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             } else if (op == spv::OpAccessChain && count >= 4) {
                 const auto block = uniform_blocks.find(args[2]);
                 const auto index_it = constants.find(args[3]);
-                if (block != uniform_blocks.end() && index_it != constants.end()) {
+                const auto sampler_array=sampler_arrays.find(args[2]);
+                if (sampler_array!=sampler_arrays.end() && index_it!=constants.end()) {
+                    const uint32_t element=index_it->second;
+                    auto &info=sampler_array->second;
+                    if (count!=5 || element>=info.count ||
+                        static_cast<uint32_t>(info.binding)+element>std::numeric_limits<uint16_t>::max()) {
+                        error="sampler-array access is outside constant index 0..2 subset";
+                        return false;
+                    }
+                    auto &value=info.values[element];
+                    if (value.kind()==backend::TypedValueKind::None) {
+                        const uint16_t element_binding=static_cast<uint16_t>(info.binding+element);
+                        value=program.sampler(element_binding);
+                        if (value.kind()==backend::TypedValueKind::None) {
+                            error="failed to create Typed sampler-array element";
+                            return false;
+                        }
+                        uint16_t resource_id=0;
+                        if (!add_resource(backend::TypedResourceKind::Sampler2D,value,backend::TypedType::Sampler2D,
+                                          info.name,element_binding,backend::TypedSemantic::None,0,resource_id))
+                            return false;
+                    }
+                    sampler_access_chains[args[1]]=value;
+                } else if (block != uniform_blocks.end() && index_it != constants.end()) {
                     const uint32_t member = index_it->second;
                     if (member >= block->second.size()) { error = "uniform access-chain member is out of range"; return false; }
                     const auto &uniform=block->second[member];
@@ -627,6 +674,8 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             } else if (op == spv::OpLoad && count >= 4) {
                 if (auto it = values.find(args[2]); it != values.end()) {
                     values[args[1]] = it->second;
+                } else if (auto it=sampler_access_chains.find(args[2]); it!=sampler_access_chains.end()) {
+                    values[args[1]]=it->second;
                 } else if (auto it = access_chain_members.find(args[2]); it != access_chain_members.end()) {
                     if (it->second.matrix) matrix_values[args[1]] = it->second.resource;
                     else values[args[1]] = it->second.value;

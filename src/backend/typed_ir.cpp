@@ -2128,6 +2128,15 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         return compile_fragment_s32_to_f32_machine(primary,secondary,fragment_s32_uniforms[0],0,0,out);
     }
     if (root_def->opcode() == TypedOpcode::Sample2D) {
+        const auto *sampler_resource=resource_for_value(root_def->src0);
+        const auto *coordinate_resource=resource_for_value(root_def->src1);
+        if (!sampler_resource || sampler_resource->kind!=TypedResourceKind::Sampler2D ||
+            !coordinate_resource || coordinate_resource->kind!=TypedResourceKind::Input ||
+            coordinate_resource->type!=TypedType::F32x2 || coordinate_resource->index!=0 ||
+            coordinate_resource->semantic==TypedSemantic::PointCoord) {
+            out.error="typed direct texture profile requires sampler2D + TEXCOORD float2 input";
+            return false;
+        }
         return compile_fragment_machine_profile(FragmentMachineProfile::Texture2D,
                                                 fragment_uniforms,fragment_samplers,0,0,out);
     }
@@ -2239,6 +2248,15 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         if (const auto *r = resource_for_value(root_def->src0); r && r->kind == TypedResourceKind::Uniform) tint = r;
         if (const auto *r = resource_for_value(root_def->src1); r && r->kind == TypedResourceKind::Uniform) tint = r;
         if (sample && tint && uniforms.size() == 1 && samplers.size() == 1) {
+            const auto *sampler_resource=resource_for_value(sample->src0);
+            const auto *coordinate_resource=resource_for_value(sample->src1);
+            if (!sampler_resource || sampler_resource->kind!=TypedResourceKind::Sampler2D ||
+                !coordinate_resource || coordinate_resource->kind!=TypedResourceKind::Input ||
+                coordinate_resource->type!=TypedType::F32x2 || coordinate_resource->index!=0 ||
+                coordinate_resource->semantic==TypedSemantic::PointCoord) {
+                out.error="typed texture-tint profile requires sampler2D + TEXCOORD float2 input";
+                return false;
+            }
             return compile_fragment_machine_profile(FragmentMachineProfile::TextureTint2D,
                                                     fragment_uniforms,fragment_samplers,0,0,out);
         }
