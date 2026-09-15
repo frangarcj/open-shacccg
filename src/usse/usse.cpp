@@ -466,7 +466,8 @@ bool decode_vcomp_rcp_scalar_f32_semantic(uint64_t word, VcompRcpScalarF32Semant
 bool encode_vcomp_f32_semantic(const VcompF32Semantic &i, uint64_t *word) {
     if (!word || i.src_component >= 4 || i.dest_mask == 0 || i.dest_mask >= 16 ||
         i.dst.num >= 128 || i.src.num >= 128 ||
-        (i.op != ComplexOp::Reciprocal && i.op != ComplexOp::Log2 && i.op != ComplexOp::Exp2))
+        (i.op != ComplexOp::Reciprocal && i.op != ComplexOp::Rsqrt &&
+         i.op != ComplexOp::Log2 && i.op != ComplexOp::Exp2))
         return false;
     VcompFields f{};
     if (!encode_dest_bank(i.dst.bank,&f.dest_bank,&f.dest_ext) ||
@@ -495,6 +496,7 @@ bool decode_vcomp_f32_semantic(uint64_t word, VcompF32Semantic *i) {
         f.sync_start || f.repeat_count!=0 || f.src_type!=0 ||
         f.src1_mod!=0 || f.src_component>=4 || f.write_mask==0 ||
         (f.op2!=static_cast<uint8_t>(ComplexOp::Reciprocal) &&
+         f.op2!=static_cast<uint8_t>(ComplexOp::Rsqrt) &&
          f.op2!=static_cast<uint8_t>(ComplexOp::Log2) &&
          f.op2!=static_cast<uint8_t>(ComplexOp::Exp2))) return false;
     const auto op=static_cast<ComplexOp>(f.op2);

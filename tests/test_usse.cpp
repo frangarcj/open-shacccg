@@ -586,6 +586,21 @@ int test_usse() {
             failures += fail("oracle F32 uniform > 0.5 VTST mismatch");
     }
     {
+        VcompF32Semantic rsqrt{};
+        rsqrt.op=ComplexOp::Rsqrt;
+        rsqrt.dst={RegisterBank::PrimaryAttribute,0};
+        rsqrt.src={RegisterBank::PrimaryAttribute,0};
+        rsqrt.dest_mask=1;
+        rsqrt.no_schedule=true;
+        uint64_t word=0;
+        VcompF32Semantic decoded{};
+        if (!encode_vcomp_f32_semantic(rsqrt,&word) || word!=0x30800a0280000001ULL ||
+            !decode_vcomp_f32_semantic(word,&decoded) || decoded.op!=ComplexOp::Rsqrt ||
+            decoded.dst.bank!=RegisterBank::PrimaryAttribute || decoded.dst.num!=0 ||
+            decoded.src.bank!=RegisterBank::PrimaryAttribute || decoded.src.num!=0)
+            failures += fail("oracle F32 RSQ VCOMP mismatch");
+    }
+    {
         VcompF32Semantic exp2{};
         exp2.op=ComplexOp::Exp2;
         exp2.dst={RegisterBank::PrimaryAttribute,0};

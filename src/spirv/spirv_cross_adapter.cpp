@@ -1178,6 +1178,49 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         return false;
                     }
                     values[args[1]]=dst;
+                } else if (ext==GLSLstd450Normalize) {
+                    if (count!=6 || result_type!=backend::TypedType::F32x3) {
+                        error="GLSL.std.450 Normalize is outside the validated F32x3 subset";
+                        return false;
+                    }
+                    const auto source=values.find(args[4]);
+                    if (source==values.end() || source->second.type()!=backend::TypedType::F32x3) {
+                        error="unresolved GLSL.std.450 Normalize operand";
+                        return false;
+                    }
+                    std::array<backend::TypedValue,3> lane{};
+                    std::array<backend::TypedValue,3> square{};
+                    bool ok=true;
+                    for (uint8_t i=0;i<3;++i) {
+                        lane[i]=program.make_value<backend::TypedType::F32>();
+                        square[i]=program.make_value<backend::TypedType::F32>();
+                        ok = ok && lane[i].kind()!=backend::TypedValueKind::None &&
+                            square[i].kind()!=backend::TypedValueKind::None &&
+                            program.emit<backend::TypedOpcode::FloatExtract>(i,lane[i],source->second) &&
+                            program.emit<backend::TypedOpcode::FloatBinary>(
+                                static_cast<uint8_t>(backend::TypedFloatOp::Mul),square[i],lane[i],lane[i]);
+                    }
+                    const auto sum_xy=program.make_value<backend::TypedType::F32>();
+                    const auto sum=program.make_value<backend::TypedType::F32>();
+                    const auto inv=program.make_value<backend::TypedType::F32>();
+                    const auto inv3=program.make_value<backend::TypedType::F32x3>();
+                    const auto dst=program.make_value<backend::TypedType::F32x3>();
+                    if (!ok || sum_xy.kind()==backend::TypedValueKind::None || sum.kind()==backend::TypedValueKind::None ||
+                        inv.kind()==backend::TypedValueKind::None || inv3.kind()==backend::TypedValueKind::None ||
+                        dst.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(backend::TypedFloatOp::Add),
+                            sum_xy,square[0],square[1]) ||
+                        !program.emit<backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(backend::TypedFloatOp::Add),
+                            sum,sum_xy,square[2]) ||
+                        !program.emit<backend::TypedOpcode::FloatUnary>(static_cast<uint8_t>(backend::TypedFloatUnaryOp::Rsqrt),
+                            inv,sum) ||
+                        !program.emit<backend::TypedOpcode::FloatSplat>(0,inv3,inv) ||
+                        !program.emit<backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(backend::TypedFloatOp::Mul),
+                            dst,source->second,inv3)) {
+                        error="failed to lower F32x3 Normalize through dot/rsqrt/mul";
+                        return false;
+                    }
+                    values[args[1]]=dst;
                 } else if (ext == GLSLstd450Floor) {
                     if (count!=6 || result_type!=backend::TypedType::F32) {
                         error="GLSL.std.450 Floor is outside the validated scalar F32 subset";

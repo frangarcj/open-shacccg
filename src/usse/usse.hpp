@@ -136,6 +136,7 @@ struct VcompRcpScalarF32Semantic {
 
 enum class ComplexOp : uint8_t {
     Reciprocal = 0,
+    Rsqrt = 1,
     Log2 = 2,
     Exp2 = 3,
 };

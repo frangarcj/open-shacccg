@@ -739,10 +739,10 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                                        instruction.dst.type()==TypedType::F32x4) &&
                                       instruction.src0.type()==instruction.dst.type();
             if (!supported_type || unary_op > TypedFloatUnaryOp::Floor ||
-                ((unary_op==TypedFloatUnaryOp::Log2 || unary_op==TypedFloatUnaryOp::Exp2 ||
+                ((unary_op==TypedFloatUnaryOp::Rsqrt || unary_op==TypedFloatUnaryOp::Log2 || unary_op==TypedFloatUnaryOp::Exp2 ||
                   unary_op==TypedFloatUnaryOp::Floor) &&
                  instruction.dst.type()!=TypedType::F32)) {
-                error = "typed float unary currently supports scalar/F32-vector negate/absolute/saturate plus scalar Log2/Exp2/Floor";
+                error = "typed float unary currently supports scalar/F32-vector negate/absolute/saturate plus scalar Rsqrt/Log2/Exp2/Floor";
                 return false;
             }
             const auto src = lower_value(typed, instruction.src0, values, literals, machine);
@@ -750,11 +750,12 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             const uint8_t width=static_cast<uint8_t>(components>2 ? 2 : 1);
             const uint8_t mask=static_cast<uint8_t>((1u<<components)-1u);
             MachineOperand dst{};
-            if (unary_op==TypedFloatUnaryOp::Log2 || unary_op==TypedFloatUnaryOp::Exp2) {
+            if (unary_op==TypedFloatUnaryOp::Rsqrt || unary_op==TypedFloatUnaryOp::Log2 || unary_op==TypedFloatUnaryOp::Exp2) {
                 dst=machine.make_value<MachineType::F32>();
+                const auto complex_op=unary_op==TypedFloatUnaryOp::Rsqrt ? usse::ComplexOp::Rsqrt :
+                    (unary_op==TypedFloatUnaryOp::Log2 ? usse::ComplexOp::Log2 : usse::ComplexOp::Exp2);
                 if (src.kind()==MachineOperandKind::None || dst.kind()==MachineOperandKind::None ||
-                    !machine.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(
-                        unary_op==TypedFloatUnaryOp::Log2 ? usse::ComplexOp::Log2 : usse::ComplexOp::Exp2),dst,src)) {
+                    !machine.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(complex_op),dst,src)) {
                     error="failed to lower scalar complex operation to validated VCOMP";
                     return false;
                 }
