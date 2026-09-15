@@ -744,6 +744,16 @@ int test_cg_frontend() {
         failures += fail("Cg matrix mul did not compile through glslang HLSL");
     if (!compile("void main(float3 aPosition,float4 aColor,uniform float4x4 wvp,float4 out vPosition:POSITION,float4 out vColor:COLOR){vPosition=mul(float4(aPosition,1.f),wvp);vColor=aColor;}", VSC_STAGE_VERTEX))
         failures += fail("Cg post-type out qualifier normalization did not compile");
+    if (!compile("float main(float a:TEXCOORD0):COLOR0{short x=(short)a;return (float)x;}", VSC_STAGE_FRAGMENT))
+        failures += fail("Cg short spelling did not normalize to glslang HLSL");
+    if (!compile("float main(float a:TEXCOORD0):COLOR0{unsigned short x=(unsigned short)a;return (float)x;}", VSC_STAGE_FRAGMENT))
+        failures += fail("Cg unsigned short spelling did not normalize to glslang HLSL");
+    if (!compile("float main(float a:TEXCOORD0):COLOR0{unsigned int x=(unsigned int)a;return (float)x;}", VSC_STAGE_FRAGMENT))
+        failures += fail("Cg unsigned int spelling did not normalize to glslang HLSL");
+    if (!compile("float main(float a:TEXCOORD0):COLOR0{unsigned int x=bit_cast<unsigned int>(a);return (float)x;}", VSC_STAGE_FRAGMENT))
+        failures += fail("Cg scalar bit_cast<unsigned int> did not normalize to HLSL asuint");
+    if (!compile("void f(float4 inout a){a+=1.f;} float4 main(float4 a:TEXCOORD0):COLOR0{f(a);return a;}", VSC_STAGE_FRAGMENT))
+        failures += fail("Cg post-type inout qualifier normalization did not compile");
     if (!compile_vertex_gxp(
             "void main(float4 p,float2 uv,uniform float4x4 mvp,uniform float4x4 texmat[1],uniform float point_size,"
             "float2 out tc:TEXCOORD0,float4 out pos:POSITION,float out ps:PSIZE){"

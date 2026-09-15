@@ -24,7 +24,7 @@ bool is_identifier_char(char c) {
 }
 
 bool is_cg_type_token(const std::string &token) {
-    static constexpr const char *bases[] = {"bool", "fixed", "float", "half", "int", "uint"};
+    static constexpr const char *bases[] = {"bool", "fixed", "float", "half", "int", "uint", "short"};
     for (const char *base : bases) {
         const std::string prefix(base);
         if (token == prefix) return true;
@@ -35,6 +35,88 @@ bool is_cg_type_token(const std::string &token) {
             suffix[2] >= '1' && suffix[2] <= '4') return true;
     }
     return false;
+}
+
+bool short_type_suffix(const std::string &token, std::string &suffix) {
+    if (token.compare(0,5,"short")!=0) return false;
+    suffix=token.substr(5);
+    return suffix.empty() || (suffix.size()==1 && suffix[0]>='1' && suffix[0]<='4');
+}
+
+bool int_type_suffix(const std::string &token, std::string &suffix) {
+    if (token.compare(0,3,"int")!=0) return false;
+    suffix=token.substr(3);
+    return suffix.empty() || (suffix.size()==1 && suffix[0]>='1' && suffix[0]<='4');
+}
+
+std::string normalize_cg_integer_spellings(const std::string &input) {
+    std::string output;
+    output.reserve(input.size());
+    for (size_t i=0;i<input.size();) {
+        if (!is_identifier_start(input[i])) {
+            output.push_back(input[i++]);
+            continue;
+        }
+        size_t end=i+1;
+        while (end<input.size() && is_identifier_char(input[end])) ++end;
+        const std::string token=input.substr(i,end-i);
+        if (token=="unsigned") {
+            size_t next=end;
+            while (next<input.size() && std::isspace(static_cast<unsigned char>(input[next]))) ++next;
+            if (next<input.size() && is_identifier_start(input[next])) {
+                size_t next_end=next+1;
+                while (next_end<input.size() && is_identifier_char(input[next_end])) ++next_end;
+                const std::string type=input.substr(next,next_end-next);
+                std::string suffix;
+                if (short_type_suffix(type,suffix) || int_type_suffix(type,suffix)) {
+                    output += "uint" + suffix;
+                    i=next_end;
+                    continue;
+                }
+            }
+        }
+        std::string suffix;
+        if (short_type_suffix(token,suffix)) output += "int" + suffix;
+        else output += token;
+        i=end;
+    }
+    return output;
+}
+
+std::string normalize_cg_scalar_bit_casts(const std::string &input) {
+    std::string output;
+    output.reserve(input.size());
+    for (size_t i=0;i<input.size();) {
+        if (!is_identifier_start(input[i])) {
+            output.push_back(input[i++]);
+            continue;
+        }
+        size_t end=i+1;
+        while (end<input.size() && is_identifier_char(input[end])) ++end;
+        const std::string token=input.substr(i,end-i);
+        if (token=="bit_cast") {
+            size_t p=end;
+            while (p<input.size() && std::isspace(static_cast<unsigned char>(input[p]))) ++p;
+            if (p<input.size() && input[p]=='<') {
+                ++p;
+                while (p<input.size() && std::isspace(static_cast<unsigned char>(input[p]))) ++p;
+                if (p<input.size() && is_identifier_start(input[p])) {
+                    const size_t type_begin=p++;
+                    while (p<input.size() && is_identifier_char(input[p])) ++p;
+                    const std::string type=input.substr(type_begin,p-type_begin);
+                    while (p<input.size() && std::isspace(static_cast<unsigned char>(input[p]))) ++p;
+                    if (p<input.size() && input[p]=='>' && type=="uint") {
+                        output += "asuint";
+                        i=p+1;
+                        continue;
+                    }
+                }
+            }
+        }
+        output += token;
+        i=end;
+    }
+    return output;
 }
 
 struct GlobalInterfaceDecl {
@@ -180,6 +262,8 @@ std::string normalize_cg_for_hlsl(const char *source, size_t size, const char *e
         static_cast<unsigned char>(input[1]) == 0xbb && static_cast<unsigned char>(input[2]) == 0xbf)
         input.erase(0, 3);
 
+    input = normalize_cg_integer_spellings(input);
+    input = normalize_cg_scalar_bit_casts(input);
     input = rewrite_global_cg_interfaces(input, entrypoint ? entrypoint : "main");
 
     std::string output;
@@ -196,10 +280,12 @@ std::string normalize_cg_for_hlsl(const char *source, size_t size, const char *e
         if (is_cg_type_token(token)) {
             size_t qualifier = token_end;
             while (qualifier < input.size() && std::isspace(static_cast<unsigned char>(input[qualifier]))) ++qualifier;
-            const size_t qualifier_end = qualifier + 3;
-            if (qualifier_end <= input.size() && input.compare(qualifier, 3, "out") == 0 &&
-                (qualifier_end == input.size() || !is_identifier_char(input[qualifier_end]))) {
-                output += "out";
+            size_t qualifier_end=qualifier;
+            while (qualifier_end<input.size() && is_identifier_char(input[qualifier_end])) ++qualifier_end;
+            const std::string direction=input.substr(qualifier,qualifier_end-qualifier);
+            if ((direction=="out" || direction=="inout" || direction=="in") &&
+                qualifier_end>qualifier) {
+                output += direction;
                 output.append(input, token_end, qualifier - token_end);
                 output += token;
                 i = qualifier_end;
