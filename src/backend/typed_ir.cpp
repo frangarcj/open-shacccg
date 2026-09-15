@@ -1127,6 +1127,8 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         bool varying_written = false;
         uint32_t varying_attribute = 0;
         IrVaryingSemantic selected_varying_semantic = IrVaryingSemantic::TexCoord;
+        bool point_size_written=false;
+        TypedValue point_size_value{};
         for (const auto &instruction : instructions) {
             if (instruction.opcode() != TypedOpcode::StoreOutput) continue;
             if (instruction.aux >= resources.size()) { out.error = "typed vertex output resource is out of range"; return false; }
@@ -1175,6 +1177,15 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                     out.error = "typed vertex position producer is unsupported"; return false;
                 }
                 position_written = true;
+                continue;
+            }
+            if (semantic==TypedSemantic::PointSize) {
+                if (point_size_written || instruction.src0.type()!=TypedType::F32) {
+                    out.error="typed vertex point-size output must be one scalar F32 store";
+                    return false;
+                }
+                point_size_written=true;
+                point_size_value=instruction.src0;
                 continue;
             }
 
@@ -1446,6 +1457,22 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 return false;
             }
             return compile_vertex_construct_position(vertex_attributes[position_attribute],0,0,out);
+        }
+        if (transformed_position && point_size_written && !varying_written && vertex_attributes.size()==1 &&
+            vertex_matrices.size()==1 && position_attribute<vertex_attributes.size() && position_matrix==0 &&
+            vertex_attributes[position_attribute].components==4 && vertex_uniforms.size()==1) {
+            const auto *point_resource=resource_for_value(point_size_value);
+            if (!point_resource || point_resource!=vertex_uniforms[0] || point_resource->type!=TypedType::F32 ||
+                point_resource->index!=16) {
+                out.error="typed matrix point-size profile requires direct scalar uniform resource 16";
+                return false;
+            }
+            return compile_vertex_uniform_matrix_point_size(vertex_attributes[position_attribute],vertex_matrices[0],
+                {shader.resource_name(*point_resource),1,point_resource->index},0,0,out);
+        }
+        if (point_size_written) {
+            out.error="typed vertex point-size shape is outside the validated uniform-matrix profile";
+            return false;
         }
         if (transformed_position && !varying_written && vertex_attributes.size()==1 && vertex_matrices.size()==1 &&
             position_attribute<vertex_attributes.size() && position_matrix==0 &&

@@ -81,6 +81,8 @@ backend::TypedSemantic semantic_from_text(const std::string &text, uint8_t &inde
         return backend::TypedSemantic::Color;
     if (base.find("TEXCOORD") != std::string::npos || base == "UV")
         return backend::TypedSemantic::TexCoord;
+    if (base.find("PSIZE") != std::string::npos || base.find("POINTSIZE") != std::string::npos)
+        return backend::TypedSemantic::PointSize;
     return backend::TypedSemantic::None;
 }
 
@@ -339,17 +341,28 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
 
         for (auto id : compiler.get_ir().ids_for_type[spirv_cross::SPIRVariable::type]) {
             if (compiler.get_storage_class(id) != spv::StorageClassOutput ||
-                !compiler.has_decoration(id, spv::DecorationBuiltIn) ||
-                compiler.get_decoration(id, spv::DecorationBuiltIn) != spv::BuiltInPosition ||
-                outputs.count(id))
+                !compiler.has_decoration(id, spv::DecorationBuiltIn) || outputs.count(id))
                 continue;
+            const auto builtin=compiler.get_decoration(id,spv::DecorationBuiltIn);
             const auto type = typed_type(compiler.get_type_from_variable(id));
-            if (type != backend::TypedType::F32x4) { error = "BuiltIn Position is not float4"; return false; }
+            backend::TypedSemantic semantic=backend::TypedSemantic::None;
+            const char *fallback=nullptr;
+            if (builtin==spv::BuiltInPosition) {
+                if (type!=backend::TypedType::F32x4) { error="BuiltIn Position is not float4"; return false; }
+                semantic=backend::TypedSemantic::Position;
+                fallback="position";
+            } else if (builtin==spv::BuiltInPointSize) {
+                if (type!=backend::TypedType::F32) { error="BuiltIn PointSize is not scalar float"; return false; }
+                semantic=backend::TypedSemantic::PointSize;
+                fallback="psize";
+            } else {
+                continue;
+            }
             std::string output_name = compiler.get_name(id);
-            if (output_name.empty()) output_name = "position";
+            if (output_name.empty()) output_name = fallback;
             uint16_t resource_id = 0;
             if (!add_resource(backend::TypedResourceKind::Output, {}, type, output_name, 0,
-                              backend::TypedSemantic::Position, 0, resource_id)) return false;
+                              semantic, 0, resource_id)) return false;
             outputs[id] = resource_id;
         }
 

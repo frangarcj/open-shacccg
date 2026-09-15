@@ -346,7 +346,7 @@ MachineType pack_format_machine_type(usse::PackFormat format) {
 }
 
 bool uses_instruction_config(MachineOpcode opcode) {
-    return opcode == MachineOpcode::Move || opcode == MachineOpcode::MoveUpdate || opcode == MachineOpcode::Pack ||
+    return opcode == MachineOpcode::Nop || opcode == MachineOpcode::Move || opcode == MachineOpcode::MoveUpdate || opcode == MachineOpcode::Pack ||
         opcode == MachineOpcode::PredicatedMove || opcode == MachineOpcode::PredicatedMoveUpdate ||
         opcode == MachineOpcode::PackSwizzle || opcode == MachineOpcode::PackValue || opcode == MachineOpcode::Vector ||
         opcode == MachineOpcode::ComplexF32 || opcode == MachineOpcode::Vmad;
@@ -781,7 +781,8 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             }
             break;
         case MachineOpcode::Nop:
-            if (guard != usse::Predicate::Always || !builder.nop()) {
+            if (guard != usse::Predicate::Always || (instruction.config() & ~0x0003u) ||
+                !builder.nop((instruction.config()&0x0001u)==0,(instruction.config()&0x0002u)!=0)) {
                 out.error = "failed to encode machine NOP";
                 return false;
             }

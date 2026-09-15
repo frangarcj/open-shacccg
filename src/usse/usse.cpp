@@ -185,6 +185,25 @@ bool decode_src0_bank(uint8_t selector, bool extended, RegisterBank *bank) {
 }
 } // namespace
 
+bool encode_nop_semantic(const NopSemantic &i, uint64_t *word) {
+    if (!word) return false;
+    *word=0xf800094000000000ULL;
+    if (!i.no_schedule) *word&=~(uint64_t{1}<<43);
+    if (i.end) *word|=uint64_t{1}<<50;
+    return true;
+}
+
+bool decode_nop_semantic(uint64_t word, NopSemantic *i) {
+    if (!i || classify_control(word)!=ControlClass::Nop) return false;
+    const uint64_t allowed=0xf800094000000000ULL | (uint64_t{1}<<43) | (uint64_t{1}<<50);
+    if ((word & ~((uint64_t{1}<<43)|(uint64_t{1}<<50))) !=
+        (0xf800094000000000ULL & ~((uint64_t{1}<<43)|(uint64_t{1}<<50))) ||
+        (word & ~allowed)) return false;
+    i->no_schedule=((word>>43)&1u)!=0;
+    i->end=((word>>50)&1u)!=0;
+    return true;
+}
+
 bool encode_vmov_semantic(const VmovSemantic &i, uint64_t *word) {
     if (!word || i.dst.num >= 64 || i.src.num >= 64 || i.dest_mask >= 16 ||
         i.swizzle >= 16 || i.repeat_count >= 4) return false;

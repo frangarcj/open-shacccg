@@ -86,6 +86,7 @@ enum class TypedSemantic : uint8_t {
     Position,
     Color,
     TexCoord,
+    PointSize,
 };
 
 enum class TypedFloatOp : uint8_t {

@@ -37,6 +37,11 @@ struct RegisterRef {
     uint8_t num = 0;
 };
 
+struct NopSemantic {
+    bool no_schedule = true;
+    bool end = false;
+};
+
 struct VmovSemantic {
     RegisterRef dst{};
     RegisterRef src{};
@@ -565,6 +570,8 @@ bool decode_src1_bank(uint8_t selector, bool extended, RegisterBank *bank);
 // controls for differential testing.
 bool encode_vmov_semantic(const VmovSemantic &instruction, uint64_t *word);
 bool decode_vmov_semantic(uint64_t word, VmovSemantic *instruction);
+bool encode_nop_semantic(const NopSemantic &instruction, uint64_t *word);
+bool decode_nop_semantic(uint64_t word, NopSemantic *instruction);
 bool encode_vpck_semantic(const VpckSemantic &instruction, uint64_t *word);
 bool decode_vpck_semantic(uint64_t word, VpckSemantic *instruction);
 bool encode_v32nmad_semantic(const V32NmadSemantic &instruction, uint64_t *word);
@@ -605,6 +612,7 @@ bool encode_branch_semantic(const BranchSemantic &instruction, uint64_t *word);
 bool decode_branch_semantic(uint64_t word, BranchSemantic *instruction);
 
 inline bool encode_semantic(const VmovSemantic &i, uint64_t *word) { return encode_vmov_semantic(i, word); }
+inline bool encode_semantic(const NopSemantic &i, uint64_t *word) { return encode_nop_semantic(i, word); }
 inline bool encode_semantic(const VpckSemantic &i, uint64_t *word) { return encode_vpck_semantic(i, word); }
 inline bool encode_semantic(const V32NmadSemantic &i, uint64_t *word) { return encode_v32nmad_semantic(i, word); }
 inline bool encode_semantic(const VcompRcpF32Semantic &i, uint64_t *word) { return encode_vcomp_rcp_f32_semantic(i, word); }

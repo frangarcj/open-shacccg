@@ -13,7 +13,7 @@ namespace vsc::backend {
 class ProgramBuilder {
 public:
     bool phase();
-    bool nop();
+    bool nop(bool no_schedule = true, bool end = false);
     bool emit();
 
     template <typename Semantic>

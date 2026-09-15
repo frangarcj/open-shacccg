@@ -37,6 +37,19 @@ int test_usse() {
         failures += fail("PHAS control form not recognized");
     if (classify_control(0xf800094000000000ULL) != ControlClass::Nop)
         failures += fail("NOP control form not recognized");
+    {
+        NopSemantic nop{};
+        uint64_t word=0;
+        if (!encode_nop_semantic(nop,&word) || word!=0xf800094000000000ULL)
+            failures += fail("default NOP semantic encoding mismatch");
+        nop.no_schedule=false;
+        nop.end=true;
+        if (!encode_nop_semantic(nop,&word) || word!=0xf804014000000000ULL)
+            failures += fail("secondary END NOP semantic encoding mismatch");
+        NopSemantic decoded{};
+        if (!decode_nop_semantic(word,&decoded) || decoded.no_schedule || !decoded.end)
+            failures += fail("secondary END NOP semantic decode mismatch");
+    }
     if (classify_control(0xfb275000a0200000ULL) != ControlClass::Emit)
         failures += fail("EMIT control form not recognized");
     if (classify_control(0xf9300406f0000408ULL) != ControlClass::Kill)

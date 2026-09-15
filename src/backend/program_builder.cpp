@@ -17,7 +17,9 @@ bool ProgramBuilder::append_control(usse::Opcode opcode) {
 }
 
 bool ProgramBuilder::phase() { return append_control(usse::Opcode::Phase); }
-bool ProgramBuilder::nop() { return append_control(usse::Opcode::Nop); }
+bool ProgramBuilder::nop(bool no_schedule, bool end) {
+    return instruction(usse::NopSemantic{no_schedule,end});
+}
 bool ProgramBuilder::emit() { return append_control(usse::Opcode::Emit); }
 
 } // namespace vsc::backend

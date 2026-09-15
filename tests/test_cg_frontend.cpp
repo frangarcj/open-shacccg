@@ -677,6 +677,12 @@ int test_cg_frontend() {
         failures += fail("unused unsupported uniform member type blocked an otherwise valid shader");
     if (!compile_vitagl_blit_vertex_profile())
         failures += fail("vitaGL public blit vertex profile did not reproduce its observed v1.5 GXP shape");
+    if (!compile_shader_gxp(
+            "uniform float4x4 Jwvp; uniform float Mpoint_size; "
+            "void main(float4 Nposition,float4 out vPosition:POSITION,float out psize:PSIZE){"
+            "vPosition=mul(Jwvp,Nposition);psize=Mpoint_size;}",
+            "matrix-point-size.cg",VSC_STAGE_VERTEX))
+        failures += fail("oracle matrix + uniform PSIZE vertex profile did not compile end to end");
     struct PublicShader { const char *name; VscStage stage; };
     const PublicShader public_shaders[] = {
         {"clear_f", VSC_STAGE_FRAGMENT},
