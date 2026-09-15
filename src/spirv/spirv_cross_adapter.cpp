@@ -226,8 +226,10 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
         std::unordered_map<uint32_t, uint16_t> outputs;
         std::unordered_map<uint32_t, PhiSink> phi_sinks;
         std::unordered_map<uint32_t, SelectSink> select_sinks;
+        std::unordered_map<uint32_t, std::array<backend::TypedValue,2>> logical_ands;
         std::unordered_map<uint32_t, uint16_t> block_labels;
         std::unordered_map<uint32_t, uint32_t> loop_headers;
+        std::unordered_set<uint32_t> kill_labels;
         std::unordered_set<uint32_t> s32_loop_state_ids;
 
         auto add_resource = [&](backend::TypedResourceKind kind, backend::TypedValue value,
@@ -427,6 +429,9 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         return false;
                     }
                     loop_headers[scan_label]=args[1];
+                    has_control=true;
+                } else if (scan_function && op==spv::OpKill && scan_label) {
+                    kill_labels.insert(scan_label);
                     has_control=true;
                 } else if (scan_function && op==spv::OpSelect) {
                     if (count!=6) {
@@ -754,6 +759,24 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         return false;
                     }
                     values[args[1]]=dst;
+                } else if (ext == GLSLstd450Floor) {
+                    if (count!=6 || result_type!=backend::TypedType::F32) {
+                        error="GLSL.std.450 Floor is outside the validated scalar F32 subset";
+                        return false;
+                    }
+                    const auto source=values.find(args[4]);
+                    if (source==values.end() || source->second.type()!=backend::TypedType::F32) {
+                        error="unresolved GLSL.std.450 Floor operand";
+                        return false;
+                    }
+                    const auto dst=program.make_value<backend::TypedType::F32>();
+                    if (dst.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::FloatUnary>(
+                            static_cast<uint8_t>(backend::TypedFloatUnaryOp::Floor),dst,source->second)) {
+                        error="failed to emit Typed IR Floor";
+                        return false;
+                    }
+                    values[args[1]]=dst;
                 } else if (ext == GLSLstd450FMin || ext == GLSLstd450FMax) {
                     if (count != 7 || !result_float) {
                         error = "GLSL.std.450 min/max is outside the validated F32 subset";
@@ -1028,7 +1051,8 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         error = "failed to emit Typed IR float unary operation"; return false;
                     }
                     values[args[1]] = dst;
-                } else if (op == spv::OpFMul || op == spv::OpFAdd || op == spv::OpFSub || op == spv::OpFDiv) {
+                } else if (op == spv::OpFMul || op == spv::OpFAdd || op == spv::OpFSub ||
+                           op == spv::OpFDiv || op == spv::OpFMod) {
                     if (count != 5) { error = "invalid floating binary instruction"; return false; }
                     const auto result_type = typed_type(compiler.get_type(args[0]));
                     auto resolve_float=[&](uint32_t id, backend::TypedValue &value) -> bool {
@@ -1047,6 +1071,28 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         !resolve_float(args[2],lhs) || !resolve_float(args[3],rhs)) {
                         error = "floating binary operands are unresolved or mismatched"; return false;
                     }
+                    if (op==spv::OpFMod) {
+                        if (result_type!=backend::TypedType::F32) {
+                            error="OpFMod is outside the validated scalar F32 subset";
+                            return false;
+                        }
+                        const auto quotient=program.make_value<backend::TypedType::F32>();
+                        const auto floored=program.make_value<backend::TypedType::F32>();
+                        const auto multiple=program.make_value<backend::TypedType::F32>();
+                        const auto dst=program.make_value<backend::TypedType::F32>();
+                        if (quotient.kind()==backend::TypedValueKind::None || floored.kind()==backend::TypedValueKind::None ||
+                            multiple.kind()==backend::TypedValueKind::None || dst.kind()==backend::TypedValueKind::None ||
+                            !program.emit<backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(backend::TypedFloatOp::Div),quotient,lhs,rhs) ||
+                            !program.emit<backend::TypedOpcode::FloatUnary>(static_cast<uint8_t>(backend::TypedFloatUnaryOp::Floor),floored,quotient) ||
+                            !program.emit<backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(backend::TypedFloatOp::Mul),multiple,floored,rhs) ||
+                            !program.emit<backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(backend::TypedFloatOp::Sub),dst,lhs,multiple)) {
+                            error="failed to desugar scalar OpFMod";
+                            return false;
+                        }
+                        values[args[1]]=dst;
+                        offset+=count;
+                        continue;
+                    }
                     backend::TypedFloatOp float_op = backend::TypedFloatOp::Mul;
                     if (op == spv::OpFAdd) float_op = backend::TypedFloatOp::Add;
                     else if (op == spv::OpFSub) float_op = backend::TypedFloatOp::Sub;
@@ -1057,16 +1103,79 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         error = "failed to emit Typed IR float binary operation"; return false;
                     }
                     values[args[1]] = dst;
+                } else if (op == spv::OpLogicalAnd) {
+                    if (count!=5) { error="invalid logical-and instruction"; return false; }
+                    const auto lhs=values.find(args[2]);
+                    const auto rhs=values.find(args[3]);
+                    if (lhs==values.end() || rhs==values.end() ||
+                        lhs->second.kind()!=backend::TypedValueKind::Predicate ||
+                        rhs->second.kind()!=backend::TypedValueKind::Predicate) {
+                        error="logical-and operands are not Typed predicates";
+                        return false;
+                    }
+                    logical_ands[args[1]]={lhs->second,rhs->second};
                 } else if (op == spv::OpSelectionMerge) {
                     // Structured merge metadata is consumed by the control pre-pass.
                 } else if (op == spv::OpBranchConditional) {
                     if (count!=4 || block_labels.empty()) { error="conditional branch is outside structured Typed shader subset"; return false; }
-                    const auto predicate=values.find(args[0]);
                     const auto true_label=block_labels.find(args[1]);
                     const auto false_label=block_labels.find(args[2]);
-                    if (predicate==values.end() || predicate->second.kind()!=backend::TypedValueKind::Predicate ||
-                        true_label==block_labels.end() || false_label==block_labels.end() ||
-                        !program.branch(true_label->second,predicate->second) || !program.jump(false_label->second)) {
+                    const bool true_kills=kill_labels.count(args[1])!=0;
+                    const bool false_kills=kill_labels.count(args[2])!=0;
+                    const auto logical_and=logical_ands.find(args[0]);
+                    if (logical_and!=logical_ands.end()) {
+                        const auto lhs=logical_and->second[0];
+                        const auto rhs=logical_and->second[1];
+                        const auto not_lhs=backend::TypedValue::predicate(lhs.id(),!lhs.inverted());
+                        if (true_label==block_labels.end() || false_label==block_labels.end()) {
+                            error="logical-and branch target is unresolved";
+                            return false;
+                        }
+                        if (true_kills && !false_kills) {
+                            if (!program.branch(false_label->second,not_lhs) ||
+                                !program.emit<backend::TypedOpcode::Discard>(0,{},rhs) ||
+                                !program.jump(false_label->second)) {
+                                error="failed to sink logical-and discard into Typed control flow";
+                                return false;
+                            }
+                        } else if (!true_kills && !false_kills) {
+                            if (!program.branch(false_label->second,not_lhs) ||
+                                !program.branch(true_label->second,rhs) || !program.jump(false_label->second)) {
+                                error="failed to desugar logical-and branch into Typed control flow";
+                                return false;
+                            }
+                        } else {
+                            error="logical-and discard shape is outside the validated true-kill subset";
+                            return false;
+                        }
+                    } else {
+                        const auto predicate=values.find(args[0]);
+                        if (predicate==values.end() || predicate->second.kind()!=backend::TypedValueKind::Predicate ||
+                            true_label==block_labels.end() || false_label==block_labels.end()) {
+                            error="conditional Typed branch predicate/target is unresolved";
+                            return false;
+                        }
+                        if (true_kills != false_kills) {
+                            auto discard_predicate=predicate->second;
+                            const uint16_t survivor=true_kills ? false_label->second : true_label->second;
+                            if (false_kills)
+                                discard_predicate=backend::TypedValue::predicate(discard_predicate.id(),!discard_predicate.inverted());
+                            if (!program.emit<backend::TypedOpcode::Discard>(0,{},discard_predicate) ||
+                                !program.jump(survivor)) {
+                                error="failed to sink branch-local discard into Typed IR";
+                                return false;
+                            }
+                        } else if (!true_kills) {
+                            if (!program.branch(true_label->second,predicate->second) || !program.jump(false_label->second)) {
+                                error="failed to emit Typed shader conditional control flow";
+                                return false;
+                            }
+                        } else {
+                            error="both conditional targets kill; unsupported discard shape";
+                            return false;
+                        }
+                    }
+                    if (true_label==block_labels.end() || false_label==block_labels.end()) {
                         error="failed to emit Typed shader conditional control flow";
                         return false;
                     }
@@ -1278,8 +1387,12 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         error="failed to emit case-free OpSwitch as Typed jump";
                         return false;
                     }
+                } else if (op==spv::OpKill) {
+                    // Branch-local kills are sunk into their predecessor so the
+                    // compact Typed CFG only contains the surviving path.
                 } else if (op != spv::OpReturn && op != spv::OpNop) {
-                    error = "unsupported instruction in SPIRV-Cross Typed shader subset";
+                    error = "unsupported instruction in SPIRV-Cross Typed shader subset (opcode " +
+                        std::to_string(op) + ")";
                     return false;
                 }
             }

@@ -1,0 +1,1 @@
+float main(float a:TEXCOORD0,float b:TEXCOORD1):COLOR0 { return fmod(a,b); }

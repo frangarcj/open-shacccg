@@ -86,6 +86,33 @@ Related texture cleanup still pending:
    shader needs it; do not replace the exact CMP shape with branch-heavy generic
    select lowering.
 
+### `TM2_FAST_FS`
+
+Current integration fixture: `oracle_corpus_v2/fp-geometrizer-tm2-fast.cg`.
+
+- Sony: 27 primary instructions, 560-byte GXP, PA=4, SA=9, two primary phases.
+- Open correctness baseline: 31 primary instructions, 572-byte GXP, PA=4, SA=7,
+  one primary phase.
+- Both use the same two scalar uniforms plus sampler0 resource shape. Open lowers
+  `floor` as `x-frac(x)`, `fmod` as `x-floor(x/y)*y`, boolean `&&` into validated
+  BR control flow, and the final `float4(sample.rgb,1)` through generic scalar
+  composition + VPCK.
+
+Pending optimizations:
+
+1. Derive the VMAD2 form Sony uses for `sample.a*255 + 0.5` and other fused
+   meta arithmetic instead of the current multi-V32 sequence.
+2. Canonicalize `floor`/`fmod` to Sony's shorter V16/V32 selection where it is
+   independently validated; keep the generic algebraic lowering as fallback.
+3. Fold the two discard conditions into Sony's VTST/BR/KILL schedule and derive
+   the second-PHAS requirement rather than emitting the current generic CFG.
+4. Coalesce the final sampled RGB + constant-one alpha into the observed
+   V32NMAD + VPCK pair instead of four scalar VMOV materialization steps.
+5. Revisit literal-table canonicalization after fusion: Sony uses seven SA
+   literal words (including `1/170`), while the generic baseline needs five.
+6. Match PA/SA temp/phase metadata only as a consequence of those transformations;
+   do not pad resources merely for byte similarity.
+
 ## General USSE optimization work
 
 ### High value

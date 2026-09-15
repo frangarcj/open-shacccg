@@ -1,0 +1,14 @@
+
+uniform sampler2D u_page;
+uniform float u_opaque;
+uniform float u_cat_match;
+float4 main(float2 v_uv:TEXCOORD0):COLOR0 {
+    float4 c=tex2D(u_page,v_uv);
+    float meta=floor(c.a*255.0+0.5);
+    if (u_cat_match>=0.0) {
+        float cat=meta>=170.0 ? 1.0 : 0.0;
+        if (cat!=u_cat_match) discard;
+    }
+    if (u_opaque<0.5 && fmod(meta,170.0)<42.0) discard;
+    return float4(c.rgb,1.0);
+}

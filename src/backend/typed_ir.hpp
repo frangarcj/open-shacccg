@@ -103,6 +103,7 @@ enum class TypedFloatUnaryOp : uint8_t {
     Abs,
     Saturate,
     Log2,
+    Floor,
 };
 
 enum class TypedFloatSwizzleOp : uint8_t {

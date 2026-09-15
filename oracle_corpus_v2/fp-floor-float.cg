@@ -1,0 +1,1 @@
+float main(float a:TEXCOORD0):COLOR0 { return floor(a); }

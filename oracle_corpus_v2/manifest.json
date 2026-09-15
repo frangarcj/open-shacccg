@@ -728,6 +728,29 @@
     "op": "s32-to-f32"
   },
   {
+    "name": "fp-floor-float",
+    "file": "fp-floor-float.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "primitives",
+    "type": "float",
+    "op": "floor"
+  },
+  {
+    "name": "fp-mod-float",
+    "file": "fp-mod-float.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "primitives",
+    "type": "float",
+    "op": "fmod"
+  },
+  {
+    "name": "fp-discard-and",
+    "file": "fp-discard-and.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "primitives",
+    "op": "logical-and-discard"
+  },
+  {
     "name": "fp-if",
     "file": "fp-if.cg",
     "profile": "sce_fp_psp2",
@@ -856,5 +879,13 @@
     "feature": "integration",
     "project": "geometrizer",
     "shader": "CMP_FS"
+  },
+  {
+    "name": "fp-geometrizer-tm2-fast",
+    "file": "fp-geometrizer-tm2-fast.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "integration",
+    "project": "geometrizer",
+    "shader": "TM2_FAST_FS"
   }
 ]

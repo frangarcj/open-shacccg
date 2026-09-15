@@ -4,6 +4,7 @@ VSC_MACHINE_OP(Emit,    "emit",    None,         None,         None,         0x0
 VSC_MACHINE_OP(Move,    "move",    ValueDef,     ValueUse,     None,         0x0f)
 VSC_MACHINE_OP(MoveUpdate, "move-update", ValueUpdate, ValueUse, None,        0x0f)
 VSC_MACHINE_OP(PredicatedMove, "predicated-move", ValueDef, ValueUse, PredicateUse, 0x03)
+VSC_MACHINE_OP(PredicatedMoveUpdate, "predicated-move-update", ValueUpdate, ValueUse, PredicateUse, 0x03)
 VSC_MACHINE_OP(Pack,    "pack",    ValueDef,     ValueUse,     ValueUse,     0x0f)
 VSC_MACHINE_OP(PackSwizzle, "pack-swizzle", ValueDef, ValueUse, ValueUse,      0x0f)
 VSC_MACHINE_OP(PackValue, "pack-value", ValueDef, ValueUse,     None,         0x0f)

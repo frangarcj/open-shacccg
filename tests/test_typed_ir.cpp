@@ -577,6 +577,36 @@ int test_typed_ir() {
 
     {
         TypedProgram program;
+        const auto source=program.input<TypedType::F32>(0);
+        const auto floored=program.make_value<TypedType::F32>();
+        program.emit<TypedOpcode::FloatUnary>(static_cast<uint8_t>(TypedFloatUnaryOp::Floor),floored,source);
+        MachineCompileResult result;
+        usse::V32NmadSemantic frac{},sub{};
+        if (!compile_typed_program(program,result) || result.words.size()!=2 ||
+            !usse::decode_v32nmad_semantic(result.words[0],&frac) || frac.op!=usse::VectorOp::Frac ||
+            !usse::decode_v32nmad_semantic(result.words[1],&sub) || sub.op!=usse::VectorOp::Add || !sub.src1_negative)
+            failures += fail("typed scalar Floor did not lower as x-frac(x)");
+    }
+
+    {
+        TypedProgram program;
+        const auto lhs=program.input<TypedType::F32>(0);
+        const auto rhs=program.input<TypedType::F32>(2);
+        const auto when_true=program.input<TypedType::F32>(4);
+        const auto when_false=program.input<TypedType::F32>(6);
+        const auto predicate=program.make_predicate();
+        program.emit<TypedOpcode::Compare>(static_cast<uint8_t>(usse::CompareOp::Greater),predicate,lhs,rhs);
+        const auto selected=program.select_f32(predicate,when_true,when_false);
+        MachineCompileResult result;
+        usse::VmovSemantic initial{},update{};
+        if (selected.kind()==TypedValueKind::None || !compile_typed_program(program,result) || result.words.size()!=3 ||
+            !usse::decode_vmov_semantic(result.words[1],&initial) || initial.predicate!=usse::Predicate::Always ||
+            !usse::decode_vmov_semantic(result.words[2],&update) || update.predicate!=usse::Predicate::P0)
+            failures += fail("typed scalar FloatSelect did not lower to initialize + predicated update");
+    }
+
+    {
+        TypedProgram program;
         const auto source=program.input<TypedType::F32x4>(0);
         const auto lhs=program.input<TypedType::F32x4>(1);
         std::array<TypedValue,4> lanes{};

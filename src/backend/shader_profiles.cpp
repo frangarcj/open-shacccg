@@ -554,6 +554,72 @@ bool compile_fragment_texture_alpha_select_machine(const IrUniformFloat &uniform
     return true;
 }
 
+bool compile_fragment_texture_control_machine(const MachineProgram &primary,
+                                              const std::vector<IrUniformFloat> &uniforms,
+                                              const std::vector<IrLiteralF32> &literal_values,
+                                              const IrSampler2D &sampler,
+                                              uint32_t binary_guid, uint32_t source_guid,
+                                              IrCompileResult &out) {
+    out={};
+    if (uniforms.size()!=2 || uniforms[0].name.empty() || uniforms[1].name.empty() ||
+        uniforms[0].components!=1 || uniforms[1].components!=1 ||
+        uniforms[0].resource_index!=0 || uniforms[1].resource_index!=1 ||
+        sampler.name.empty() || sampler.resource_index!=0) {
+        out.error="texture-control profile requires two scalar uniforms and sampler0";
+        return false;
+    }
+    MachineCompileResult compiled;
+    if (!compile_words(primary,compiled,out,"texture-control Machine IR lowering failed")) return false;
+
+    const uint8_t interface_block[32]={
+        0,0,0,0,0,0,0,0,0,0,1,4,1,0,1,0,4,0,0,0,0,0xf9,0,0,0,0,0,0,0xc0,0,0,0,
+    };
+    std::vector<gxp::LiteralDesc> literals;
+    literals.reserve(literal_values.size());
+    for (const auto &literal:literal_values) {
+        if (literal.resource_index>=literal_values.size()) {
+            out.error="texture-control literal resource index is out of range";
+            return false;
+        }
+        literals.push_back({literal.resource_index,literal.value_bits});
+    }
+    std::vector<gxp::ParameterContainerDesc> containers={{14,0,0,2}};
+    if (!literals.empty())
+        containers.push_back({19,0,2,static_cast<uint16_t>(literals.size())});
+    const gxp::ParameterDesc parameters[]={
+        {uniforms[0].name.c_str(),1,0,1,14,0,0,1,0},
+        {uniforms[1].name.c_str(),1,0,1,14,0,0,1,1},
+        {sampler.name.c_str(),2,0,4,0,1,0,1,0},
+    };
+
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Fragment;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid; image.source_guid=source_guid;
+    image.program_flags=0x0008080b;
+    image.buffer_flags=0x10000000;
+    image.texunit_flags[0]=1;
+    image.primary_register_count=4;
+    image.secondary_register_count=static_cast<uint16_t>(2+literals.size());
+    image.primary_phase_count=1;
+    image.data_buffer_count=static_cast<uint32_t>(literals.size());
+    image.default_uniform_buffer_count=2;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=compiled.words.data(); image.primary_instruction_count=compiled.words.size();
+    image.containers=containers.data(); image.container_count=containers.size();
+    image.parameters=parameters; image.parameter_count=3;
+    image.literals=literals.data(); image.literal_count=literals.size();
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected texture-control profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for texture-control profile"; return false;
+    }
+    return true;
+}
+
 bool compile_fragment_machine_profile(FragmentMachineProfile profile,
                                       const std::vector<IrUniformVec4> &uniforms,
                                       const std::vector<IrSampler2D> &samplers,

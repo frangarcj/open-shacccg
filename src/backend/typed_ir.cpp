@@ -338,6 +338,8 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
     std::vector<MachineOperand> values(typed.value_count());
     std::vector<MachineOperand> predicates(typed.predicate_count());
     std::vector<MachineOperand> literals(typed.literals().size());
+    std::vector<uint16_t> sampler_bindings(typed.value_count(),std::numeric_limits<uint16_t>::max());
+    std::vector<uint16_t> compose_indices(typed.value_count(),std::numeric_limits<uint16_t>::max());
     if (literal_bindings) {
         if (literal_bindings->size()!=literals.size()) {
             error="typed literal binding table has the wrong size";
@@ -457,11 +459,39 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             break;
         }
         case TypedOpcode::Sampler:
+            if (instruction.dst.type()!=TypedType::Sampler2D || instruction.aux!=0) {
+                error="typed sampler lowering currently supports only sampler binding 0";
+                return false;
+            }
+            sampler_bindings[instruction.dst.id()]=instruction.aux;
+            value_types[instruction.dst.id()]=TypedType::Sampler2D;
+            value_defined[instruction.dst.id()]=true;
+            break;
         case TypedOpcode::ConstructPosition:
         case TypedOpcode::TransformPosition:
-        case TypedOpcode::Sample2D:
             error = "high-level typed shader operation requires compile_typed_shader";
             return false;
+        case TypedOpcode::Sample2D: {
+            if (instruction.dst.type()!=TypedType::F32x4 || instruction.src0.type()!=TypedType::Sampler2D ||
+                instruction.src1.type()!=TypedType::F32x2 || instruction.src0.id()>=sampler_bindings.size() ||
+                sampler_bindings[instruction.src0.id()]!=0) {
+                error="typed direct sample is outside sampler0/F32x2/F32x4 subset";
+                return false;
+            }
+            const auto coord=lower_value(typed,instruction.src1,values,literals,machine);
+            if (coord.kind()!=MachineOperandKind::PhysicalValue ||
+                coord.physical_register().bank!=usse::RegisterBank::PrimaryAttribute ||
+                coord.physical_register().num!=0) {
+                error="typed direct sample coordinates must come from Location 0";
+                return false;
+            }
+            // Non-dependent texture fetches are performed by the iterator/texture
+            // machinery before USSE. The sampled float4 is exposed in PA0/PA1.
+            values[instruction.dst.id()]=machine.physical(machine_primary(0),MachineType::F32);
+            value_types[instruction.dst.id()]=TypedType::F32x4;
+            value_defined[instruction.dst.id()]=true;
+            break;
+        }
         case TypedOpcode::StateInit: {
             if (instruction.dst.type()==TypedType::F32x4 && instruction.src0.type()==TypedType::F32x4) {
                 const auto src=lower_value(typed,instruction.src0,values,literals,machine);
@@ -522,13 +552,45 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                     error = "direct fragment StoreOutput is outside the validated float4 Location 0 subset";
                     return false;
                 }
-                const auto value = lower_value(typed,instruction.src0,values,literals,machine);
-                if (value.kind()==MachineOperandKind::None ||
-                    !machine.emit_config<MachineOpcode::Pack>(
-                        machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F16),
-                        machine_pack_config(0xF,true,false),
-                        machine.physical(machine_fragment_output(0),MachineType::F16),value,
-                        machine.physical(machine_immediate(0),MachineType::F32))) {
+                auto value = lower_value(typed,instruction.src0,values,literals,machine);
+                if (value.kind()==MachineOperandKind::None && instruction.src0.id()<compose_indices.size() &&
+                    compose_indices[instruction.src0.id()]!=std::numeric_limits<uint16_t>::max()) {
+                    const auto compose=compose_indices[instruction.src0.id()];
+                    if (compose>=typed.float4_composites().size()) {
+                        error="fragment output compose side-table index is invalid";
+                        return false;
+                    }
+                    const auto temp0=machine.physical(usse::RegisterBank::Temp,60,MachineType::F32);
+                    const auto temp1=machine.physical(usse::RegisterBank::Temp,61,MachineType::F32);
+                    for (uint8_t lane=0;lane<4;++lane) {
+                        const auto src=lower_value(typed,typed.float4_composites()[compose][lane],values,literals,machine);
+                        if (src.kind()==MachineOperandKind::None || src.type()!=MachineType::F32) {
+                            error="fragment output compose component did not lower to F32";
+                            return false;
+                        }
+                        uint8_t swizzle=0;
+                        if (src.kind()==MachineOperandKind::PhysicalValue && src.physical_component()!=0xff)
+                            swizzle=src.physical_component();
+                        if (!machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                                machine_move_config(static_cast<uint8_t>(1u<<(lane&1u)),swizzle),
+                                lane<2?temp0:temp1,src)) {
+                            error="failed to materialize fragment float4 output compose";
+                            return false;
+                        }
+                    }
+                    if (!machine.emit_config<MachineOpcode::Pack>(
+                            machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F16),
+                            machine_pack_config(0xF,true,false),
+                            machine.physical(machine_fragment_output(0),MachineType::F16),temp0,temp1)) {
+                        error="failed to pack materialized fragment float4 output";
+                        return false;
+                    }
+                } else if (value.kind()==MachineOperandKind::None ||
+                           !machine.emit_config<MachineOpcode::Pack>(
+                               machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F16),
+                               machine_pack_config(0xF,true,false),
+                               machine.physical(machine_fragment_output(0),MachineType::F16),value,
+                               machine.physical(machine_immediate(0),MachineType::F32))) {
                     error = "failed to lower branch-local fragment output pack";
                     return false;
                 }
@@ -648,9 +710,10 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                                        instruction.dst.type()==TypedType::F32x3 ||
                                        instruction.dst.type()==TypedType::F32x4) &&
                                       instruction.src0.type()==instruction.dst.type();
-            if (!supported_type || unary_op > TypedFloatUnaryOp::Log2 ||
-                (unary_op==TypedFloatUnaryOp::Log2 && instruction.dst.type()!=TypedType::F32)) {
-                error = "typed float unary currently supports scalar/F32-vector negate/absolute/saturate plus scalar Log2";
+            if (!supported_type || unary_op > TypedFloatUnaryOp::Floor ||
+                ((unary_op==TypedFloatUnaryOp::Log2 || unary_op==TypedFloatUnaryOp::Floor) &&
+                 instruction.dst.type()!=TypedType::F32)) {
+                error = "typed float unary currently supports scalar/F32-vector negate/absolute/saturate plus scalar Log2/Floor";
                 return false;
             }
             const auto src = lower_value(typed, instruction.src0, values, literals, machine);
@@ -663,6 +726,18 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 if (src.kind()==MachineOperandKind::None || dst.kind()==MachineOperandKind::None ||
                     !machine.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(usse::ComplexOp::Log2),dst,src)) {
                     error="failed to lower scalar Log2 to validated VCOMP";
+                    return false;
+                }
+            } else if (unary_op==TypedFloatUnaryOp::Floor) {
+                const auto frac=machine.make_value<MachineType::F32>();
+                dst=machine.make_value<MachineType::F32>();
+                if (src.kind()==MachineOperandKind::None || frac.kind()==MachineOperandKind::None ||
+                    dst.kind()==MachineOperandKind::None ||
+                    !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Frac),
+                        machine_vector_config(1),frac,src,zero) ||
+                    !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Add),
+                        machine_vector_config(1,MachineVectorSwizzle::Identity,true),dst,frac,src)) {
+                    error="failed to lower scalar Floor as x-frac(x)";
                     return false;
                 }
             } else if (unary_op==TypedFloatUnaryOp::Saturate) {
@@ -747,6 +822,7 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             }
             value_types[instruction.dst.id()]=TypedType::F32x4;
             value_defined[instruction.dst.id()]=true;
+            compose_indices[instruction.dst.id()]=instruction.aux;
             break;
         }
         case TypedOpcode::FloatSelect: {
@@ -763,6 +839,26 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 error="typed scalar float select operands are unresolved";
                 return false;
             }
+            const auto true_value=lower_value(typed,select.true_value,values,literals,machine);
+            const auto false_value=lower_value(typed,select.false_value,values,literals,machine);
+            const auto dst=machine.make_value<MachineType::F32>();
+            auto predicate=predicates[select.predicate.id()];
+            if (select.predicate.inverted())
+                predicate=MachineOperand::virtual_predicate(predicate.id(),!predicate.inverted());
+            auto swizzle=[](MachineOperand operand) -> uint8_t {
+                return operand.kind()==MachineOperandKind::PhysicalValue && operand.physical_component()!=0xff ?
+                    operand.physical_component() : 0;
+            };
+            if (true_value.kind()==MachineOperandKind::None || false_value.kind()==MachineOperandKind::None ||
+                dst.kind()==MachineOperandKind::None || predicate.kind()!=MachineOperandKind::VirtualPredicate ||
+                !machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                    machine_move_config(1,swizzle(false_value)),dst,false_value) ||
+                !machine.emit_config<MachineOpcode::PredicatedMoveUpdate>(static_cast<uint8_t>(usse::DataType::F32),
+                    machine_move_config(1,swizzle(true_value)),dst,true_value,predicate)) {
+                error="failed to lower typed scalar float select to predicated Machine moves";
+                return false;
+            }
+            values[instruction.dst.id()]=dst;
             value_types[instruction.dst.id()]=TypedType::F32;
             value_defined[instruction.dst.id()]=true;
             break;
@@ -876,6 +972,8 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 if (value.kind()!=TypedValueKind::Literal || value.type()!=TypedType::F32)
                     return lower_value(typed,value,values,literals,machine);
                 if (value.id()>=typed.literals().size()) return {};
+                if (value.id()<literals.size() && literals[value.id()].kind()!=MachineOperandKind::None)
+                    return literals[value.id()];
                 switch (typed.literals()[value.id()]) {
                 case 0x3f000000u: return machine.physical(machine_special(12),MachineType::F32); // 0.5
                 case 0x3f800000u: return machine.physical(machine_special(2),MachineType::F32);  // 1.0
@@ -1282,21 +1380,28 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         const bool loop_control=std::any_of(instructions.begin(),instructions.end(),[](const TypedInstruction &instruction) {
             return instruction.opcode()==TypedOpcode::IntIncrement;
         });
-        if (output_stores.empty() || !samplers.empty() || inputs.size()<2 || inputs.size()>3) {
-            out.error = "typed fragment control path requires 2-3 float4 inputs and output stores";
+        const bool texture_control=!loop_control && inputs.size()==1 && inputs[0]->index==0 &&
+            inputs[0]->type==TypedType::F32x2 && samplers.size()==1 && samplers[0]->index==0 &&
+            fragment_float_uniforms.size()==2 && uniforms.size()==2 &&
+            fragment_float_uniforms[0].resource_index==0 && fragment_float_uniforms[1].resource_index==1;
+        if (output_stores.empty() ||
+            (!texture_control && (!samplers.empty() || inputs.size()<2 || inputs.size()>3))) {
+            out.error = "typed fragment control path requires validated float4 inputs or the direct-texture control shape";
             return false;
         }
-        if ((!loop_control && !uniforms.empty()) ||
+        if ((!loop_control && !texture_control && !uniforms.empty()) ||
             (loop_control && (inputs.size()!=3 || !fragment_uniforms.empty() || fragment_s32_uniforms.size()!=1 || uniforms.size()!=1))) {
             out.error=loop_control ?
                 "typed loop path requires three float4 inputs and one S32 uniform" :
                 "typed non-loop control path does not accept uniforms";
             return false;
         }
-        for (size_t i=0;i<inputs.size();++i) {
-            if (inputs[i]->type!=TypedType::F32x4 || inputs[i]->index!=i) {
-                out.error = "typed fragment control inputs must be contiguous float4 locations";
-                return false;
+        if (!texture_control) {
+            for (size_t i=0;i<inputs.size();++i) {
+                if (inputs[i]->type!=TypedType::F32x4 || inputs[i]->index!=i) {
+                    out.error = "typed fragment control inputs must be contiguous float4 locations";
+                    return false;
+                }
             }
         }
         const uint16_t output_resource=output_stores[0]->aux;
@@ -1317,13 +1422,36 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             return false;
         }
         std::string machine_error;
+        std::vector<MachineOperand> literal_bindings;
+        std::vector<IrLiteralF32> literal_meta;
+        if (texture_control) {
+            literal_bindings.resize(program.literals().size());
+            std::unordered_map<uint32_t,uint32_t> literal_index_by_bits;
+            for (uint32_t id=0;id<program.literals().size();++id) {
+                const uint32_t bits=program.literals()[id];
+                if (bits==0) {
+                    literal_bindings[id]=primary.physical(machine_immediate(0),MachineType::F32);
+                    continue;
+                }
+                auto [it,inserted]=literal_index_by_bits.emplace(bits,static_cast<uint32_t>(literal_meta.size()));
+                if (inserted) literal_meta.push_back({it->second,bits});
+                const uint32_t word=2u+it->second;
+                if (word>=254) { out.error="texture-control literal table exceeds compact SA subset"; return false; }
+                literal_bindings[id]=primary.physical(machine_secondary(static_cast<uint8_t>(word/2u)),
+                                                       MachineType::F32,static_cast<uint8_t>(word&1u));
+            }
+        }
         if (!lower_typed_program_impl(program,primary,machine_error,false,nullptr,nullptr,nullptr,
-                                      true,output_resource)) {
+                                      true,output_resource,
+                                      texture_control?&literal_bindings:nullptr)) {
             out.error=machine_error;
             return false;
         }
         if (loop_control)
             return compile_fragment_loop_machine(primary,fragment_s32_uniforms[0],0,0,out);
+        if (texture_control)
+            return compile_fragment_texture_control_machine(primary,fragment_float_uniforms,literal_meta,
+                                                            fragment_samplers[0],0,0,out);
         return compile_fragment_control_machine(primary,static_cast<uint8_t>(inputs.size()),0,0,out);
     }
 

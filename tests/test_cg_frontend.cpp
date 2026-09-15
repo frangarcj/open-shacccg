@@ -430,6 +430,52 @@ bool compile_geometrizer_cmp_fragment(const std::string &source) {
     return ok;
 }
 
+bool compile_geometrizer_tm2_fast_fragment(const std::string &source) {
+    VscCompileRequest request{};
+    request.source_name="fp-geometrizer-tm2-fast.cg";
+    request.source=source.data(); request.source_size=source.size();
+    request.entrypoint="main"; request.stage=VSC_STAGE_FRAGMENT;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+    if (ok) {
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        ok=view.valid() && view.sdk_version()==0x0165 && view.flags()==0x0008080b &&
+            view.primary_register_count()==4 && view.secondary_register_count()==7 &&
+            view.parameter_count()==3 && view.literal_count()==5 && view.container_count()==2 &&
+            view.primary_instruction_count()>=27 && view.compiler_version_raw()==0x0002df30;
+        const char *names[]={"u_opaque","u_cat_match","u_page"};
+        const uint8_t categories[]={1,1,2};
+        const uint32_t resources[]={0,1,0};
+        for (uint32_t i=0;ok && i<3;++i) {
+            vsc::gxp::ParameterView parameter{};
+            ok=view.parameter(i,parameter) && parameter.name==names[i] &&
+                parameter.category==categories[i] && parameter.resource_index==resources[i];
+        }
+        bool vcomp=false,v32=false,vtst=false,vmov=false,vpck=false,branch=false,kill=false;
+        const auto code=view.primary_program();
+        for (size_t off=0;ok && off+sizeof(uint64_t)<=code.size;off+=sizeof(uint64_t)) {
+            uint64_t word=0;
+            std::memcpy(&word,code.data+off,sizeof(word));
+            const auto family=vsc::usse::classify_major(word);
+            const auto control=vsc::usse::classify_control(word);
+            vcomp |= family==vsc::usse::MajorClass::Vcomp;
+            v32 |= family==vsc::usse::MajorClass::V32Nmad;
+            vtst |= family==vsc::usse::MajorClass::Vtst;
+            vmov |= family==vsc::usse::MajorClass::Vmov;
+            vpck |= family==vsc::usse::MajorClass::Vpck;
+            branch |= control==vsc::usse::ControlClass::Branch;
+            kill |= control==vsc::usse::ControlClass::Kill;
+        }
+        ok=ok && vcomp && v32 && vtst && vmov && vpck && branch && kill;
+    }
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: Geometrizer TM2_FAST_FS diagnostic=%s\n",
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
+
 bool compile_oracle_s32_profile(const std::string &source, const char *name,
                                 uint32_t expected_size, uint32_t expected_params,
                                 const uint64_t *secondary_words, size_t secondary_count) {
@@ -657,6 +703,21 @@ int test_cg_frontend() {
         const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-geometrizer-cmp.cg");
         if (source.empty() || !compile_geometrizer_cmp_fragment(source))
             failures += fail("Geometrizer CMP_FS integration profile did not reproduce oracle texture/alpha-select stream");
+    }
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-geometrizer-tm2-fast.cg");
+        if (source.empty() || !compile_geometrizer_tm2_fast_fragment(source))
+            failures += fail("Geometrizer TM2_FAST_FS integration profile did not compile through texture-control Machine IR");
+    }
+    {
+        const char *probes[]={"fp-floor-float","fp-mod-float","fp-discard-and"};
+        for (const char *probe:probes) {
+            const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/"+probe+".cg");
+            if (source.empty() || !compile_fragment_gxp(source,probe)) {
+                std::fprintf(stderr,"test_cg_frontend: scalar/control primitive probe failed: %s\n",probe);
+                ++failures;
+            }
+        }
     }
     {
         const char *alu_probes[]={

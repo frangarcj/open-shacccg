@@ -347,7 +347,7 @@ MachineType pack_format_machine_type(usse::PackFormat format) {
 
 bool uses_instruction_config(MachineOpcode opcode) {
     return opcode == MachineOpcode::Move || opcode == MachineOpcode::MoveUpdate || opcode == MachineOpcode::Pack ||
-        opcode == MachineOpcode::PredicatedMove ||
+        opcode == MachineOpcode::PredicatedMove || opcode == MachineOpcode::PredicatedMoveUpdate ||
         opcode == MachineOpcode::PackSwizzle || opcode == MachineOpcode::PackValue || opcode == MachineOpcode::Vector ||
         opcode == MachineOpcode::ComplexF32 || opcode == MachineOpcode::Vmad;
 }
@@ -817,17 +817,19 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             if (!builder.instruction(move)) { out.error = "failed to encode machine VMOV"; return false; }
             break;
         }
-        case MachineOpcode::PredicatedMove: {
+        case MachineOpcode::PredicatedMove:
+        case MachineOpcode::PredicatedMoveUpdate: {
             const auto data_type=static_cast<usse::DataType>(instruction.subop());
             const MachineType expected=data_type_machine_type(data_type);
             const uint16_t config=instruction.config();
             usse::VmovSemantic move{};
             if (expected==MachineType::Invalid || (config&~0x1fffu) ||
-                instruction.dst.kind()!=MachineOperandKind::PhysicalValue ||
+                (instruction.opcode()==MachineOpcode::PredicatedMove && instruction.dst.kind()!=MachineOperandKind::PhysicalValue) ||
+                (instruction.opcode()==MachineOpcode::PredicatedMoveUpdate && instruction.dst.kind()!=MachineOperandKind::VirtualValue) ||
                 !resolve_register_value(instruction.dst,expected,out.value_registers,&move.dst) ||
                 !resolve_register_value(instruction.src0,expected,out.value_registers,&move.src) ||
                 !resolve_predicate(instruction,instruction.src1,out.predicate_registers,&move.predicate)) {
-                out.error="predicated move is outside the validated physical F32/F16 subset";
+                out.error="predicated move is outside the validated F32/F16 subset";
                 return false;
             }
             move.data_type=data_type;

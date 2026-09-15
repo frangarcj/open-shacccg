@@ -75,6 +75,16 @@ def main():
          "uniform int2 x; uniform int2 y; int2 main() : COLOR0 { return x | y; }", "integer", type="int2", op="or")
     emit(root, manifest, "fp-s32-to-f32", "sce_fp_psp2",
          "uniform int x; float main() : COLOR0 { return (float)x; }", "integer", type="int", op="s32-to-f32")
+    emit(root, manifest, "fp-floor-float", "sce_fp_psp2",
+         "float main(float a:TEXCOORD0):COLOR0 { return floor(a); }", "primitives", type="float", op="floor")
+    emit(root, manifest, "fp-mod-float", "sce_fp_psp2",
+         "float main(float a:TEXCOORD0,float b:TEXCOORD1):COLOR0 { return fmod(a,b); }", "primitives", type="float", op="fmod")
+    emit(root, manifest, "fp-discard-and", "sce_fp_psp2", """
+float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1,float4 c:TEXCOORD2):COLOR0 {
+    if (a.x>b.x && b.x>c.x) discard;
+    return a;
+}
+""", "primitives", op="logical-and-discard")
     emit(root, manifest, "fp-if", "sce_fp_psp2",
          "float4 main(float4 a:TEXCOORD0,float4 b:TEXCOORD1):COLOR0 { if (a.x > b.x) return a; return b; }", "control")
     emit(root, manifest, "fp-ternary", "sce_fp_psp2",
@@ -174,6 +184,21 @@ float4 main(float2 v_uv:TEXCOORD0):COLOR0 {
     return float4(c.rgb,u_force_opaque>0.5 ? 1.0 : c.a);
 }
 """, "integration", project="geometrizer", shader="CMP_FS")
+    emit(root, manifest, "fp-geometrizer-tm2-fast", "sce_fp_psp2", """
+uniform sampler2D u_page;
+uniform float u_opaque;
+uniform float u_cat_match;
+float4 main(float2 v_uv:TEXCOORD0):COLOR0 {
+    float4 c=tex2D(u_page,v_uv);
+    float meta=floor(c.a*255.0+0.5);
+    if (u_cat_match>=0.0) {
+        float cat=meta>=170.0 ? 1.0 : 0.0;
+        if (cat!=u_cat_match) discard;
+    }
+    if (u_opaque<0.5 && fmod(meta,170.0)<42.0) discard;
+    return float4(c.rgb,1.0);
+}
+""", "integration", project="geometrizer", shader="TM2_FAST_FS")
 
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
     print(f"generated {len(manifest)} shaders in {root}")

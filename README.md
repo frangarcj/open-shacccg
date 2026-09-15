@@ -65,6 +65,10 @@ Implemented now:
 - Geometrizer `CMP_FS` is oracle-exact outside GUIDs: the texture/alpha-select shape lowers
   through F32 VTST (`uniform > 0.5`), semantic predicated VMOV, VPCK/VBW and the observed
   one-word secondary setup; no opaque shader-specific qwords are injected
+- Geometrizer `TM2_FAST_FS` now compiles end to end through the generic texture-control path:
+  direct sampler0 fetch, scalar `floor`/`fmod`, float select, short-circuit boolean control,
+  two discard paths and RGB+1 output composition. Sony uses 27 primary instructions; Open's
+  correctness baseline currently uses 31, with the reduction work tracked as optimization debt
 - oracle-exact fragment profiles for `wzyx` and the constant `float4(1,0,0,1)`,
   including swizzled VPCK, literal-table placement and the primary/interface overlap convention
 - oracle-exact standalone vertex profiles for float4 position passthrough,

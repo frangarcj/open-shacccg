@@ -469,9 +469,18 @@ secondary stream. Code-size/scheduling differences are tracked separately in
 uniform-vs-special-constant VTST word `0x48898a81d003800c`, a semantic `!P0`
 predicated VMOV, and the sampler/control secondary-prefix layout. Open reconstructs
 all 7 primary + 1 secondary words from semantic encoders and emits the same 320-byte
-GXP layout as Sony. The integration oracle feature is therefore 3/3 compilable,
-with CMP byte-identical outside GUIDs and the two vertex shaders intentionally
-remaining optimization baselines.
+GXP layout as Sony.
+
+`TM2_FAST_FS` is the fourth integration target. It adds a direct texture sample,
+`floor`, `fmod`, a scalar float select, short-circuit boolean control and two discard
+paths. `floor` lowers algebraically to `x-frac(x)`, `fmod` to
+`x-floor(x/y)*y`, the scalar select uses initialize + predicated-update VMOV, and
+`OpLogicalAnd`/kill blocks lower through the existing compact Typed label table and
+BR/KILL Machine path. The direct sample is represented as the PA0/PA1 value supplied
+by the iterator/texture machinery, so it adds no fake USSE sample instruction.
+Sony emits 27 primary instructions; the generic Open correctness baseline emits 31.
+The integration oracle feature is now 4/4 compilable, with CMP byte-identical outside
+GUIDs and the remaining three shaders tracked as optimization baselines.
 
 Backend fallback diagnostics now retain the SPIRV-Cross Typed-path failure when
 the dependency-free parser also rejects a shader, so future oracle sweeps expose
