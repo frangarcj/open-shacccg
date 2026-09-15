@@ -1341,6 +1341,64 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             }
         }
 
+        if (vertex_store_count==6 && inputs.size()==5 && vertex_matrices.size()==4 && vertex_uniforms.size()==1) {
+            bool ok=true,position_seen=false,color_seen=false,point_seen=false;
+            uint32_t position_attr=0,position_mat=0,color_attr=0;
+            std::array<bool,3> tex_seen{};
+            std::array<uint32_t,3> tex_attr{},tex_mat{};
+            for (const auto &instruction:instructions) {
+                if (instruction.opcode()!=TypedOpcode::StoreOutput) continue;
+                if (instruction.aux>=resources.size()) { ok=false; break; }
+                const auto &output=resources[instruction.aux];
+                TypedSemantic semantic=output.semantic;
+                if (semantic==TypedSemantic::None) semantic=infer_semantic(shader.resource_name(output));
+                if (semantic==TypedSemantic::Position) {
+                    const auto *transform=definition(instruction.src0);
+                    const auto attr=transform && transform->opcode()==TypedOpcode::TransformPosition ?
+                        attribute_for_value.find(transform->src0.id()) : attribute_for_value.end();
+                    const auto matrix=transform && transform->opcode()==TypedOpcode::TransformPosition ?
+                        matrix_for_resource.find(transform->aux) : matrix_for_resource.end();
+                    if (position_seen || !transform || attr==attribute_for_value.end() || matrix==matrix_for_resource.end()) {
+                        ok=false; break;
+                    }
+                    position_seen=true; position_attr=attr->second; position_mat=matrix->second;
+                } else if (semantic==TypedSemantic::Color) {
+                    const auto attr=attribute_for_value.find(instruction.src0.id());
+                    if (color_seen || attr==attribute_for_value.end()) { ok=false; break; }
+                    color_seen=true; color_attr=attr->second;
+                } else if (semantic==TypedSemantic::PointSize) {
+                    const auto *uniform=resource_for_value(instruction.src0);
+                    if (point_seen || !uniform || uniform!=vertex_uniforms[0] || uniform->type!=TypedType::F32) {
+                        ok=false; break;
+                    }
+                    point_seen=true;
+                } else if (semantic==TypedSemantic::TexCoord && output.semantic_index<3) {
+                    const uint8_t index=output.semantic_index;
+                    const auto *swizzle=definition(instruction.src0);
+                    const auto *transform=swizzle && swizzle->opcode()==TypedOpcode::FloatSwizzle &&
+                        swizzle->subop()==static_cast<uint8_t>(TypedFloatSwizzleOp::XY) ? definition(swizzle->src0) : nullptr;
+                    const auto matrix=transform && transform->opcode()==TypedOpcode::TransformPosition ?
+                        matrix_for_resource.find(transform->aux) : matrix_for_resource.end();
+                    uint32_t attr=0;
+                    if (tex_seen[index] || !transform || matrix==matrix_for_resource.end() ||
+                        !profile_xy01_attribute(transform->src0,attr)) { ok=false; break; }
+                    tex_seen[index]=true; tex_attr[index]=attr; tex_mat[index]=matrix->second;
+                } else { ok=false; break; }
+            }
+            const auto *point=point_seen ? vertex_uniforms[0] : nullptr;
+            if (ok && position_seen && color_seen && point_seen && tex_seen[0] && tex_seen[1] && tex_seen[2] &&
+                position_attr==0 && tex_attr[0]==1 && tex_attr[1]==2 && tex_attr[2]==3 && color_attr==4 &&
+                position_mat==0 && tex_mat[0]==1 && tex_mat[1]==2 && tex_mat[2]==3 &&
+                point && point->index==64 && vertex_matrices[0].resource_index==0 &&
+                vertex_matrices[1].resource_index==16 && vertex_matrices[2].resource_index==32 &&
+                vertex_matrices[3].resource_index==48) {
+                return compile_vertex_uniform_matrix_three_texcoords_color_point_size(
+                    vertex_attributes[0],vertex_attributes[1],vertex_attributes[2],vertex_attributes[3],vertex_attributes[4],
+                    vertex_matrices[0],vertex_matrices[1],vertex_matrices[2],vertex_matrices[3],
+                    {shader.resource_name(*point),1,point->index},0,0,out);
+            }
+        }
+
         bool position_written = false;
         bool passthrough_position = false;
         bool constructed_position = false;

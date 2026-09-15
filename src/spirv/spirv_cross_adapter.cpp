@@ -68,7 +68,7 @@ uint32_t f32_mat4_array_count(const spirv_cross::SPIRType &type) {
         type.vecsize != 4 || type.columns != 4 || type.array.size() != 1)
         return 0;
     const uint32_t count=type.array[0];
-    return count>=1 && count<=2 ? count : 0;
+    return count>=1 && count<=3 ? count : 0;
 }
 
 backend::TypedSemantic semantic_from_text(const std::string &text, uint8_t &index) {
@@ -339,8 +339,8 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     members[member] = {resource_id, {}, {resource_id}, true, false, true};
                     continue;
                 }
-                // vitaGL's fixed-function generator emits Ktexmat as mat4[1]
-                // or mat4[2]. Sony lays consecutive elements 16 F32 words apart;
+                // vitaGL's fixed-function generator emits Ktexmat as mat4[1..3].
+                // Sony lays consecutive elements 16 F32 words apart;
                 // represent each element as a Matrix4 resource while retaining
                 // the aggregate member for constant-index access chains.
                 const uint32_t matrix_count=f32_mat4_array_count(member_type);

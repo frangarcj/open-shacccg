@@ -1007,6 +1007,136 @@ bool compile_vertex_uniform_matrix_two_texcoords_color_point_size(
     return true;
 }
 
+bool compile_vertex_uniform_matrix_three_texcoords_color_point_size(
+    const IrAttribute &position, const IrAttribute &texcoord0, const IrAttribute &texcoord1,
+    const IrAttribute &texcoord2, const IrAttribute &color, const IrMatrix4Uniform &position_matrix,
+    const IrMatrix4Uniform &texcoord_matrix0, const IrMatrix4Uniform &texcoord_matrix1,
+    const IrMatrix4Uniform &texcoord_matrix2, const IrUniformFloat &point_size,
+    uint32_t binary_guid, uint32_t source_guid, IrCompileResult &out) {
+    out={};
+    if (!valid_attribute(position) || !valid_attribute(texcoord0) || !valid_attribute(texcoord1) ||
+        !valid_attribute(texcoord2) || !valid_attribute(color) || position.resource_index!=0 ||
+        texcoord0.resource_index!=4 || texcoord1.resource_index!=8 || texcoord2.resource_index!=12 ||
+        color.resource_index!=16 || position.components!=4 || texcoord0.components!=2 ||
+        texcoord1.components!=2 || texcoord2.components!=2 || color.components!=4 ||
+        position_matrix.name.empty() || position_matrix.resource_index!=0 ||
+        texcoord_matrix0.name.empty() || texcoord_matrix0.name!=texcoord_matrix1.name ||
+        texcoord_matrix0.name!=texcoord_matrix2.name || texcoord_matrix0.resource_index!=16 ||
+        texcoord_matrix1.resource_index!=32 || texcoord_matrix2.resource_index!=48 ||
+        point_size.name.empty() || point_size.components!=1 || point_size.resource_index!=64) {
+        out.error="three-texture matrix profile requires position/uv0/uv1/uv2/color, mat4@0, mat4[3]@16 and point size@64";
+        return false;
+    }
+
+    MachineProgram primary,secondary;
+    const auto gpi0=primary.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
+    const auto zero=primary.literal_u32(0);
+    if (gpi0.kind()==MachineOperandKind::None || zero.kind()==MachineOperandKind::None ||
+        !primary.emit<MachineOpcode::Phase>() ||
+        !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+            machine_move_config(3,4,1,true,true),primary.physical(machine_vertex_output(2),MachineType::F32),
+            primary.physical(machine_primary(8),MachineType::F32)) ||
+        !primary.emit_config<MachineOpcode::Pack>(machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F32),
+            machine_pack_config(0xF,true,false),gpi0,
+            primary.physical(machine_primary(0),MachineType::F32),
+            primary.physical(machine_primary(1),MachineType::F32)) ||
+        !primary.emit_config<MachineOpcode::VmadUniformMat4>(0,machine_vmad_uniform_mat4_config(true),
+            primary.physical(machine_vertex_output(0),MachineType::F32),gpi0) ||
+        !primary.emit_config<MachineOpcode::TransformTexcoordMat4XY>(0,machine_texcoord_mat4_xy_config(true),
+            primary.physical(machine_vertex_output(4),MachineType::F32),
+            primary.physical(machine_primary(2),MachineType::F32),
+            primary.physical(machine_secondary(8),MachineType::F32)) ||
+        !primary.emit_config<MachineOpcode::TransformTexcoordMat4XY>(0,machine_texcoord_mat4_xy_config(true),
+            primary.physical(machine_vertex_output(5),MachineType::F32),
+            primary.physical(machine_primary(4),MachineType::F32),
+            primary.physical(machine_secondary(16),MachineType::F32)) ||
+        !primary.emit_config<MachineOpcode::TransformTexcoordMat4XY>(0,machine_texcoord_mat4_xy_config(false),
+            primary.physical(machine_vertex_output(6),MachineType::F32),
+            primary.physical(machine_primary(6),MachineType::F32),
+            primary.physical(machine_secondary(24),MachineType::F32)) ||
+        !primary.emit<MachineOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),
+            primary.physical(machine_vertex_output(14),MachineType::U32),
+            primary.physical(machine_secondary(24),MachineType::U32),zero) ||
+        !primary.emit<MachineOpcode::Emit>() ||
+        !secondary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Max),
+            machine_vector_config(1),secondary.physical(machine_primary(12),MachineType::F32),
+            secondary.physical(machine_primary(32),MachineType::F32),
+            secondary.physical(machine_primary(33),MachineType::F32,1)) ||
+        !secondary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Min),
+            machine_vector_config(1),secondary.physical(machine_primary(12),MachineType::F32),
+            secondary.physical(machine_primary(12),MachineType::F32),
+            secondary.physical(machine_primary(33),MachineType::F32,0)) ||
+        !secondary.emit_config<MachineOpcode::Nop>(0,machine_nop_config(true,true))) {
+        out.error="failed to build three-texture matrix Machine profile";
+        return false;
+    }
+
+    MachineCompileResult primary_compiled,secondary_compiled;
+    if (!compile_words(primary,primary_compiled,out,"three-texture matrix primary lowering failed") ||
+        !compile_words(secondary,secondary_compiled,out,"three-texture matrix secondary lowering failed")) return false;
+    const uint64_t expected_primary[]={
+        0xfa44070000000000ULL,0x38801d2183080200ULL,0x40800dbcaf998002ULL,
+        0x18903881c011a200ULL,0x40800dbcff998812ULL,0x189188818112c202ULL,
+        0x40800dbcff998a16ULL,0x189189018112c202ULL,0x40800dbcff999022ULL,
+        0x189188818152c204ULL,0x40800dbcff999226ULL,0x189189018152c204ULL,
+        0x40800dbcff999832ULL,0x189188818192c206ULL,0x40800dbcff999a36ULL,
+        0x189181018192c206ULL,0x50810009e1c00c00ULL,0xfb275000a0200000ULL,
+    };
+    const uint64_t expected_secondary[]={
+        0x08a41086a3046821ULL,0x08a40086a3045321ULL,0xf804014000000000ULL,
+    };
+    if (primary_compiled.words.size()!=std::size(expected_primary) ||
+        !std::equal(primary_compiled.words.begin(),primary_compiled.words.end(),std::begin(expected_primary)) ||
+        secondary_compiled.words.size()!=std::size(expected_secondary) ||
+        !std::equal(secondary_compiled.words.begin(),secondary_compiled.words.end(),std::begin(expected_secondary))) {
+        out.error="three-texture matrix Machine stream no longer matches Sony oracle words";
+        return false;
+    }
+
+    const uint8_t interface_block[32]={
+        0x3f,0x33,0x0f,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0x19,0,0x0f,0x49,0,0,0,0,0,0,0,0,0,0,0,
+    };
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,66},{19,0,66,2}};
+    const gxp::LiteralDesc literals[]={{0,0x43ff8000u},{1,0x3f800000u}};
+    const gxp::ParameterDesc parameters[]={
+        {position.name.c_str(),0,0,4,0,0,0,1,0},
+        {texcoord0.name.c_str(),0,0,4,0,0,0,1,4},
+        {texcoord1.name.c_str(),0,0,4,0,0,0,1,8},
+        {texcoord2.name.c_str(),0,0,4,0,0,0,1,12},
+        {color.name.c_str(),0,0,4,0,0,0,1,16},
+        {position_matrix.name.c_str(),1,0,4,14,0,0,4,0},
+        {texcoord_matrix0.name.c_str(),1,0,4,14,0,0,12,16},
+        {point_size.name.c_str(),1,0,1,14,0,0,1,64},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid; image.source_guid=source_guid;
+    image.program_flags=0x00090000;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=20;
+    image.secondary_register_count=68;
+    image.primary_phase_count=1;
+    image.data_buffer_count=2;
+    image.default_uniform_buffer_count=66;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
+    image.secondary_instructions=secondary_compiled.words.data(); image.secondary_instruction_count=secondary_compiled.words.size();
+    image.primary_instructions=primary_compiled.words.data(); image.primary_instruction_count=primary_compiled.words.size();
+    image.containers=containers; image.container_count=2;
+    image.parameters=parameters; image.parameter_count=8;
+    image.literals=literals; image.literal_count=2;
+    image.vertex_primary_padding_word=true;
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected three-texture matrix profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for three-texture matrix profile"; return false;
+    }
+    return true;
+}
+
 bool compile_vertex_indexed_clear(const IrUniformVec4 &position,
                                   const IrUniformFloat &clear_depth,
                                   uint32_t binary_guid, uint32_t source_guid,
