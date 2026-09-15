@@ -90,6 +90,85 @@ bool compile_vertex_construct_position(const IrAttribute &position,
     return true;
 }
 
+bool compile_vertex_construct_position_varying(const IrAttribute &position,
+                                               const IrAttribute &varying,
+                                               IrVaryingSemantic semantic,
+                                               uint32_t binary_guid, uint32_t source_guid,
+                                               IrCompileResult &out) {
+    out={};
+    if (!valid_attribute(position) || !valid_attribute(varying) ||
+        position.resource_index!=0 || varying.resource_index!=4 ||
+        position.components!=2 || varying.components!=2 || semantic!=IrVaryingSemantic::TexCoord) {
+        out.error="constructed-position varying profile requires float2 position + float2 TEXCOORD";
+        return false;
+    }
+
+    MachineProgram code;
+    if (!code.emit<MachineOpcode::Phase>() ||
+        !code.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+            machine_move_config(3,4),code.physical(machine_vertex_output(2),MachineType::F32),
+            code.physical(machine_primary(2),MachineType::F32)) ||
+        !code.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Mul),
+            machine_vector_config(3,MachineVectorSwizzle::Source2YYYY),
+            code.physical(machine_vertex_output(0),MachineType::F32),
+            code.physical(machine_primary(0),MachineType::F32),
+            code.physical(machine_special(1),MachineType::F32)) ||
+        !code.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Mul),
+            machine_vector_config(3,MachineVectorSwizzle::PositionZW01),
+            code.physical(machine_vertex_output(1),MachineType::F32),
+            code.physical(machine_immediate(0),MachineType::F32),
+            code.physical(machine_special(1),MachineType::F32)) ||
+        !code.emit<MachineOpcode::Emit>()) {
+        out.error="failed to build constructed-position varying Machine profile";
+        return false;
+    }
+    MachineCompileResult compiled;
+    if (!compile_words(code,compiled,out,"constructed-position varying Machine lowering failed")) return false;
+    const uint64_t expected[]={
+        0xfa44070000000000ULL,0x3880052183080080ULL,0x08a5118590040001ULL,
+        0x0883118190560001ULL,0xfb275000a0200000ULL,
+    };
+    if (compiled.words.size()!=std::size(expected) ||
+        !std::equal(compiled.words.begin(),compiled.words.end(),std::begin(expected))) {
+        out.error="constructed-position varying Machine stream no longer matches public vitaGL words";
+        return false;
+    }
+
+    const uint8_t interface_block[32]={
+        0x33,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0x10,0,0x06,0x01,0,0,0,0,0,0,0,0,0,0,0,
+    };
+    const gxp::ParameterDesc parameters[]={
+        {position.name.c_str(),0,0,4,0,0,0,1,0},
+        {varying.name.c_str(),0,0,4,0,0,0,1,4},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.major_version=1;
+    image.minor_version=5;
+    image.sdk_version=0x0350;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00190004;
+    image.primary_register_count=8;
+    image.primary_phase_count=1;
+    image.compiler_version_raw=0x00033dc0;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=compiled.words.data();
+    image.primary_instruction_count=compiled.words.size();
+    image.parameters=parameters;
+    image.parameter_count=2;
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected constructed-position varying profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for constructed-position varying profile"; return false;
+    }
+    return true;
+}
+
 bool compile_vertex_matrix_path(const IrAttribute &position, const IrAttribute &varying,
                                 const IrMatrix4Uniform &matrix, IrVaryingSemantic semantic,
                                 uint32_t binary_guid, uint32_t source_guid,

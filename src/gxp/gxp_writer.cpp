@@ -9,6 +9,7 @@ namespace {
 constexpr uint32_t kMagic = 0x00505847u;
 constexpr uint32_t kFragmentFlag = 1u;
 constexpr size_t kFixedPrefixSize = 0x98;
+constexpr size_t kV15FixedPrefixSize = 0x9c;
 constexpr size_t kInterfaceSize = 32;
 constexpr size_t kContainerSize = 8;
 constexpr size_t kLiteralSize = 8;
@@ -153,7 +154,11 @@ struct Layout {
 
 bool compute_layout(const ProgramImage &image, Layout &l) {
     if (!valid_desc(image)) return false;
-    size_t cursor = kFixedPrefixSize;
+    // Public vitaGL v1.5 GXPs reserve one additional zero word between the
+    // common header fields and the interface block. v1.4 images start the
+    // interface at 0x98; v1.5 starts it at 0x9c.
+    size_t cursor = image.major_version==1 && image.minor_version>=5 ?
+        kV15FixedPrefixSize : kFixedPrefixSize;
     l.interface_off = cursor;
     if (!add_size(cursor, kInterfaceSize)) return false;
     cursor = align_up(cursor, 8); if (!cursor) return false;

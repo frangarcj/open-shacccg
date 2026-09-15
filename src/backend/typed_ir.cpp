@@ -1197,6 +1197,34 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         }
         if (!position_written) { out.error = "typed vertex shader does not write position"; return false; }
         if (generic_position) {
+            if (!passthrough_position && !constructed_position && !transformed_position &&
+                vertex_matrices.empty() && vertex_uniforms.empty() && varying_written &&
+                selected_varying_semantic==IrVaryingSemantic::TexCoord && vertex_attributes.size()==2 &&
+                varying_attribute<vertex_attributes.size() && position_compose<program.float4_composites().size()) {
+                const auto &components=program.float4_composites()[position_compose];
+                auto extracted_attribute=[&](TypedValue value,uint8_t lane,uint32_t &attribute) -> bool {
+                    const auto *extract=definition(value);
+                    if (!extract || extract->opcode()!=TypedOpcode::FloatExtract || extract->subop()!=lane)
+                        return false;
+                    const auto found=attribute_for_value.find(extract->src0.id());
+                    if (found==attribute_for_value.end()) return false;
+                    attribute=found->second;
+                    return true;
+                };
+                auto literal_is=[&](TypedValue value,uint32_t bits) -> bool {
+                    return value.kind()==TypedValueKind::Literal && value.type()==TypedType::F32 &&
+                        value.id()<program.literals().size() && program.literals()[value.id()]==bits;
+                };
+                uint32_t position0=0,position1=0;
+                if (extracted_attribute(components[0],0,position0) &&
+                    extracted_attribute(components[1],1,position1) && position0==position1 &&
+                    position0<vertex_attributes.size() && position0!=varying_attribute &&
+                    literal_is(components[2],0u) && literal_is(components[3],0x3f800000u)) {
+                    return compile_vertex_construct_position_varying(vertex_attributes[position0],
+                                                                     vertex_attributes[varying_attribute],
+                                                                     selected_varying_semantic,0,0,out);
+                }
+            }
             if (passthrough_position || constructed_position || transformed_position || !vertex_matrices.empty() ||
                 !varying_written || varying_attribute>=vertex_attributes.size() ||
                 selected_varying_semantic!=IrVaryingSemantic::Color || vertex_attributes.size()<2 ||
@@ -1399,9 +1427,22 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                                                       selected_varying_semantic,0,0,out);
         }
         if (constructed_position) {
-            if (transformed_position || varying_written || vertex_attributes.size()!=1 || !vertex_matrices.empty() ||
-                position_attribute>=vertex_attributes.size()) {
+            if (transformed_position || !vertex_matrices.empty() || position_attribute>=vertex_attributes.size()) {
                 out.error = "typed constructed-position vertex shape is unsupported";
+                return false;
+            }
+            if (varying_written) {
+                if (vertex_attributes.size()!=2 || varying_attribute>=vertex_attributes.size() ||
+                    varying_attribute==position_attribute) {
+                    out.error="typed constructed-position varying profile requires two distinct attributes";
+                    return false;
+                }
+                return compile_vertex_construct_position_varying(vertex_attributes[position_attribute],
+                                                                 vertex_attributes[varying_attribute],
+                                                                 selected_varying_semantic,0,0,out);
+            }
+            if (vertex_attributes.size()!=1) {
+                out.error="typed constructed-position profile requires one position attribute";
                 return false;
             }
             return compile_vertex_construct_position(vertex_attributes[position_attribute],0,0,out);

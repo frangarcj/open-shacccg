@@ -66,6 +66,11 @@ enum class FragmentMachineProfile : uint8_t {
 bool compile_vertex_construct_position(const IrAttribute &position,
                                        uint32_t binary_guid, uint32_t source_guid,
                                        IrCompileResult &out);
+bool compile_vertex_construct_position_varying(const IrAttribute &position,
+                                               const IrAttribute &varying,
+                                               IrVaryingSemantic semantic,
+                                               uint32_t binary_guid, uint32_t source_guid,
+                                               IrCompileResult &out);
 bool compile_vertex_matrix_path(const IrAttribute &position, const IrAttribute &varying,
                                 const IrMatrix4Uniform &matrix, IrVaryingSemantic semantic,
                                 uint32_t binary_guid, uint32_t source_guid,

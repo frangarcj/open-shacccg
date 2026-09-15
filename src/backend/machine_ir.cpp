@@ -937,7 +937,8 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             const auto swizzle = static_cast<MachineVectorSwizzle>((config >> 4) & 0x03u);
             if (swizzle != MachineVectorSwizzle::Identity &&
                 swizzle != MachineVectorSwizzle::PositionXY11 &&
-                swizzle != MachineVectorSwizzle::Source2YYYY) {
+                swizzle != MachineVectorSwizzle::Source2YYYY &&
+                swizzle != MachineVectorSwizzle::PositionZW01) {
                 out.error = "machine vector swizzle profile is not validated";
                 return false;
             }
@@ -961,6 +962,11 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 op.src2_swizzle = {{usse::SwizzleChannel::Y, usse::SwizzleChannel::Y,
                                     usse::SwizzleChannel::Y, usse::SwizzleChannel::Y}};
             } else if (swizzle == MachineVectorSwizzle::Source2YYYY) {
+                op.src2_swizzle = {{usse::SwizzleChannel::Y, usse::SwizzleChannel::Y,
+                                    usse::SwizzleChannel::Y, usse::SwizzleChannel::Y}};
+            } else if (swizzle == MachineVectorSwizzle::PositionZW01) {
+                op.src1_swizzle = {{usse::SwizzleChannel::Zero, usse::SwizzleChannel::One,
+                                    usse::SwizzleChannel::X, usse::SwizzleChannel::X}};
                 op.src2_swizzle = {{usse::SwizzleChannel::Y, usse::SwizzleChannel::Y,
                                     usse::SwizzleChannel::Y, usse::SwizzleChannel::Y}};
             }

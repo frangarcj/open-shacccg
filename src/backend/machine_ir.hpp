@@ -139,6 +139,7 @@ enum class MachineVectorSwizzle : uint8_t {
     Identity,
     PositionXY11,
     Source2YYYY,
+    PositionZW01,
 };
 
 constexpr uint8_t machine_pack_subop(usse::PackFormat src, usse::PackFormat dst) {

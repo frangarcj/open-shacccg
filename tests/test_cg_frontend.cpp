@@ -197,6 +197,51 @@ bool compile_fragment_gxp(const std::string &source, const char *name) {
     return compile_shader_gxp(source,name,VSC_STAGE_FRAGMENT);
 }
 
+bool compile_vitagl_blit_vertex_profile() {
+    static constexpr const char *source=
+        "void main(float2 position,float2 texcoord,float4 out vPos:POSITION,float2 out vTexcoord:TEXCOORD0){"
+        "vPos=float4(position,0.0f,1.0f);vTexcoord=texcoord;}";
+    VscCompileRequest request{};
+    request.source_name="vitagl-precompiled-blit-v.cg";
+    request.source=source;
+    request.source_size=std::strlen(source);
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_VERTEX;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.gxp_size==284 && result.diagnostic_count==0;
+    if (ok) {
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        const uint64_t words[]={
+            0xfa44070000000000ULL,0x3880052183080080ULL,0x08a5118590040001ULL,
+            0x0883118190560001ULL,0xfb275000a0200000ULL,
+        };
+        const uint8_t varyings[]={
+            0x33,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+            0,0x10,0,0x06,0x01,0,0,0,0,0,0,0,0,0,0,0,
+        };
+        vsc::gxp::ParameterView position{},texcoord{};
+        const auto primary=view.primary_program();
+        const auto interface=view.varyings();
+        ok=view.valid() && view.major_version()==1 && view.minor_version()==5 &&
+            view.sdk_version()==0x0350 && view.logical_size()==282 && view.flags()==0x00190004 &&
+            view.primary_register_count()==8 && view.secondary_register_count()==0 &&
+            view.compiler_version_raw()==0x00033dc0 && view.primary_instruction_count()==5 &&
+            view.secondary_instruction_count()==0 && view.parameter_count()==2 &&
+            primary.size==sizeof(words) && std::memcmp(primary.data,words,sizeof(words))==0 &&
+            interface.size==sizeof(varyings) && std::memcmp(interface.data,varyings,sizeof(varyings))==0 &&
+            view.parameter(0,position) && position.name=="position" && position.category==0 &&
+            position.component_count==4 && position.semantic==0 && position.resource_index==0 &&
+            view.parameter(1,texcoord) && texcoord.name=="texcoord" && texcoord.category==0 &&
+            texcoord.component_count==4 && texcoord.semantic==0 && texcoord.resource_index==4;
+    }
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: vitaGL blit vertex diagnostic=%s\n",
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
+
 bool compile_loop_gxp(const std::string &source, const char *name, uint8_t step) {
     VscCompileRequest request{};
     request.source_name=name;
@@ -630,6 +675,8 @@ int test_cg_frontend() {
     if (!compile_shader_gxp("uniform float3x3 unused_matrix; float4 main(float4 p:POSITION):POSITION{return p;}",
                             "unused-matrix-uniform.cg",VSC_STAGE_VERTEX))
         failures += fail("unused unsupported uniform member type blocked an otherwise valid shader");
+    if (!compile_vitagl_blit_vertex_profile())
+        failures += fail("vitaGL public blit vertex profile did not reproduce its observed v1.5 GXP shape");
     struct PublicShader { const char *name; VscStage stage; };
     const PublicShader public_shaders[] = {
         {"clear_f", VSC_STAGE_FRAGMENT},
