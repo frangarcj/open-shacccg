@@ -832,6 +832,10 @@ int test_cg_frontend() {
     if (!compile_shader_gxp("uniform float3x3 unused_matrix; float4 main(float4 p:POSITION):POSITION{return p;}",
                             "unused-matrix-uniform.cg",VSC_STAGE_VERTEX))
         failures += fail("unused unsupported uniform member type blocked an otherwise valid shader");
+    if (!compile_shader_gxp(
+            "uniform float2 dead_scale; uniform float4 live_color; float4 main():COLOR0{return live_color;}",
+            "dead-prefix-uniform.cg",VSC_STAGE_FRAGMENT))
+        failures += fail("dead supported uniform prefix was not removed before compact reflection/lowering");
     if (!compile_vitagl_blit_vertex_profile())
         failures += fail("vitaGL public blit vertex profile did not reproduce its observed v1.5 GXP shape");
     if (!compile_matrix_point_size_profile(false))

@@ -12,6 +12,8 @@
     "geometrizer:POLY3D_VS",
     "geometrizer:POLY_VS",
     "geometrizer:TM2_FAST_FS",
+    "vitagl:ffp_f_baseline",
+    "vitagl:ffp_f_color",
     "vitagl:ffp_v_baseline",
     "vitagl:ffp_v_color",
     "vitagl:ffp_v_texture1",

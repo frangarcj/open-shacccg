@@ -288,20 +288,35 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 error = "SPIRV-Cross uniform buffer is not a struct";
                 return false;
             }
+            std::unordered_set<uint32_t> active_members;
+            for (const auto &range:compiler.get_active_buffer_ranges(resource.id))
+                active_members.insert(range.index);
             auto &members = uniform_blocks[resource.id];
             members.resize(struct_type.member_types.size());
+            uint16_t packed_word=0;
+            auto allocate_uniform_words=[&](uint16_t words,bool register_aligned) -> uint16_t {
+                if (register_aligned || static_cast<uint16_t>((packed_word&3u)+words)>4u)
+                    packed_word=static_cast<uint16_t>((packed_word+3u)&~3u);
+                const uint16_t index=packed_word;
+                packed_word=static_cast<uint16_t>(packed_word+words);
+                return index;
+            };
             for (uint32_t member = 0; member < struct_type.member_types.size(); ++member) {
+                // Sony drops dead uniforms from reflection/codegen. Keep the
+                // aggregate slot so access-chain indices remain stable, but do
+                // not materialize a Typed resource for an inactive member.
+                if (!active_members.count(member)) continue;
                 const auto &member_type = compiler.get_type(struct_type.member_types[member]);
                 const uint32_t byte_offset = compiler.type_struct_member_offset(struct_type, member);
                 if ((byte_offset & 3u) || byte_offset / 4u > std::numeric_limits<uint16_t>::max()) {
                     error = "uniform member offset is outside the Typed IR resource range";
                     return false;
                 }
-                const uint16_t index = static_cast<uint16_t>(byte_offset / 4u);
                 std::string member_name = compiler.get_member_name(resource.base_type_id, member);
                 if (member_name.empty()) member_name = resource.name + ".member" + std::to_string(member);
                 uint16_t resource_id = 0;
                 if (is_f32_mat4(member_type)) {
+                    const uint16_t index=allocate_uniform_words(16,true);
                     if (!add_resource(backend::TypedResourceKind::Matrix4, {}, backend::TypedType::F32x4,
                                       member_name, index, backend::TypedSemantic::None, 0, resource_id)) return false;
                     members[member] = {resource_id, {}, {resource_id}, true, false, true};
@@ -313,6 +328,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 // the aggregate member for constant-index access chains.
                 const uint32_t matrix_count=f32_mat4_array_count(member_type);
                 if (matrix_count) {
+                    const uint16_t index=allocate_uniform_words(static_cast<uint16_t>(16u*matrix_count),true);
                     UniformMember info{};
                     info.matrix=true;
                     info.matrix_array=true;
@@ -334,11 +350,14 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     continue;
                 }
                 const auto type = typed_type(member_type);
-                // Glslang can retain unused globals in its aggregate HLSL
-                // uniform block. Do not reject a shader merely because one of
-                // those dead members has a type outside Typed IR; fail closed
-                // if an access chain actually reaches it below.
+                // Active but unsupported members fail closed if reached below.
                 if (type == backend::TypedType::Invalid) continue;
+                const uint8_t components=backend::typed_component_count(type);
+                if (!components || components>4) {
+                    error="active uniform member has unsupported packed width";
+                    return false;
+                }
+                const uint16_t index=allocate_uniform_words(components,components==4);
                 const auto value = program.uniform(type, index);
                 if (value.kind() == backend::TypedValueKind::None) { error = "failed to create Typed IR uniform"; return false; }
                 if (!add_resource(backend::TypedResourceKind::Uniform, value, type, member_name, index,
