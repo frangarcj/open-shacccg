@@ -87,9 +87,9 @@ Implemented now:
   Typed/Machine loop state, signed-32 `i<n` VTST, I32MAD2 counter update/feed-through and BR back-edges
 - structured fragment `if/else` from glslang: two-way `OpPhi` values that feed COLOR0 are
   sunk into branch-local output packs, so real Cg conditionals reach Machine BR/GXP without a physical phi opcode
-- all seven public libvita2d Cg shaders pass through the Typed Vita IR path; three generated GXPs
-  remain byte-identical to the preserved historical samples outside Sony's two GUID fields, while
-  all four fragment profiles now target the newer SDK 3.0.0 v1.5 layouts byte-for-byte
+- all seven public libvita2d Cg shaders pass through the Typed Vita IR path; `clear_v` remains
+  byte-identical to its preserved historical sample outside Sony's two GUID fields, while the
+  other six profiles target the newer SDK 3.0.0 v1.5 layouts byte-for-byte
 - frontend -> SPIR-V and SPIR-V -> Vita IR -> USSE/GXP boundaries
 - independent structured GXP reader for real Vita program images
 - canonical GXP serializer for interface data, primary/secondary code, parameter containers,
@@ -162,9 +162,10 @@ entry-point parameters while preserving helper-function access to global inputs.
 
 As an end-to-end regression, the seven preserved libvita2d shaders are compiled
 from their original Cg source through glslang, SPIRV-Tools, SPIRV-Cross and Typed
-Vita IR. Every byte after offset `0x14` matches the public GXP corpus. Offsets
-`0x0c..0x13` are the Sony binary/source GUIDs; their generation algorithm is not
-yet derived, so open-shacccg currently leaves those fields at zero.
+Vita IR. `clear_v` still matches its historical public GXP outside the GUIDs;
+the other six profiles are checked against the newer ShaccCg 3.0.0 codegen and
+metadata. Offsets `0x0c..0x13` are the Sony binary/source GUIDs; their generation
+algorithm is not yet derived, so open-shacccg currently leaves those fields at zero.
 
 ## GXP / USSE workbench
 
@@ -453,8 +454,9 @@ the otherwise-free control bits, while VMAD uses a compact virtual-pair operand
 for its two GPI inputs. A zero-word dependent-sample pseudo-op connects the
 coordinate GPI lifetime to the asynchronously produced texture TEMP. As a
 result, `shader_profiles.cpp` no longer constructs USSE semantic instruction structs or
-performs a second lifetime pass. Six preserved libvita2d GXP regressions remain
-byte-identical; standalone `texture_f` instead reproduces the newer SDK 3.0.0 GXP.
+performs a second lifetime pass. `clear_v` remains the historical libvita2d
+byte-identity regression; the other six public profiles reproduce the newer
+SDK 3.0.0 GXP layouts instead.
 
 Typed IR can also lower validated F32x4 arithmetic directly to Machine IR:
 multiply, add, subtract-as-negated-add, min/max, dot, negate and absolute. The

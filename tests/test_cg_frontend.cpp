@@ -1011,11 +1011,47 @@ int test_cg_frontend() {
     struct PublicShader { const char *name; VscStage stage; };
     const PublicShader public_shaders[] = {
         {"clear_v", VSC_STAGE_VERTEX},
-        {"color_v", VSC_STAGE_VERTEX},
-        {"texture_v", VSC_STAGE_VERTEX},
     };
     for (const auto &shader : public_shaders)
         if (!compile_matches_public_gxp(shader.name, shader.stage)) ++failures;
+    {
+        struct MatrixVertexProbe { const char *name; uint32_t logical_size; uint64_t move_word; };
+        const MatrixVertexProbe probes[]={
+            {"color_v",341,0x38801d2183080080ULL},
+            {"texture_v",344,0x38800d2183080080ULL},
+        };
+        for (const auto &probe:probes) {
+            const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+
+                                               "/research/public_samples/libvita2d/"+probe.name+".cg");
+            VscCompileRequest request{};
+            request.source_name=probe.name; request.source=source.data(); request.source_size=source.size();
+            request.entrypoint="main"; request.stage=VSC_STAGE_VERTEX;
+            VscCompileResult result{};
+            bool ok=!source.empty() && vsc_compile(&request,&result)==0 && result.gxp_data && result.diagnostic_count==0;
+            if (ok) {
+                vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+                const uint64_t words[]={
+                    0xfa44070000000000ULL,probe.move_word,
+                    0x40c00d9caf818002ULL,0x40c00dbcffb9860eULL,
+                    0x18b18f80cf491104ULL,0x18b18f80cf451102ULL,
+                    0x18b18181c0011100ULL,0x18b18181c042d101ULL,
+                    0xfb275000a0200000ULL,
+                };
+                const auto code=view.primary_program();
+                ok=view.valid() && result.gxp_size==344 && view.logical_size()==probe.logical_size &&
+                    view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00190000 &&
+                    view.primary_register_count()==8 && view.secondary_register_count()==16 &&
+                    view.container_count()==1 && view.parameter_count()==3 &&
+                    view.compiler_version_raw()==0x00033a90 && code.size==sizeof(words) &&
+                    std::memcmp(code.data,words,sizeof(words))==0;
+            }
+            if (!ok) {
+                std::fprintf(stderr,"test_cg_frontend: %s did not reproduce SDK 3.0.0 matrix vertex profile\n",probe.name);
+                ++failures;
+            }
+            vsc_destroy_result(&request.allocator,&result);
+        }
+    }
     {
         const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/research/public_samples/libvita2d/texture_f.cg");
         VscCompileRequest request{};

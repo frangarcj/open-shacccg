@@ -531,20 +531,20 @@ int test_machine_ir() {
                 program.physical(machine_secondary(7), MachineType::F32))) {
             failures += fail("could not construct VMAD GPI staging");
         }
+        static constexpr uint8_t srcs[]={4,2,0,1};
         for (uint8_t lane=0; lane<4; ++lane) {
             const auto dst = lane < 2 ?
                 program.make_value<MachineType::F32>(MachineRegisterClass::VmadAccumulator) :
                 program.physical(machine_vertex_output(static_cast<uint8_t>(lane-2)), MachineType::F32);
-            const uint8_t src = lane < 2 ? static_cast<uint8_t>(lane*2) : static_cast<uint8_t>(lane+2);
             if (!program.emit_config<MachineOpcode::Vmad>(lane,
                     machine_vmad_config(lane<2 ? 0xF : 0x3, lane<2), dst,
-                    program.physical(machine_secondary(src), MachineType::F32), pair))
+                    program.physical(machine_secondary(srcs[lane]), MachineType::F32), pair))
                 failures += fail("could not construct VMAD Machine IR lane");
         }
         MachineCompileResult result;
         const uint64_t expected[] = {
-            0x18b18f80cf411100ULL, 0x18b18f80cf451102ULL,
-            0x18b18181c0091104ULL, 0x18b18181c04ad105ULL,
+            0x18b18f80cf491104ULL, 0x18b18f80cf451102ULL,
+            0x18b18181c0011100ULL, 0x18b18181c042d101ULL,
         };
         if (!compile_machine_program(program, result)) {
             failures += fail("VMAD Machine IR sequence did not compile");

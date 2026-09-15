@@ -203,22 +203,22 @@ bool compile_vertex_matrix_path(const IrAttribute &position, const IrAttribute &
         out.error = "failed to build matrix staging machine program";
         return false;
     }
+    static constexpr uint8_t src_nums[] = {4,2,0,1};
     for (size_t i=0;i<4;i++) {
         MachineOperand dst;
-        uint8_t src_num;
         uint8_t mask;
         bool no_schedule;
         if (i<2) {
             dst=code.make_value<MachineType::F32>(MachineRegisterClass::VmadAccumulator);
-            src_num=static_cast<uint8_t>(i*2); mask=15; no_schedule=true;
+            mask=15; no_schedule=true;
         } else {
             dst=code.physical(machine_vertex_output(static_cast<uint8_t>(i-2)), MachineType::F32);
-            src_num=static_cast<uint8_t>(i+2); mask=3; no_schedule=false;
+            mask=3; no_schedule=false;
         }
         if (dst.kind() == MachineOperandKind::None ||
             !code.emit_config<MachineOpcode::Vmad>(static_cast<uint8_t>(i),
                 machine_vmad_config(mask, no_schedule), dst,
-                code.physical(machine_secondary(src_num), MachineType::F32), gpi_pair)) {
+                code.physical(machine_secondary(src_nums[i]), MachineType::F32), gpi_pair)) {
             out.error="failed to build matrix VMAD machine operation";
             return false;
         }
@@ -236,7 +236,7 @@ bool compile_vertex_matrix_path(const IrAttribute &position, const IrAttribute &
         interface_block[0]=0x37; interface_block[16]=0x00; interface_block[17]=0x10;
         interface_block[18]=0x00; interface_block[19]=0x06; interface_block[20]=0x01;
     }
-    const gxp::ParameterContainerDesc containers[] = {{14,0,0,16},{19,0,16,2}};
+    const gxp::ParameterContainerDesc containers[] = {{14,0,0,16}};
     const gxp::ParameterDesc parameters[] = {
         {position.name.c_str(),0,0,4,0,0,0,1,position.resource_index},
         {varying.name.c_str(),0,0,4,0,0,0,1,varying.resource_index},
@@ -248,24 +248,26 @@ bool compile_vertex_matrix_path(const IrAttribute &position, const IrAttribute &
 
     gxp::ProgramImage image{};
     image.type=gxp::ProgramType::Vertex;
+    image.minor_version=5;
+    image.sdk_version=0x0300;
     image.binary_guid=binary_guid;
     image.source_guid=source_guid;
-    image.program_flags=0x00010000;
+    image.program_flags=0x00190000;
     image.buffer_flags=0x10000000;
-    image.data_buffer_count=2;
+    image.data_buffer_count=0;
     image.primary_phase_count=1;
     image.interface_block=interface_block;
     image.interface_block_size=sizeof(interface_block);
     image.primary_instructions=compiled.words.data();
     image.primary_instruction_count=compiled.words.size();
     image.containers=containers;
-    image.container_count=2;
+    image.container_count=1;
     image.parameters=parameters;
     image.parameter_count=3;
     image.primary_register_count=8;
-    image.secondary_register_count=18;
+    image.secondary_register_count=16;
     image.default_uniform_buffer_count=16;
-    image.compiler_version_raw=16;
+    image.compiler_version_raw=0x00033a90;
 
     const size_t needed=gxp::required_size(image);
     if(!needed){out.error="GXP writer rejected matrix vertex profile";return false;}

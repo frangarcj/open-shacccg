@@ -1315,8 +1315,8 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             mad.write_mask = static_cast<uint8_t>(config & 0x0f);
             mad.no_schedule = (config & 0x0010u) != 0;
             const usse::SwizzleChannel lanes[] = {
-                usse::SwizzleChannel::X, usse::SwizzleChannel::Y,
-                usse::SwizzleChannel::Z, usse::SwizzleChannel::Z,
+                usse::SwizzleChannel::Z, usse::SwizzleChannel::Y,
+                usse::SwizzleChannel::X, usse::SwizzleChannel::X,
             };
             mad.gpi0_swizzle = {{lanes[instruction.subop()], lanes[instruction.subop()],
                                  lanes[instruction.subop()], lanes[instruction.subop()]}};

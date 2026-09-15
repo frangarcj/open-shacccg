@@ -649,31 +649,57 @@ int test_gxp_writer() {
     }
 
 
-    // Machine-facing vertex profiles must reconstruct the public GXPs exactly.
+    // Matrix vertex profiles follow the SDK 3.0.0 oracle. The public v1.4
+    // binaries remain separate historical decoder/semantic fixtures below.
     {
         const vsc::backend::IrAttribute position{"aPosition",3,0};
         vsc::backend::IrAttribute varying{"aTexcoord",2,4};
         const vsc::backend::IrMatrix4Uniform matrix{"wvp",0};
         vsc::backend::IrCompileResult lowered;
         if (!vsc::backend::compile_vertex_matrix_path(position,varying,matrix,
-                vsc::backend::IrVaryingSemantic::TexCoord,0xfa8e24ac,0x049b2668,lowered)) {
+                vsc::backend::IrVaryingSemantic::TexCoord,0,0,lowered)) {
             std::fprintf(stderr, "test_gxp: texture_v Machine profile failed: %s\n", lowered.error.c_str());
             ++failures;
         } else {
-            const auto known = load("texture_v.gxp");
-            if (lowered.gxp.size() != known.size() ||
-                std::memcmp(lowered.gxp.data(), known.data(), known.size()) != 0)
-                failures += fail("texture_v Machine-profile GXP is not byte-identical to public sample");
+            ProgramView view(lowered.gxp.data(),lowered.gxp.size());
+            const uint64_t words[]={
+                0xfa44070000000000ULL,0x38800d2183080080ULL,
+                0x40c00d9caf818002ULL,0x40c00dbcffb9860eULL,
+                0x18b18f80cf491104ULL,0x18b18f80cf451102ULL,
+                0x18b18181c0011100ULL,0x18b18181c042d101ULL,
+                0xfb275000a0200000ULL,
+            };
+            const auto code=view.primary_program();
+            if (!view.valid() || lowered.gxp.size()!=344 || view.logical_size()!=344 ||
+                view.minor_version()!=5 || view.sdk_version()!=0x0300 || view.flags()!=0x00190000 ||
+                view.primary_register_count()!=8 || view.secondary_register_count()!=16 ||
+                view.container_count()!=1 || view.parameter_count()!=3 ||
+                view.compiler_version_raw()!=0x00033a90 || code.size!=sizeof(words) ||
+                std::memcmp(code.data,words,sizeof(words))!=0)
+                failures += fail("texture_v Machine profile does not match SDK 3.0.0");
         }
 
         varying={"aColor",4,4};
         if (!vsc::backend::compile_vertex_matrix_path(position,varying,matrix,
-                vsc::backend::IrVaryingSemantic::Color,0x0f4c3f6b,0x41e359f5,lowered)) {
+                vsc::backend::IrVaryingSemantic::Color,0,0,lowered)) {
             failures += fail("color_v Machine profile failed");
         } else {
-            const auto known_color = load("color_v.gxp");
-            if (lowered.gxp.size()!=known_color.size() || std::memcmp(lowered.gxp.data(),known_color.data(),known_color.size())!=0)
-                failures += fail("color_v Machine-profile GXP is not byte-identical to public sample");
+            ProgramView view(lowered.gxp.data(),lowered.gxp.size());
+            const uint64_t words[]={
+                0xfa44070000000000ULL,0x38801d2183080080ULL,
+                0x40c00d9caf818002ULL,0x40c00dbcffb9860eULL,
+                0x18b18f80cf491104ULL,0x18b18f80cf451102ULL,
+                0x18b18181c0011100ULL,0x18b18181c042d101ULL,
+                0xfb275000a0200000ULL,
+            };
+            const auto code=view.primary_program();
+            if (!view.valid() || lowered.gxp.size()!=344 || view.logical_size()!=341 ||
+                view.minor_version()!=5 || view.sdk_version()!=0x0300 || view.flags()!=0x00190000 ||
+                view.primary_register_count()!=8 || view.secondary_register_count()!=16 ||
+                view.container_count()!=1 || view.parameter_count()!=3 ||
+                view.compiler_version_raw()!=0x00033a90 || code.size!=sizeof(words) ||
+                std::memcmp(code.data,words,sizeof(words))!=0)
+                failures += fail("color_v Machine profile does not match SDK 3.0.0");
         }
 
         const vsc::backend::IrAttribute clear_position{"aPosition",2,0};

@@ -110,10 +110,10 @@ Observed source acceptance during the initial probe:
 
 With glslang + SPIRV-Tools + SPIRV-Cross enabled together, all seven public
 libvita2d shaders now compile end-to-end from original Cg source through the
-compact Typed Vita IR. Three resulting GXPs still match the preserved public
-samples byte-for-byte outside the two Sony GUID fields. All four fragment
-profiles deliberately target the newer SDK 3.0.0 oracle instead: `clear_f`,
-`color_f`, `texture_f` and `texture_tint_f` are byte-identical to ShaccCg 3.0.0
+compact Typed Vita IR. `clear_v` still matches its preserved public sample
+byte-for-byte outside the two Sony GUID fields. The other six profiles now
+deliberately target the newer SDK 3.0.0 oracle: `clear_f`, `color_f`, `texture_f`,
+`texture_tint_f`, `color_v` and `texture_v` are byte-identical to ShaccCg 3.0.0
 output, including v1.5 metadata and USSE. Sony GUID generation remains unknown
 and open-shacccg currently emits zero there.
 
@@ -158,10 +158,10 @@ inventing an SMP instruction that is absent from the public sample.
 
 The vertex, texture-tint and generic fragment arithmetic paths no longer carry
 their own TEMP/GPI free lists, direct register-bank selections or semantic USSE
-instruction construction in `shader_profiles.cpp`. Three preserved libvita2d
-vertex GXPs remain byte-identical after the migration; all four fragment profiles
-now deliberately track the newer SDK 3.0.0 v1.5 oracle layouts instead of their
-historical v1.4 samples.
+instruction construction in `shader_profiles.cpp`. `clear_v` remains the sole
+historical libvita2d byte-identity target. `color_v`, `texture_v` and all four
+fragment profiles track the SDK 3.0.0 v1.5 oracle layouts; the two matrix vertex
+profiles share the same 3.0.0 VMAD lane/source ordering and SA=16 metadata.
 
 Typed IR now lowers F32x4 mul/add/sub/min/max, scalar dot, negate and absolute
 through the same Machine IR. SPIRV-Cross also recognizes `OpFNegate` without
