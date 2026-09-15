@@ -2158,6 +2158,8 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
         interface_block[22]=component_code;
         interface_block[23]=float_input_count==1 ? 0x0e : 0x0c;
         interface_block[28]=component_tail;
+        if (!literal_values.empty())
+            containers.push_back({19,0,0,static_cast<uint16_t>(literal_values.size())});
     } else if (classic_uniform_profile) {
         interface_block[21]=0xa0; interface_block[22]=0xd0; interface_block[23]=0x0e;
         interface_block[28]=0xb0;
@@ -2216,8 +2218,8 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
         image.fragment_input_components=float_components;
         const uint8_t primary_per_input=float_components<=2 ? float_components : 4;
         image.primary_register_count=static_cast<uint16_t>(float_input_count*primary_per_input);
-        image.secondary_register_count=0;
-        image.data_buffer_count=0;
+        image.secondary_register_count=static_cast<uint16_t>(literal_values.size());
+        image.data_buffer_count=static_cast<uint32_t>(literal_values.size());
         image.compiler_version_raw=0x0002df30;
     } else if (classic_uniform_profile) {
         image.program_flags=0x1000;

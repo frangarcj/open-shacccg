@@ -210,6 +210,21 @@ TypedValue TypedProgram::literal_f32x4(const std::array<uint32_t,4> &bits) {
     return dst;
 }
 
+TypedValue TypedProgram::compose_f32x3(const std::array<TypedValue,3> &components) {
+    if (float3_composites_.size() >= std::numeric_limits<uint16_t>::max()) return {};
+    for (const auto component:components)
+        if (!is_value(component) || component.type()!=TypedType::F32) return {};
+    const auto dst=make_value(TypedType::F32x3);
+    if (dst.kind()==TypedValueKind::None) return {};
+    const uint16_t index=static_cast<uint16_t>(float3_composites_.size());
+    float3_composites_.push_back(components);
+    if (!emit<TypedOpcode::FloatCompose3>(0,dst,{},{},index)) {
+        float3_composites_.pop_back();
+        return {};
+    }
+    return dst;
+}
+
 TypedValue TypedProgram::compose_f32x4(const std::array<TypedValue,4> &components) {
     if (float4_composites_.size() >= std::numeric_limits<uint16_t>::max()) return {};
     for (const auto component:components)
@@ -470,6 +485,7 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             break;
         case TypedOpcode::ConstructPosition:
         case TypedOpcode::TransformPosition:
+        case TypedOpcode::TransformVector3:
             error = "high-level typed shader operation requires compile_typed_shader";
             return false;
         case TypedOpcode::Sample2D: {
@@ -861,6 +877,46 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             compose_indices[instruction.dst.id()]=instruction.aux;
             break;
         }
+        case TypedOpcode::FloatCompose3: {
+            if (instruction.dst.type()!=TypedType::F32x3 || instruction.aux>=typed.float3_composites().size()) {
+                error="typed float3 compose side-table entry is invalid";
+                return false;
+            }
+            const auto &components=typed.float3_composites()[instruction.aux];
+            for (const auto component:components) {
+                if (!valid_value_use(typed,component,value_types,value_defined)) {
+                    error="typed float3 compose has an unresolved scalar component";
+                    return false;
+                }
+            }
+            const auto dst=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+            if (dst.kind()==MachineOperandKind::None) {
+                error="failed to allocate float3 compose destination";
+                return false;
+            }
+            for (uint8_t lane=0;lane<3;++lane) {
+                const auto src=lower_value(typed,components[lane],values,literals,machine);
+                if (src.kind()==MachineOperandKind::None || src.type()!=MachineType::F32) {
+                    error="failed to lower float3 compose component";
+                    return false;
+                }
+                uint8_t swizzle=0;
+                if (src.kind()==MachineOperandKind::PhysicalValue && src.physical_component()!=0xff)
+                    swizzle=src.physical_component();
+                const uint16_t config=machine_move_config(static_cast<uint8_t>(1u<<lane),swizzle);
+                const bool emitted=lane==0 ?
+                    machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),config,dst,src) :
+                    machine.emit_config<MachineOpcode::MoveUpdate>(static_cast<uint8_t>(usse::DataType::F32),config,dst,src);
+                if (!emitted) {
+                    error="failed to materialize float3 compose component";
+                    return false;
+                }
+            }
+            values[instruction.dst.id()]=dst;
+            value_types[instruction.dst.id()]=TypedType::F32x3;
+            value_defined[instruction.dst.id()]=true;
+            break;
+        }
         case TypedOpcode::FloatReplaceRGB: {
             if (instruction.dst.type()!=TypedType::F32x4 || instruction.src0.type()!=TypedType::F32x4 ||
                 instruction.src1.type()!=TypedType::F32x3) {
@@ -941,8 +997,14 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 // X aliases the base F32 register directly for allocated vector values.
                 values[instruction.dst.id()]=src;
             } else {
-                error="non-X extraction from a virtual float vector is not yet validated";
-                return false;
+                const auto dst=machine.make_value<MachineType::F32>();
+                if (dst.kind()==MachineOperandKind::None ||
+                    !machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                        machine_move_config(1,instruction.subop()),dst,src)) {
+                    error="failed to materialize scalar extraction from virtual float vector";
+                    return false;
+                }
+                values[instruction.dst.id()]=dst;
             }
             value_types[instruction.dst.id()]=TypedType::F32;
             value_defined[instruction.dst.id()]=true;

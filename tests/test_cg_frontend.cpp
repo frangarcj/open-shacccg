@@ -917,6 +917,13 @@ int test_cg_frontend() {
             "float main(float x:TEXCOORD0):COLOR0{return exp(x);}",
             "scalar-exp.cg"))
         failures += fail("scalar Exp did not lower through LOG2E + Exp2 VCOMP");
+    if (!compile_fragment_gxp(
+            "float4 main(float4 c:COLOR0):COLOR0{"
+            "float3 cutoff=float3(c.r<0.0031308f?1.0f:0.0f,c.g<0.0031308f?1.0f:0.0f,c.b<0.0031308f?1.0f:0.0f);"
+            "float3 higher=float3(1.055f)*pow(c.rgb,float3(1.0f/2.4f))-float3(0.055f);"
+            "float3 lower=c.rgb*float3(12.92f);return float4(lerp(higher,lower,cutoff),c.a);}",
+            "srgb-compose3-pow.cg"))
+        failures += fail("sRGB float3 compose/Pow/FMix/RGB replacement did not compile end to end");
     {
         vsc::backend::IrCompileResult combined;
         if (!vsc::backend::compile_fragment_two_texture_combine({"tex1",1},{"tex2",2},0,0,combined)) {

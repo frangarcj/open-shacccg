@@ -63,6 +63,11 @@ bool is_f32_mat4(const spirv_cross::SPIRType &type) {
         type.vecsize == 4 && type.columns == 4 && type.array.empty();
 }
 
+bool is_f32_mat3(const spirv_cross::SPIRType &type) {
+    return type.basetype == spirv_cross::SPIRType::Float && type.width == 32 &&
+        type.vecsize == 3 && type.columns == 3 && type.array.empty();
+}
+
 uint32_t f32_mat4_array_count(const spirv_cross::SPIRType &type) {
     if (type.basetype != spirv_cross::SPIRType::Float || type.width != 32 ||
         type.vecsize != 4 || type.columns != 4 || type.array.size() != 1)
@@ -202,6 +207,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             uint16_t resource = std::numeric_limits<uint16_t>::max();
             backend::TypedValue value{};
             std::vector<uint16_t> matrix_resources;
+            std::string name;
             bool matrix = false;
             bool matrix_array = false;
             bool supported = false;
@@ -246,9 +252,11 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
         std::unordered_map<uint32_t, backend::TypedValue> sampler_access_chains;
         std::unordered_map<uint32_t, ExtractInfo> input_access_chains;
         std::unordered_map<uint32_t, uint16_t> matrix_values;
+        std::unordered_map<uint32_t, std::array<uint16_t,2>> matrix_products;
         std::unordered_map<uint32_t, ExtractInfo> extracts;
         std::unordered_map<uint32_t, RgbInsertChain> rgb_insert_chains;
         std::unordered_set<uint32_t> composite_insert_operands;
+        std::unordered_set<uint32_t> composite_construct_operands;
         std::unordered_map<uint32_t, uint32_t> constants;
         std::unordered_map<uint32_t, std::array<uint32_t,4>> float_vector_constants;
         std::unordered_set<uint32_t> float_ones;
@@ -332,11 +340,20 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 std::string member_name = compiler.get_member_name(resource.base_type_id, member);
                 if (member_name.empty()) member_name = resource.name + ".member" + std::to_string(member);
                 uint16_t resource_id = 0;
+                if (is_f32_mat3(member_type)) {
+                    // Sony reflects float3x3 as three float3 rows/columns while
+                    // reserving four F32 words per element (12 words total).
+                    const uint16_t index=allocate_uniform_words(12,true);
+                    if (!add_resource(backend::TypedResourceKind::Matrix3, {}, backend::TypedType::F32x3,
+                                      member_name, index, backend::TypedSemantic::None, 0, resource_id)) return false;
+                    members[member] = {resource_id, {}, {resource_id}, member_name, true, false, true};
+                    continue;
+                }
                 if (is_f32_mat4(member_type)) {
                     const uint16_t index=allocate_uniform_words(16,true);
                     if (!add_resource(backend::TypedResourceKind::Matrix4, {}, backend::TypedType::F32x4,
                                       member_name, index, backend::TypedSemantic::None, 0, resource_id)) return false;
-                    members[member] = {resource_id, {}, {resource_id}, true, false, true};
+                    members[member] = {resource_id, {}, {resource_id}, member_name, true, false, true};
                     continue;
                 }
                 // vitaGL's fixed-function generator emits Ktexmat as mat4[1..3].
@@ -347,6 +364,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 if (matrix_count) {
                     const uint16_t index=allocate_uniform_words(static_cast<uint16_t>(16u*matrix_count),true);
                     UniformMember info{};
+                    info.name=member_name;
                     info.matrix=true;
                     info.matrix_array=true;
                     info.supported=true;
@@ -368,7 +386,10 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 }
                 const auto type = typed_type(member_type);
                 // Active but unsupported members fail closed if reached below.
-                if (type == backend::TypedType::Invalid) continue;
+                if (type == backend::TypedType::Invalid) {
+                    members[member].name=member_name;
+                    continue;
+                }
                 const uint8_t components=backend::typed_component_count(type);
                 if (!components || components>4) {
                     error="active uniform member has unsupported packed width";
@@ -379,7 +400,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 if (value.kind() == backend::TypedValueKind::None) { error = "failed to create Typed IR uniform"; return false; }
                 if (!add_resource(backend::TypedResourceKind::Uniform, value, type, member_name, index,
                                   backend::TypedSemantic::None, 0, resource_id)) return false;
-                members[member] = {resource_id, value, {}, false, false, true};
+                members[member] = {resource_id, value, {}, member_name, false, false, true};
             }
         }
 
@@ -486,6 +507,9 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 if (resolved) float_vector_constants[args[1]]=bits;
             } else if (op==spv::OpCompositeInsert && count==6) {
                 composite_insert_operands.insert(args[2]);
+            } else if (op==spv::OpCompositeConstruct && count>=4) {
+                for (uint16_t operand=2;operand<count-1;++operand)
+                    composite_construct_operands.insert(args[operand]);
             }
             offset += count;
         }
@@ -633,6 +657,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     const auto &uniform=block->second[member];
                     if (!uniform.supported) {
                         error="used uniform member type is unsupported by Typed IR";
+                        if (!uniform.name.empty()) error += ": " + uniform.name;
                         return false;
                     }
                     if (count==5) {
@@ -694,6 +719,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         error="float-vector access-chain component is outside the validated scalar subset";
                         return false;
                     }
+                    extracts[args[1]]=it->second;
                     const auto dst=program.make_value<backend::TypedType::F32>();
                     if (!program.emit<backend::TypedOpcode::FloatExtract>(static_cast<uint8_t>(it->second.component),dst,it->second.source)) {
                         error="failed to emit Typed IR float component extraction";
@@ -854,7 +880,55 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         continue;
                     }
                 }
+                if (result_type==backend::TypedType::F32x3 && count==6) {
+                    std::array<backend::TypedValue,3> components{};
+                    bool compose=true;
+                    for (uint8_t lane=0;compose && lane<3;++lane) {
+                        const uint32_t operand=args[2+lane];
+                        if (auto value=values.find(operand); value!=values.end() &&
+                            value->second.type()==backend::TypedType::F32) {
+                            components[lane]=value->second;
+                        } else if (auto constant=constants.find(operand); constant!=constants.end()) {
+                            components[lane]=program.literal_f32(constant->second);
+                        } else {
+                            compose=false;
+                        }
+                    }
+                    if (!compose) {
+                        error="float3 composite has unresolved scalar components";
+                        return false;
+                    }
+                    const auto dst=program.compose_f32x3(components);
+                    if (dst.kind()==backend::TypedValueKind::None) {
+                        error="failed to emit Typed F32x3 composite";
+                        return false;
+                    }
+                    values[args[1]]=dst;
+                    offset+=count;
+                    continue;
+                }
                 if (result_type != backend::TypedType::F32x4) { error = "unsupported composite construct result type"; return false; }
+                if (count==7) {
+                    const auto x=extracts.find(args[2]);
+                    const auto y=extracts.find(args[3]);
+                    const auto z=extracts.find(args[4]);
+                    const auto a=extracts.find(args[5]);
+                    if (x!=extracts.end() && y!=extracts.end() && z!=extracts.end() && a!=extracts.end() &&
+                        x->second.component==0 && y->second.component==1 && z->second.component==2 &&
+                        x->second.source.bits==y->second.source.bits && x->second.source.bits==z->second.source.bits &&
+                        x->second.source.type()==backend::TypedType::F32x3 &&
+                        a->second.component==3 && a->second.source.type()==backend::TypedType::F32x4) {
+                        const auto dst=program.make_value<backend::TypedType::F32x4>();
+                        if (dst.kind()==backend::TypedValueKind::None ||
+                            !program.emit<backend::TypedOpcode::FloatReplaceRGB>(0,dst,a->second.source,x->second.source)) {
+                            error="failed to emit final float3 RGB + float alpha composition";
+                            return false;
+                        }
+                        values[args[1]]=dst;
+                        offset+=count;
+                        continue;
+                    }
+                }
                 backend::TypedValue source{};
                 uint8_t extracted = 0;
                 bool valid = true;
@@ -905,23 +979,81 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     error = "failed to emit Typed IR position construct"; return false;
                 }
                 values[args[1]] = dst;
+            } else if (op==spv::OpMatrixTimesMatrix && count==5) {
+                const auto lhs=matrix_values.find(args[2]);
+                const auto rhs=matrix_values.find(args[3]);
+                if (lhs==matrix_values.end() || rhs==matrix_values.end() ||
+                    typed_type(compiler.get_type(args[0]))!=backend::TypedType::Invalid) {
+                    // Matrix types deliberately do not have a compact TypedType;
+                    // both operands must therefore be direct reflected matrices.
+                    error="matrix-times-matrix operands are unresolved";
+                    return false;
+                }
+                if (lhs->second>=typed.resources().size() || rhs->second>=typed.resources().size() ||
+                    typed.resources()[lhs->second].kind!=backend::TypedResourceKind::Matrix4 ||
+                    typed.resources()[rhs->second].kind!=backend::TypedResourceKind::Matrix4) {
+                    error="matrix-times-matrix currently supports two float4x4 uniforms";
+                    return false;
+                }
+                matrix_products[args[1]]={{lhs->second,rhs->second}};
             } else if ((op == spv::OpMatrixTimesVector || op == spv::OpVectorTimesMatrix) && count == 5) {
                 const uint32_t matrix_id = op == spv::OpMatrixTimesVector ? args[2] : args[3];
                 const uint32_t vector_id = op == spv::OpMatrixTimesVector ? args[3] : args[2];
                 const auto matrix = matrix_values.find(matrix_id);
+                const auto product = matrix_products.find(matrix_id);
                 const auto vector = values.find(vector_id);
-                if (matrix == matrix_values.end() || vector == values.end()) {
+                if ((matrix == matrix_values.end() && product==matrix_products.end()) || vector == values.end()) {
                     error = "matrix/vector multiply operands are unresolved"; return false;
                 }
                 const auto dst_type = typed_type(compiler.get_type(args[0]));
-                if (dst_type != backend::TypedType::F32x4 || vector->second.type() != backend::TypedType::F32x4) {
-                    error = "matrix-times-vector is outside the float4 subset"; return false;
+                if (product!=matrix_products.end()) {
+                    if (dst_type!=backend::TypedType::F32x4 || vector->second.type()!=backend::TypedType::F32x4) {
+                        error="mat4 product-times-vector requires float4 input/result";
+                        return false;
+                    }
+                    const uint16_t first=op==spv::OpVectorTimesMatrix ? product->second[0] : product->second[1];
+                    const uint16_t second=op==spv::OpVectorTimesMatrix ? product->second[1] : product->second[0];
+                    const auto tmp=program.make_value<backend::TypedType::F32x4>();
+                    const auto dst=program.make_value<backend::TypedType::F32x4>();
+                    if (tmp.kind()==backend::TypedValueKind::None || dst.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::TransformPosition>(0,tmp,vector->second,{},first) ||
+                        !program.emit<backend::TypedOpcode::TransformPosition>(0,dst,tmp,{},second)) {
+                        error="failed to decompose float4x4 product transform";
+                        return false;
+                    }
+                    values[args[1]]=dst;
+                    offset+=count;
+                    continue;
                 }
-                const auto dst = program.make_value<backend::TypedType::F32x4>();
-                if (!program.emit<backend::TypedOpcode::TransformPosition>(0, dst, vector->second, {}, matrix->second)) {
-                    error = "failed to emit Typed IR position transform"; return false;
+                if (matrix->second>=typed.resources().size()) {
+                    error="matrix resource is out of range";
+                    return false;
                 }
-                values[args[1]] = dst;
+                const auto &matrix_resource=typed.resources()[matrix->second];
+                if (matrix_resource.kind==backend::TypedResourceKind::Matrix3) {
+                    if (dst_type!=backend::TypedType::F32x3 || vector->second.type()!=backend::TypedType::F32x3) {
+                        error="mat3-times-vector requires float3 input/result";
+                        return false;
+                    }
+                    const auto dst=program.make_value<backend::TypedType::F32x3>();
+                    if (!program.emit<backend::TypedOpcode::TransformVector3>(0,dst,vector->second,{},matrix->second)) {
+                        error="failed to emit Typed IR float3 matrix transform";
+                        return false;
+                    }
+                    values[args[1]]=dst;
+                } else if (matrix_resource.kind==backend::TypedResourceKind::Matrix4) {
+                    if (dst_type != backend::TypedType::F32x4 || vector->second.type() != backend::TypedType::F32x4) {
+                        error = "matrix-times-vector is outside the float4 subset"; return false;
+                    }
+                    const auto dst = program.make_value<backend::TypedType::F32x4>();
+                    if (!program.emit<backend::TypedOpcode::TransformPosition>(0, dst, vector->second, {}, matrix->second)) {
+                        error = "failed to emit Typed IR position transform"; return false;
+                    }
+                    values[args[1]] = dst;
+                } else {
+                    error="matrix multiply references unsupported matrix resource kind";
+                    return false;
+                }
             } else if (op == spv::OpImageSampleImplicitLod && count >= 5) {
                 const auto sampled = values.find(args[2]);
                 const auto coordinate = values.find(args[3]);
@@ -1004,6 +1136,45 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         !program.emit<backend::TypedOpcode::FloatUnary>(
                             static_cast<uint8_t>(backend::TypedFloatUnaryOp::Exp2),dst,scaled)) {
                         error="failed to lower scalar Exp through LOG2E*Exp2";
+                        return false;
+                    }
+                    values[args[1]]=dst;
+                } else if (ext == GLSLstd450Pow) {
+                    if (count!=7 || result_type!=backend::TypedType::F32x3) {
+                        error="GLSL.std.450 Pow is outside the validated float3/constant-exponent subset";
+                        return false;
+                    }
+                    const auto base=values.find(args[4]);
+                    const auto exponent=float_vector_constants.find(args[5]);
+                    if (base==values.end() || base->second.type()!=backend::TypedType::F32x3 ||
+                        exponent==float_vector_constants.end() ||
+                        exponent->second[0]!=exponent->second[1] || exponent->second[0]!=exponent->second[2]) {
+                        error="float3 Pow requires a resolved base and constant splat exponent";
+                        return false;
+                    }
+                    const auto exponent_scalar=program.literal_f32(exponent->second[0]);
+                    std::array<backend::TypedValue,3> components{};
+                    bool lowered=exponent_scalar.kind()!=backend::TypedValueKind::None;
+                    for (uint8_t lane=0;lowered && lane<3;++lane) {
+                        const auto scalar=program.make_value<backend::TypedType::F32>();
+                        const auto logarithm=program.make_value<backend::TypedType::F32>();
+                        const auto scaled=program.make_value<backend::TypedType::F32>();
+                        const auto powered=program.make_value<backend::TypedType::F32>();
+                        lowered=scalar.kind()!=backend::TypedValueKind::None &&
+                            logarithm.kind()!=backend::TypedValueKind::None && scaled.kind()!=backend::TypedValueKind::None &&
+                            powered.kind()!=backend::TypedValueKind::None &&
+                            program.emit<backend::TypedOpcode::FloatExtract>(lane,scalar,base->second) &&
+                            program.emit<backend::TypedOpcode::FloatUnary>(
+                                static_cast<uint8_t>(backend::TypedFloatUnaryOp::Log2),logarithm,scalar) &&
+                            program.emit<backend::TypedOpcode::FloatBinary>(
+                                static_cast<uint8_t>(backend::TypedFloatOp::Mul),scaled,logarithm,exponent_scalar) &&
+                            program.emit<backend::TypedOpcode::FloatUnary>(
+                                static_cast<uint8_t>(backend::TypedFloatUnaryOp::Exp2),powered,scaled);
+                        components[lane]=powered;
+                    }
+                    const auto dst=lowered ? program.compose_f32x3(components) : backend::TypedValue{};
+                    if (!lowered || dst.kind()==backend::TypedValueKind::None) {
+                        error="failed to lower float3 Pow through Log2/Mul/Exp2";
                         return false;
                     }
                     values[args[1]]=dst;
@@ -1126,7 +1297,8 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     }
                     values[args[1]]=dst;
                 } else {
-                    error = "GLSL.std.450 instruction is not in the validated Typed IR subset";
+                    error = "GLSL.std.450 instruction is not in the validated Typed IR subset: " +
+                        std::to_string(ext);
                     return false;
                 }
             } else if (op == spv::OpFConvert) {
@@ -1377,11 +1549,26 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                             value=it->second;
                             return true;
                         }
-                        if (result_type!=backend::TypedType::F32) return false;
-                        const auto constant=constants.find(id);
-                        if (constant==constants.end()) return false;
-                        value=program.literal_f32(constant->second);
-                        return value.kind()!=backend::TypedValueKind::None;
+                        if (result_type==backend::TypedType::F32) {
+                            const auto constant=constants.find(id);
+                            if (constant==constants.end()) return false;
+                            value=program.literal_f32(constant->second);
+                            return value.kind()!=backend::TypedValueKind::None;
+                        }
+                        const auto vector_constant=float_vector_constants.find(id);
+                        const uint8_t components=backend::typed_component_count(result_type);
+                        if (vector_constant==float_vector_constants.end() || components<2 || components>4)
+                            return false;
+                        for (uint8_t lane=1;lane<components;++lane)
+                            if (vector_constant->second[lane]!=vector_constant->second[0]) return false;
+                        const auto scalar=program.literal_f32(vector_constant->second[0]);
+                        const auto splat=program.make_value(result_type);
+                        if (scalar.kind()==backend::TypedValueKind::None || splat.kind()==backend::TypedValueKind::None ||
+                            !program.emit<backend::TypedOpcode::FloatSplat>(0,splat,scalar))
+                            return false;
+                        value=splat;
+                        values[id]=splat;
+                        return true;
                     };
                     backend::TypedValue lhs{},rhs{};
                     if (result_type == backend::TypedType::Invalid || !backend::typed_is_float(result_type) ||

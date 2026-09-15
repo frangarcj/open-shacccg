@@ -76,6 +76,7 @@ enum class TypedStage : uint8_t { Vertex, Fragment };
 enum class TypedResourceKind : uint8_t {
     Input,
     Uniform,
+    Matrix3,
     Matrix4,
     Sampler2D,
     Output,
@@ -151,6 +152,7 @@ public:
     TypedValue literal_s32(int32_t value);
     TypedValue literal_f32(uint32_t bits);
     TypedValue literal_f32x4(const std::array<uint32_t,4> &bits);
+    TypedValue compose_f32x3(const std::array<TypedValue,3> &components);
     TypedValue compose_f32x4(const std::array<TypedValue,4> &components);
     TypedValue select_f32(TypedValue predicate, TypedValue true_value, TypedValue false_value);
     TypedValue sampler(uint16_t binding);
@@ -188,6 +190,7 @@ public:
     const std::vector<TypedInstruction> &instructions() const { return instructions_; }
     const std::vector<uint32_t> &literals() const { return literals_; }
     const std::vector<std::array<uint32_t,4>> &float4_literals() const { return float4_literals_; }
+    const std::vector<std::array<TypedValue,3>> &float3_composites() const { return float3_composites_; }
     const std::vector<std::array<TypedValue,4>> &float4_composites() const { return float4_composites_; }
     const std::vector<TypedFloatSelectDesc> &float_selects() const { return float_selects_; }
     const std::vector<uint32_t> &labels() const { return labels_; }
@@ -198,6 +201,7 @@ private:
     std::vector<TypedInstruction> instructions_;
     std::vector<uint32_t> literals_;
     std::vector<std::array<uint32_t,4>> float4_literals_;
+    std::vector<std::array<TypedValue,3>> float3_composites_;
     std::vector<std::array<TypedValue,4>> float4_composites_;
     std::vector<TypedFloatSelectDesc> float_selects_;
     std::vector<uint32_t> labels_;
