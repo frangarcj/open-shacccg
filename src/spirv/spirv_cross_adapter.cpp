@@ -210,6 +210,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             std::string name;
             bool matrix = false;
             bool matrix_array = false;
+            bool vector_array_one = false;
             bool supported = false;
         };
         struct ExtractInfo {
@@ -348,14 +349,14 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     const uint16_t index=allocate_uniform_words(12,true);
                     if (!add_resource(backend::TypedResourceKind::Matrix3, {}, backend::TypedType::F32x3,
                                       member_name, index, backend::TypedSemantic::None, 0, resource_id)) return false;
-                    members[member] = {resource_id, {}, {resource_id}, member_name, true, false, true};
+                    members[member] = {resource_id, {}, {resource_id}, member_name, true, false, false, true};
                     continue;
                 }
                 if (is_f32_mat4(member_type)) {
                     const uint16_t index=allocate_uniform_words(16,true);
                     if (!add_resource(backend::TypedResourceKind::Matrix4, {}, backend::TypedType::F32x4,
                                       member_name, index, backend::TypedSemantic::None, 0, resource_id)) return false;
-                    members[member] = {resource_id, {}, {resource_id}, member_name, true, false, true};
+                    members[member] = {resource_id, {}, {resource_id}, member_name, true, false, false, true};
                     continue;
                 }
                 // vitaGL's fixed-function generator emits Ktexmat as mat4[1..3].
@@ -386,6 +387,34 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     members[member]=std::move(info);
                     continue;
                 }
+                // Cg fixed-function lighting commonly uses float4[1]/float3[1]
+                // for a single enabled light. Sony reflects these as one
+                // parameter (array_size=1) but keeps array-style access chains.
+                // Collapse only the independently observed one-element vector
+                // case; dynamic indices are equivalent to element zero for all
+                // defined accesses to an array of length one.
+                if (member_type.basetype==spirv_cross::SPIRType::Float && member_type.width==32 &&
+                    member_type.columns==1 && member_type.array.size()==1 && member_type.array[0]==1 &&
+                    (member_type.vecsize==3 || member_type.vecsize==4)) {
+                    const auto type=member_type.vecsize==3 ? backend::TypedType::F32x3 : backend::TypedType::F32x4;
+                    const uint16_t words=4; // Sony gives one-element vector arrays a four-word slot.
+                    const uint16_t index=allocate_uniform_words(words,true);
+                    const auto value=program.uniform(type,index);
+                    if (value.kind()==backend::TypedValueKind::None) {
+                        error="failed to create one-element vector-array Typed uniform";
+                        return false;
+                    }
+                    if (!add_resource(backend::TypedResourceKind::Uniform,value,type,member_name,index,
+                                      backend::TypedSemantic::None,0,resource_id)) return false;
+                    UniformMember info{};
+                    info.resource=resource_id;
+                    info.value=value;
+                    info.name=member_name;
+                    info.vector_array_one=true;
+                    info.supported=true;
+                    members[member]=std::move(info);
+                    continue;
+                }
                 const auto type = typed_type(member_type);
                 // Active but unsupported members fail closed if reached below.
                 if (type == backend::TypedType::Invalid) {
@@ -402,7 +431,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 if (value.kind() == backend::TypedValueKind::None) { error = "failed to create Typed IR uniform"; return false; }
                 if (!add_resource(backend::TypedResourceKind::Uniform, value, type, member_name, index,
                                   backend::TypedSemantic::None, 0, resource_id)) return false;
-                members[member] = {resource_id, value, {}, member_name, false, false, true};
+                members[member] = {resource_id, value, {}, member_name, false, false, false, true};
             }
         }
 
@@ -507,6 +536,19 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     bits[lane]=scalar->second;
                 }
                 if (resolved) float_vector_constants[args[1]]=bits;
+            } else if (op==spv::OpUndef && count==3 &&
+                       typed_type(compiler.get_type(args[0]))==backend::TypedType::F32x4) {
+                // SPIRV-Tools uses an undef float4 as the base for partial RGB
+                // construction. Choosing zero is a legal concretization of
+                // undef and gives the Typed/Machine path a stable value for the
+                // lanes that are subsequently overwritten.
+                const std::array<uint32_t,4> zero={{0,0,0,0}};
+                const auto value=program.literal_f32x4(zero);
+                if (value.kind()==backend::TypedValueKind::None) {
+                    error="failed to materialize F32x4 undef value";
+                    return false;
+                }
+                values[args[1]]=value;
             } else if (op==spv::OpCompositeInsert && count==6) {
                 composite_insert_operands.insert(args[2]);
             } else if (op==spv::OpCompositeConstruct && count>=4) {
@@ -516,10 +558,11 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             offset += count;
         }
 
-        // Pre-scan structured control flow so two-way phis that feed the final
-        // fragment output can be sunk into their predecessor blocks. This keeps
-        // Typed/Machine IR SSA without inventing multi-definition virtual values.
-        if (stage == backend::TypedStage::Fragment) {
+        // Pre-scan structured control flow for both stages. Fragment-only
+        // output/select sinking remains guarded below; vertex shaders still
+        // need labels, loop headers and loop-state phis so their BR structure
+        // can reach the shared Typed/Machine CFG lowering.
+        {
             bool scan_function=false;
             uint32_t scan_label=0;
             std::vector<uint32_t> function_labels;
@@ -565,13 +608,13 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 } else if (scan_function && op==spv::OpKill && scan_label) {
                     kill_labels.insert(scan_label);
                     has_control=true;
-                } else if (scan_function && op==spv::OpSelect) {
+                } else if (stage==backend::TypedStage::Fragment && scan_function && op==spv::OpSelect) {
                     if (count!=6) {
                         error="only ordinary three-operand OpSelect is supported";
                         return false;
                     }
                     select_sinks[args[1]]={args[2],args[3],args[4],std::numeric_limits<uint16_t>::max()};
-                } else if (scan_function && op==spv::OpStore && count>=3) {
+                } else if (stage==backend::TypedStage::Fragment && scan_function && op==spv::OpStore && count>=3) {
                     const auto phi=phi_sinks.find(args[1]);
                     const auto output=outputs.find(args[0]);
                     if (phi!=phi_sinks.end() && output!=outputs.end())
@@ -674,6 +717,18 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         element.resource=uniform.matrix_resources[element_it->second];
                         element.matrix_array=false;
                         access_chain_members[args[1]]=std::move(element);
+                    } else if (count==6 && uniform.vector_array_one) {
+                        // Array length is exactly one. Keep a vector access even
+                        // when SPIRV-Tools preserves a dynamic loop index.
+                        access_chain_members[args[1]]=uniform;
+                    } else if (count==7 && uniform.vector_array_one) {
+                        const auto component_it=constants.find(args[5]);
+                        const uint8_t components=backend::typed_component_count(uniform.value.type());
+                        if (component_it==constants.end() || component_it->second>=components) {
+                            error="one-element vector-array component is unresolved or out of range";
+                            return false;
+                        }
+                        input_access_chains[args[1]]={uniform.value,component_it->second};
                     } else if (count==6 && !uniform.matrix) {
                         const auto component_it=constants.find(args[4]);
                         const uint8_t components=backend::typed_component_count(uniform.value.type());
@@ -1142,8 +1197,39 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     }
                     values[args[1]]=dst;
                 } else if (ext == GLSLstd450Pow) {
-                    if (count!=7 || result_type!=backend::TypedType::F32x3) {
-                        error="GLSL.std.450 Pow is outside the validated float3/constant-exponent subset";
+                    if (count!=7) {
+                        error="GLSL.std.450 Pow has an unexpected operand shape";
+                        return false;
+                    }
+                    if (result_type==backend::TypedType::F32) {
+                        const auto base=values.find(args[4]);
+                        const auto exponent=values.find(args[5]);
+                        if (base==values.end() || exponent==values.end() ||
+                            base->second.type()!=backend::TypedType::F32 ||
+                            exponent->second.type()!=backend::TypedType::F32) {
+                            error="scalar Pow requires resolved F32 base/exponent operands";
+                            return false;
+                        }
+                        const auto logarithm=program.make_value<backend::TypedType::F32>();
+                        const auto scaled=program.make_value<backend::TypedType::F32>();
+                        const auto dst=program.make_value<backend::TypedType::F32>();
+                        if (logarithm.kind()==backend::TypedValueKind::None ||
+                            scaled.kind()==backend::TypedValueKind::None || dst.kind()==backend::TypedValueKind::None ||
+                            !program.emit<backend::TypedOpcode::FloatUnary>(
+                                static_cast<uint8_t>(backend::TypedFloatUnaryOp::Log2),logarithm,base->second) ||
+                            !program.emit<backend::TypedOpcode::FloatBinary>(
+                                static_cast<uint8_t>(backend::TypedFloatOp::Mul),scaled,logarithm,exponent->second) ||
+                            !program.emit<backend::TypedOpcode::FloatUnary>(
+                                static_cast<uint8_t>(backend::TypedFloatUnaryOp::Exp2),dst,scaled)) {
+                            error="failed to lower scalar Pow through Log2/Mul/Exp2";
+                            return false;
+                        }
+                        values[args[1]]=dst;
+                        offset+=count;
+                        continue;
+                    }
+                    if (result_type!=backend::TypedType::F32x3) {
+                        error="GLSL.std.450 Pow is outside the validated scalar/float3 subset";
                         return false;
                     }
                     const auto base=values.find(args[4]);
@@ -1180,6 +1266,46 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         return false;
                     }
                     values[args[1]]=dst;
+                } else if (ext==GLSLstd450Length) {
+                    if (count!=6 || result_type!=backend::TypedType::F32) {
+                        error="GLSL.std.450 Length is outside the validated scalar-result subset";
+                        return false;
+                    }
+                    const auto source=values.find(args[4]);
+                    if (source==values.end() || source->second.type()!=backend::TypedType::F32x3) {
+                        error="GLSL.std.450 Length currently requires a resolved F32x3 operand";
+                        return false;
+                    }
+                    std::array<backend::TypedValue,3> lane{};
+                    std::array<backend::TypedValue,3> square{};
+                    bool ok=true;
+                    for (uint8_t i=0;i<3;++i) {
+                        lane[i]=program.make_value<backend::TypedType::F32>();
+                        square[i]=program.make_value<backend::TypedType::F32>();
+                        ok = ok && lane[i].kind()!=backend::TypedValueKind::None &&
+                            square[i].kind()!=backend::TypedValueKind::None &&
+                            program.emit<backend::TypedOpcode::FloatExtract>(i,lane[i],source->second) &&
+                            program.emit<backend::TypedOpcode::FloatBinary>(
+                                static_cast<uint8_t>(backend::TypedFloatOp::Mul),square[i],lane[i],lane[i]);
+                    }
+                    const auto sum_xy=program.make_value<backend::TypedType::F32>();
+                    const auto sum=program.make_value<backend::TypedType::F32>();
+                    const auto inverse_length=program.make_value<backend::TypedType::F32>();
+                    const auto length=program.make_value<backend::TypedType::F32>();
+                    if (!ok || sum_xy.kind()==backend::TypedValueKind::None || sum.kind()==backend::TypedValueKind::None ||
+                        inverse_length.kind()==backend::TypedValueKind::None || length.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(backend::TypedFloatOp::Add),
+                            sum_xy,square[0],square[1]) ||
+                        !program.emit<backend::TypedOpcode::FloatBinary>(static_cast<uint8_t>(backend::TypedFloatOp::Add),
+                            sum,sum_xy,square[2]) ||
+                        !program.emit<backend::TypedOpcode::FloatUnary>(static_cast<uint8_t>(backend::TypedFloatUnaryOp::Rsqrt),
+                            inverse_length,sum) ||
+                        !program.emit<backend::TypedOpcode::FloatUnary>(static_cast<uint8_t>(backend::TypedFloatUnaryOp::Reciprocal),
+                            length,inverse_length)) {
+                        error="failed to lower F32x3 Length through sum/rsqrt/reciprocal";
+                        return false;
+                    }
+                    values[args[1]]=length;
                 } else if (ext==GLSLstd450Normalize) {
                     if (count!=6 || result_type!=backend::TypedType::F32x3) {
                         error="GLSL.std.450 Normalize is outside the validated F32x3 subset";
@@ -1246,10 +1372,21 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         error = "GLSL.std.450 min/max is outside the validated F32 subset";
                         return false;
                     }
-                    const auto lhs = values.find(args[4]);
-                    const auto rhs = values.find(args[5]);
-                    if (lhs == values.end() || rhs == values.end() ||
-                        lhs->second.type() != result_type || rhs->second.type() != result_type) {
+                    auto resolve_float=[&](uint32_t id, backend::TypedValue &value) -> bool {
+                        if (auto it=values.find(id);it!=values.end() && it->second.type()==result_type) {
+                            value=it->second;
+                            return true;
+                        }
+                        if (result_type==backend::TypedType::F32) {
+                            const auto constant=constants.find(id);
+                            if (constant==constants.end()) return false;
+                            value=program.literal_f32(constant->second);
+                            return value.kind()!=backend::TypedValueKind::None;
+                        }
+                        return false;
+                    };
+                    backend::TypedValue lhs{},rhs{};
+                    if (!resolve_float(args[4],lhs) || !resolve_float(args[5],rhs)) {
                         error = "unresolved GLSL.std.450 min/max operand";
                         return false;
                     }
@@ -1257,7 +1394,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     const auto float_op = ext == GLSLstd450FMin ?
                         backend::TypedFloatOp::Min : backend::TypedFloatOp::Max;
                     if (!program.emit<backend::TypedOpcode::FloatBinary>(
-                            static_cast<uint8_t>(float_op), dst, lhs->second, rhs->second)) {
+                            static_cast<uint8_t>(float_op), dst, lhs, rhs)) {
                         error = "failed to emit Typed IR min/max"; return false;
                     }
                     values[args[1]] = dst;
@@ -1525,17 +1662,25 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     values[args[1]]=dst;
                 } else if (op==spv::OpSLessThan) {
                     if (count!=5) { error="invalid signed integer compare instruction"; return false; }
-                    const auto lhs=values.find(args[2]);
-                    const auto rhs=values.find(args[3]);
-                    if (lhs==values.end() || rhs==values.end() ||
-                        lhs->second.type()!=backend::TypedType::S32 || rhs->second.type()!=backend::TypedType::S32) {
+                    auto resolve_s32=[&](uint32_t id,backend::TypedValue &value) -> bool {
+                        if (auto it=values.find(id);it!=values.end() && it->second.type()==backend::TypedType::S32) {
+                            value=it->second;
+                            return true;
+                        }
+                        const auto constant=constants.find(id);
+                        if (constant==constants.end()) return false;
+                        value=program.literal_s32(static_cast<int32_t>(constant->second));
+                        return value.kind()!=backend::TypedValueKind::None;
+                    };
+                    backend::TypedValue lhs{},rhs{};
+                    if (!resolve_s32(args[2],lhs) || !resolve_s32(args[3],rhs)) {
                         error="signed loop compare operands are unresolved or non-S32";
                         return false;
                     }
                     const auto dst=program.make_predicate();
                     if (dst.kind()==backend::TypedValueKind::None ||
                         !program.emit<backend::TypedOpcode::Compare>(
-                            static_cast<uint8_t>(usse::CompareOp::Less),dst,lhs->second,rhs->second)) {
+                            static_cast<uint8_t>(usse::CompareOp::Less),dst,lhs,rhs)) {
                         error="failed to emit Typed S32 loop compare";
                         return false;
                     }
@@ -1634,6 +1779,33 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         error = "failed to emit Typed IR float unary operation"; return false;
                     }
                     values[args[1]] = dst;
+                } else if (op == spv::OpVectorTimesScalar) {
+                    if (count!=5) { error="invalid vector-times-scalar instruction"; return false; }
+                    const auto result_type=typed_type(compiler.get_type(args[0]));
+                    const auto vector=values.find(args[2]);
+                    backend::TypedValue scalar{};
+                    if (auto it=values.find(args[3]);it!=values.end() && it->second.type()==backend::TypedType::F32)
+                        scalar=it->second;
+                    else if (auto constant=constants.find(args[3]);constant!=constants.end())
+                        scalar=program.literal_f32(constant->second);
+                    const uint8_t components=backend::typed_component_count(result_type);
+                    if ((result_type!=backend::TypedType::F32x2 && result_type!=backend::TypedType::F32x3 &&
+                         result_type!=backend::TypedType::F32x4) || vector==values.end() ||
+                        vector->second.type()!=result_type || scalar.kind()==backend::TypedValueKind::None ||
+                        scalar.type()!=backend::TypedType::F32 || components<2 || components>4) {
+                        error="OpVectorTimesScalar is outside the validated F32 vector/scalar subset";
+                        return false;
+                    }
+                    const auto splat=program.make_value(result_type);
+                    const auto dst=program.make_value(result_type);
+                    if (splat.kind()==backend::TypedValueKind::None || dst.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::FloatSplat>(0,splat,scalar) ||
+                        !program.emit<backend::TypedOpcode::FloatBinary>(
+                            static_cast<uint8_t>(backend::TypedFloatOp::Mul),dst,vector->second,splat)) {
+                        error="failed to lower OpVectorTimesScalar through splat/mul";
+                        return false;
+                    }
+                    values[args[1]]=dst;
                 } else if (op == spv::OpFMul || op == spv::OpFAdd || op == spv::OpFSub ||
                            op == spv::OpFDiv || op == spv::OpFMod) {
                     if (count != 5) { error = "invalid floating binary instruction"; return false; }
@@ -1653,6 +1825,18 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         const uint8_t components=backend::typed_component_count(result_type);
                         if (vector_constant==float_vector_constants.end() || components<2 || components>4)
                             return false;
+                        if (result_type==backend::TypedType::F32x3) {
+                            std::array<backend::TypedValue,3> lanes{};
+                            for (uint8_t lane=0;lane<3;++lane) {
+                                lanes[lane]=program.literal_f32(vector_constant->second[lane]);
+                                if (lanes[lane].kind()==backend::TypedValueKind::None) return false;
+                            }
+                            const auto composed=program.compose_f32x3(lanes);
+                            if (composed.kind()==backend::TypedValueKind::None) return false;
+                            value=composed;
+                            values[id]=composed;
+                            return true;
+                        }
                         for (uint8_t lane=1;lane<components;++lane)
                             if (vector_constant->second[lane]!=vector_constant->second[0]) return false;
                         const auto scalar=program.literal_f32(vector_constant->second[0]);
@@ -1667,7 +1851,10 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     backend::TypedValue lhs{},rhs{};
                     if (result_type == backend::TypedType::Invalid || !backend::typed_is_float(result_type) ||
                         !resolve_float(args[2],lhs) || !resolve_float(args[3],rhs)) {
-                        error = "floating binary operands are unresolved or mismatched"; return false;
+                        error = "floating binary operands are unresolved or mismatched (opcode " +
+                            std::to_string(op) + ", lhs " + std::to_string(args[2]) +
+                            ", rhs " + std::to_string(args[3]) + ")";
+                        return false;
                     }
                     if (op==spv::OpFMod) {
                         if (result_type!=backend::TypedType::F32) {
@@ -1805,6 +1992,10 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                                     return false;
                                 }
                                 initial=program.literal_s32(static_cast<int32_t>(constant->second));
+                            } else if (phi.type==backend::TypedType::F32x4) {
+                                auto constant=float_vector_constants.find(incoming);
+                                if (constant!=float_vector_constants.end())
+                                    initial=program.literal_f32x4(constant->second);
                             }
                             if (initial.kind()==backend::TypedValueKind::None || initial.type()!=phi.type) {
                                 error="loop phi initial value is unresolved or type-mismatched";
@@ -1842,6 +2033,52 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                             }
                         }
                     }
+                    // Internal two-way float4 phis (for example the nested
+                    // lighting accumulators in vitaGL's fixed-function path)
+                    // become one mutable Typed state value. Each predecessor
+                    // writes the state before branching to the merge block;
+                    // the OpPhi itself then aliases that stable handle.
+                    for (auto &entry:phi_sinks) {
+                        auto &phi=entry.second;
+                        if (phi.loop_state || phi.output_resource!=std::numeric_limits<uint16_t>::max() ||
+                            phi.merge_label!=target_id) continue;
+                        if (phi.type!=backend::TypedType::F32x4) {
+                            error="internal structured phi is outside the validated F32x4 subset";
+                            return false;
+                        }
+                        uint32_t incoming=0;
+                        if (phi.label0==current_label) incoming=phi.value0;
+                        else if (phi.label1==current_label) incoming=phi.value1;
+                        else {
+                            error="internal phi has no incoming value for predecessor";
+                            return false;
+                        }
+                        backend::TypedValue incoming_value{};
+                        if (auto value=values.find(incoming);value!=values.end()) {
+                            incoming_value=value->second;
+                        } else if (auto constant=float_vector_constants.find(incoming);
+                                   constant!=float_vector_constants.end()) {
+                            incoming_value=program.literal_f32x4(constant->second);
+                        }
+                        if (incoming_value.kind()==backend::TypedValueKind::None ||
+                            incoming_value.type()!=backend::TypedType::F32x4) {
+                            error="internal float4 phi incoming value is unresolved";
+                            return false;
+                        }
+                        auto state=values.find(entry.first);
+                        if (state==values.end()) {
+                            const auto mutable_value=program.make_value<backend::TypedType::F32x4>();
+                            if (mutable_value.kind()==backend::TypedValueKind::None ||
+                                !program.emit<backend::TypedOpcode::StateInit>(0,mutable_value,incoming_value)) {
+                                error="failed to initialize internal float4 phi state";
+                                return false;
+                            }
+                            values[entry.first]=mutable_value;
+                        } else if (!program.emit<backend::TypedOpcode::StateUpdate>(0,state->second,incoming_value)) {
+                            error="failed to update internal float4 phi state";
+                            return false;
+                        }
+                    }
                     // If this predecessor contributes to a two-way phi that feeds
                     // fragment COLOR0, sink the store before leaving the block.
                     for (const auto &entry:phi_sinks) {
@@ -1875,6 +2112,9 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                             error="loop phi state was not initialized on its entry edge";
                             return false;
                         }
+                    } else if (values.find(args[1])!=values.end()) {
+                        // Internal structured phi state was materialized on its
+                        // predecessor branches above.
                     } else if (phi->second.output_resource==std::numeric_limits<uint16_t>::max()) {
                         error="OpPhi is not the validated two-way fragment-output merge";
                         return false;

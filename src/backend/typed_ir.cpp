@@ -764,10 +764,11 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                                        instruction.dst.type()==TypedType::F32x4) &&
                                       instruction.src0.type()==instruction.dst.type();
             if (!supported_type || unary_op > TypedFloatUnaryOp::Floor ||
-                ((unary_op==TypedFloatUnaryOp::Rsqrt || unary_op==TypedFloatUnaryOp::Log2 || unary_op==TypedFloatUnaryOp::Exp2 ||
+                ((unary_op==TypedFloatUnaryOp::Reciprocal || unary_op==TypedFloatUnaryOp::Rsqrt ||
+                  unary_op==TypedFloatUnaryOp::Log2 || unary_op==TypedFloatUnaryOp::Exp2 ||
                   unary_op==TypedFloatUnaryOp::Floor) &&
                  instruction.dst.type()!=TypedType::F32)) {
-                error = "typed float unary currently supports scalar/F32-vector negate/absolute/saturate plus scalar Rsqrt/Log2/Exp2/Floor";
+                error = "typed float unary currently supports scalar/F32-vector negate/absolute/saturate plus scalar Reciprocal/Rsqrt/Log2/Exp2/Floor";
                 return false;
             }
             const auto src = lower_value(typed, instruction.src0, values, literals, machine);
@@ -775,10 +776,12 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             const uint8_t width=static_cast<uint8_t>(components>2 ? 2 : 1);
             const uint8_t mask=static_cast<uint8_t>((1u<<components)-1u);
             MachineOperand dst{};
-            if (unary_op==TypedFloatUnaryOp::Rsqrt || unary_op==TypedFloatUnaryOp::Log2 || unary_op==TypedFloatUnaryOp::Exp2) {
+            if (unary_op==TypedFloatUnaryOp::Reciprocal || unary_op==TypedFloatUnaryOp::Rsqrt ||
+                unary_op==TypedFloatUnaryOp::Log2 || unary_op==TypedFloatUnaryOp::Exp2) {
                 dst=machine.make_value<MachineType::F32>();
-                const auto complex_op=unary_op==TypedFloatUnaryOp::Rsqrt ? usse::ComplexOp::Rsqrt :
-                    (unary_op==TypedFloatUnaryOp::Log2 ? usse::ComplexOp::Log2 : usse::ComplexOp::Exp2);
+                const auto complex_op=unary_op==TypedFloatUnaryOp::Reciprocal ? usse::ComplexOp::Reciprocal :
+                    (unary_op==TypedFloatUnaryOp::Rsqrt ? usse::ComplexOp::Rsqrt :
+                     (unary_op==TypedFloatUnaryOp::Log2 ? usse::ComplexOp::Log2 : usse::ComplexOp::Exp2));
                 if (src.kind()==MachineOperandKind::None || dst.kind()==MachineOperandKind::None ||
                     !machine.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(complex_op),dst,src)) {
                     error="failed to lower scalar complex operation to validated VCOMP";
@@ -848,9 +851,30 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             error="high-level float swizzle requires compile_typed_shader";
             return false;
         }
-        case TypedOpcode::FloatConstant:
-            error="high-level float constant requires compile_typed_shader";
-            return false;
+        case TypedOpcode::FloatConstant: {
+            if (instruction.dst.type()!=TypedType::F32x4 ||
+                instruction.aux>=typed.float4_literals().size()) {
+                error="typed float constant side-table entry is invalid";
+                return false;
+            }
+            const auto &bits=typed.float4_literals()[instruction.aux];
+            if (bits!=std::array<uint32_t,4>{{0,0,0,0}}) {
+                error="machine lowering currently materializes only float4 zero constants";
+                return false;
+            }
+            const auto dst=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+            const auto zero=machine.physical(machine_immediate(0),MachineType::F32);
+            if (dst.kind()==MachineOperandKind::None ||
+                !machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                    machine_move_config(0xF),dst,zero)) {
+                error="failed to materialize float4 zero constant";
+                return false;
+            }
+            values[instruction.dst.id()]=dst;
+            value_types[instruction.dst.id()]=TypedType::F32x4;
+            value_defined[instruction.dst.id()]=true;
+            break;
+        }
         case TypedOpcode::FloatCompose: {
             if (instruction.dst.type()!=TypedType::F32x4 || instruction.aux>=typed.float4_composites().size()) {
                 error="typed float4 compose side-table entry is invalid";
