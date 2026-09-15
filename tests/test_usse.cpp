@@ -614,6 +614,26 @@ int test_usse() {
             failures += fail("oracle Exp2 VCOMP semantic mismatch");
     }
     {
+        const PackFormat src_formats[]={PackFormat::U16,PackFormat::S16};
+        const uint64_t expected[]={0x40810786a0000000ULL,0x40810986a0000000ULL};
+        for (size_t i=0;i<2;++i) {
+            VpckSemantic pack{};
+            pack.dst={RegisterBank::PrimaryAttribute,0};
+            pack.src1={RegisterBank::PrimaryAttribute,0};
+            pack.src2={RegisterBank::Immediate,0};
+            pack.src_format=src_formats[i];
+            pack.dst_format=PackFormat::F32;
+            pack.dest_mask=1;
+            pack.no_schedule=false;
+            uint64_t word=0;
+            VpckSemantic decoded{};
+            if (!encode_vpck_semantic(pack,&word) || word!=expected[i] ||
+                !decode_vpck_semantic(word,&decoded) || decoded.src_format!=src_formats[i] ||
+                decoded.dst_format!=PackFormat::F32 || decoded.dest_mask!=1)
+                failures += fail(i?"oracle S16->F32 VPCK mismatch":"oracle U16->F32 VPCK mismatch");
+        }
+    }
+    {
         VtstF32LaneLessScalarSemantic alpha_cmp{};
         alpha_cmp.vector_lane={RegisterBank::PrimaryAttribute,1};
         alpha_cmp.scalar={RegisterBank::SecondaryAttribute,0};

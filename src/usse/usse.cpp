@@ -263,13 +263,17 @@ bool decode_vmov_semantic(uint64_t word, VmovSemantic *i) {
 bool encode_vpck_semantic(const VpckSemantic &i, uint64_t *word) {
     if (!word || i.dst.num >= 128 || i.src1.num >= 64 || i.src2.num >= 64 ||
         i.dest_mask >= 16 || i.repeat_count >= 16) return false;
-    // Integer source numbering aliases component selector bits. The only
-    // integer form exposed semantically is the oracle-anchored scalar S16->F16
-    // COLOR pack used after S32 bitwise operations.
+    // Integer source numbering aliases component selector bits. Expose only
+    // scalar integer forms independently anchored by Sony probes: S16->F16
+    // COLOR and U16/S16->F32 arithmetic conversion.
     const bool scalar_s16=i.src_format==PackFormat::S16 && i.dst_format==PackFormat::F16 &&
         i.dest_mask==1 && i.components[0]==0 && i.repeat_count==0 && !i.scale &&
         i.src2.bank==RegisterBank::Immediate && i.src2.num==0;
-    if (i.src_format != PackFormat::F16 && i.src_format != PackFormat::F32 && !scalar_s16) return false;
+    const bool scalar_16_f32=(i.src_format==PackFormat::U16 || i.src_format==PackFormat::S16) &&
+        i.dst_format==PackFormat::F32 && i.dest_mask==1 && i.components[0]==0 &&
+        i.repeat_count==0 && !i.scale;
+    if (i.src_format != PackFormat::F16 && i.src_format != PackFormat::F32 &&
+        !scalar_s16 && !scalar_16_f32) return false;
     for (uint8_t c : i.components) if (c > 3) return false;
 
     VpckFields f{};
@@ -305,7 +309,9 @@ bool decode_vpck_semantic(uint64_t word, VpckSemantic *i) {
     const bool scalar_s16=sf==PackFormat::S16 && df==PackFormat::F16 && f.dest_mask==1 &&
         !f.component0_bit0 && !f.component0_bit1 && f.repeat_count==0 && !f.scale &&
         f.src2_bank==2 && f.src2_bank_ext && f.src2_num==0;
-    if (sf != PackFormat::F16 && sf != PackFormat::F32 && !scalar_s16) return false;
+    const bool scalar_16_f32=(sf==PackFormat::U16 || sf==PackFormat::S16) && df==PackFormat::F32 &&
+        f.dest_mask==1 && !f.component0_bit0 && !f.component0_bit1 && f.repeat_count==0 && !f.scale;
+    if (sf != PackFormat::F16 && sf != PackFormat::F32 && !scalar_s16 && !scalar_16_f32) return false;
     if (!decode_dest_bank(f.dest_bank, f.dest_bank_ext, &i->dst.bank) ||
         !decode_src1_bank(f.src1_bank, f.src1_bank_ext, &i->src1.bank) ||
         !decode_src1_bank(f.src2_bank, f.src2_bank_ext, &i->src2.bank)) return false;

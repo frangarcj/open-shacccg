@@ -87,6 +87,8 @@ std::string normalize_cg_integer_spellings(const std::string &input) {
 std::string normalize_cg_scalar_bit_casts(const std::string &input) {
     std::string output;
     output.reserve(input.size());
+    bool used_s16x2=false;
+    bool used_u16x2=false;
     for (size_t i=0;i<input.size();) {
         if (!is_identifier_start(input[i])) {
             output.push_back(input[i++]);
@@ -106,10 +108,20 @@ std::string normalize_cg_scalar_bit_casts(const std::string &input) {
                     while (p<input.size() && is_identifier_char(input[p])) ++p;
                     const std::string type=input.substr(type_begin,p-type_begin);
                     while (p<input.size() && std::isspace(static_cast<unsigned char>(input[p]))) ++p;
-                    if (p<input.size() && input[p]=='>' && type=="uint") {
-                        output += "asuint";
-                        i=p+1;
-                        continue;
+                    if (p<input.size() && input[p]=='>') {
+                        if (type=="uint") {
+                            output += "asuint";
+                            i=p+1;
+                            continue;
+                        }
+                        if (type=="int2" || type=="uint2") {
+                            const bool signed_halves=type=="int2";
+                            output += signed_halves ? "_vsc_bit_cast_s16x2" : "_vsc_bit_cast_u16x2";
+                            used_s16x2 = used_s16x2 || signed_halves;
+                            used_u16x2 = used_u16x2 || !signed_halves;
+                            i=p+1;
+                            continue;
+                        }
                     }
                 }
             }
@@ -117,7 +129,14 @@ std::string normalize_cg_scalar_bit_casts(const std::string &input) {
         output += token;
         i=end;
     }
-    return output;
+    if (!used_s16x2 && !used_u16x2) return output;
+    std::string helpers;
+    if (used_s16x2)
+        helpers += "int2 _vsc_bit_cast_s16x2(float v){uint b=asuint(v);return int2(int(b<<16)>>16,int(b)>>16);}\n";
+    if (used_u16x2)
+        helpers += "uint2 _vsc_bit_cast_u16x2(float v){uint b=asuint(v);return uint2(b&65535u,b>>16);}\n";
+    helpers += output;
+    return helpers;
 }
 
 struct GlobalInterfaceDecl {

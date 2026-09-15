@@ -1137,6 +1137,68 @@ bool compile_vertex_uniform_matrix_three_texcoords_color_point_size(
     return true;
 }
 
+bool compile_vertex_fixed16_matrix_machine(const MachineProgram &primary,
+                                           const std::vector<IrAttribute> &attributes,
+                                           const std::vector<IrMatrix4Uniform> &matrices,
+                                           const IrUniformFloat &point_size,
+                                           uint32_t binary_guid, uint32_t source_guid,
+                                           IrCompileResult &out) {
+    out={};
+    if (attributes.size()!=3 || matrices.size()!=2 || point_size.components!=1 ||
+        attributes[0].components!=4 || attributes[0].resource_index!=0 ||
+        attributes[1].components!=2 || attributes[1].resource_index!=4 ||
+        attributes[2].components!=4 || attributes[2].resource_index!=8 ||
+        matrices[0].resource_index!=0 || matrices[1].resource_index!=16 ||
+        point_size.resource_index!=32) {
+        out.error="fixed16 matrix profile requires position/uv/color, mat4@0/16 and point-size@32";
+        return false;
+    }
+    MachineCompileResult compiled;
+    if (!compile_words(primary,compiled,out,"fixed16 matrix Machine lowering failed")) return false;
+
+    const uint8_t interface_block[32]={
+        0x3f,0x0f,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0x19,0,0x0b,0x01,0,0,0,0,0,0,0,0,0,0,0,
+    };
+    // The fixed conversion needs 1/65536. Keep 511 beside it for PSIZE clamp;
+    // 1.0 uses the validated SPECIAL constant and does not consume a literal.
+    const gxp::LiteralDesc literals[]={{0,0x37800000u},{1,0x43ff8000u}};
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,34},{19,0,34,2}};
+    const gxp::ParameterDesc parameters[]={
+        {attributes[0].name.c_str(),0,0,4,0,0,0,1,0},
+        {attributes[1].name.c_str(),0,0,4,0,0,0,1,4},
+        {attributes[2].name.c_str(),0,0,4,0,0,0,1,8},
+        {matrices[0].name.c_str(),1,0,4,14,0,0,4,0},
+        {matrices[1].name.c_str(),1,0,4,14,0,0,4,16},
+        {point_size.name.c_str(),1,0,1,14,0,0,1,32},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid; image.source_guid=source_guid;
+    image.program_flags=0x00090000;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=12;
+    image.secondary_register_count=36;
+    image.primary_phase_count=1;
+    image.data_buffer_count=2;
+    image.default_uniform_buffer_count=34;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=compiled.words.data(); image.primary_instruction_count=compiled.words.size();
+    image.containers=containers; image.container_count=2;
+    image.parameters=parameters; image.parameter_count=std::size(parameters);
+    image.literals=literals; image.literal_count=2;
+    image.vertex_primary_padding_word=true;
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected fixed16 matrix profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for fixed16 matrix profile"; return false;
+    }
+    return true;
+}
+
 bool compile_vertex_matrix_normal_multivarying_point_size(
     const std::vector<IrAttribute> &attributes,
     const IrMatrix4Uniform &modelview, const IrMatrix4Uniform &projection,

@@ -903,6 +903,15 @@ int test_cg_frontend() {
         failures += fail("Cg unsigned int spelling did not normalize to glslang HLSL");
     if (!compile("float main(float a:TEXCOORD0):COLOR0{unsigned int x=bit_cast<unsigned int>(a);return (float)x;}", VSC_STAGE_FRAGMENT))
         failures += fail("Cg scalar bit_cast<unsigned int> did not normalize to HLSL asuint");
+    if (!compile_vertex_gxp(
+            "float fx(float v){return float(bit_cast<short2>(v).y)+"
+            "float(bit_cast<unsigned short2>(v).x)*(1.0f/65536.0f);}"
+            "void main(float4 p,float2 uv,float4 c,float2 out tc:TEXCOORD0,float4 out pos:POSITION,"
+            "float4 out col:COLOR,float out ps:PSIZE,uniform float4x4 mvp,uniform float4x4 texmat[1],"
+            "uniform float point_size){p=float4(fx(p.x),fx(p.y),fx(p.z),fx(p.w));"
+            "uv=float2(fx(uv.x),fx(uv.y));pos=mul(mvp,p);tc=mul(texmat[0],float4(uv,0.f,1.f)).xy;"
+            "col=c;ps=point_size;}","fixed16-matrix-texcoord-color-psize"))
+        failures += fail("Cg packed fixed16 bit_cast vertex profile did not compile end to end");
     if (!compile("void f(float4 inout a){a+=1.f;} float4 main(float4 a:TEXCOORD0):COLOR0{f(a);return a;}", VSC_STAGE_FRAGMENT))
         failures += fail("Cg post-type inout qualifier normalization did not compile");
     if (!compile("float4 main(float4 p:POSITION,uniform float4x4 model,uniform float4x4 mvp):POSITION{"

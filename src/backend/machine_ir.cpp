@@ -757,6 +757,7 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
         else if (program.instructions()[i].opcode()==MachineOpcode::F32ToS32Color) words=3;
         else if (program.instructions()[i].opcode()==MachineOpcode::S32ToF32Scalar) words=9;
         else if (program.instructions()[i].opcode()==MachineOpcode::S32x2ColorPack) words=2;
+        else if (program.instructions()[i].opcode()==MachineOpcode::TransformMat4) words=4;
         else if (program.instructions()[i].opcode()==MachineOpcode::TransformTexcoordMat4XY) words=4;
         word_positions[i + 1] = word_positions[i] + words;
     }
@@ -1322,6 +1323,32 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             }
             break;
         }
+        case MachineOpcode::TransformMat4: {
+            usse::RegisterRef dst{},src{},matrix{};
+            if (instruction.subop()!=0 || guard!=usse::Predicate::Always ||
+                !resolve_register_value(instruction.dst,MachineType::F32,out.value_registers,&dst) ||
+                !resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&src) ||
+                !resolve_register_value(instruction.src1,MachineType::F32,out.value_registers,&matrix) ||
+                matrix.bank!=usse::RegisterBank::SecondaryAttribute || matrix.num>120) {
+                out.error="mat4 transform requires F32 vector operands and an SA matrix base";
+                return false;
+            }
+            for (uint8_t lane=0;lane<4;++lane) {
+                usse::V32NmadSemantic dot{};
+                dot.op=usse::VectorOp::Dot;
+                dot.dst=dst;
+                dot.src1=src;
+                dot.src2={usse::RegisterBank::SecondaryAttribute,static_cast<uint8_t>(matrix.num+lane*2u)};
+                dot.dest_mask=static_cast<uint8_t>(1u<<lane);
+                dot.skip_invalid=true;
+                dot.no_schedule=lane!=3;
+                if (!builder.instruction(dot)) {
+                    out.error="failed to encode generic mat4 transform";
+                    return false;
+                }
+            }
+            break;
+        }
         case MachineOpcode::TransformTexcoordMat4XY: {
             usse::RegisterRef dst{},coord{},matrix{};
             const uint16_t config=instruction.config();
@@ -1560,6 +1587,77 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 return false;
             }
             if (!builder.instruction(op)) { out.error = "failed to encode machine bitwise operation"; return false; }
+            break;
+        }
+        case MachineOpcode::Bitcast: {
+            const MachineType dst_type=instruction.dst.type();
+            const MachineType src_type=instruction.src0.type();
+            const bool dst32=dst_type==MachineType::F32 || dst_type==MachineType::U32 || dst_type==MachineType::S32;
+            const bool src32=src_type==MachineType::F32 || src_type==MachineType::U32 || src_type==MachineType::S32;
+            usse::RegisterRef dst{},src{};
+            if (!dst32 || !src32 || dst_type==src_type || guard!=usse::Predicate::Always ||
+                !resolve_register_value(instruction.dst,dst_type,out.value_registers,&dst) ||
+                !resolve_register_value(instruction.src0,src_type,out.value_registers,&src)) {
+                out.error="machine bitcast requires distinct register-backed scalar 32-bit types";
+                return false;
+            }
+            const uint8_t component=instruction.src0.physical_component();
+            if (component!=0xff) {
+                if (src_type!=MachineType::F32 || component>=4) {
+                    out.error="component-selected machine bitcast is validated only for F32 attribute lanes";
+                    return false;
+                }
+                usse::VmovSemantic move{};
+                move.dst=dst;
+                move.src=src;
+                move.data_type=usse::DataType::F32;
+                move.dest_mask=1;
+                move.swizzle=component;
+                move.skip_invalid=true;
+                move.no_schedule=false;
+                if (!builder.instruction(move)) {
+                    out.error="failed to stage component-selected F32 bitcast";
+                    return false;
+                }
+                break;
+            }
+            usse::VbwSemantic copy{};
+            copy.op=usse::BitwiseOp::Or;
+            copy.dst=dst;
+            copy.src1=src;
+            copy.src2_is_immediate=true;
+            copy.immediate=0;
+            if (!builder.instruction(copy)) {
+                out.error="failed to encode machine bitcast as VBW OR 0";
+                return false;
+            }
+            break;
+        }
+        case MachineOpcode::Narrow16ToF32: {
+            if (instruction.subop()>1 || guard!=usse::Predicate::Always ||
+                instruction.dst.type()!=MachineType::F32 ||
+                instruction.src0.type()!=(instruction.subop()?MachineType::S32:MachineType::U32)) {
+                out.error="machine narrow16 conversion requires matching U32/S32 source";
+                return false;
+            }
+            usse::RegisterRef dst{},src{};
+            if (!resolve_register_value(instruction.dst,MachineType::F32,out.value_registers,&dst) ||
+                !resolve_register_value(instruction.src0,instruction.src0.type(),out.value_registers,&src)) {
+                out.error="machine narrow16 conversion requires register-backed operands";
+                return false;
+            }
+            usse::VpckSemantic pack{};
+            pack.dst=dst;
+            pack.src1=src;
+            pack.src2={usse::RegisterBank::Immediate,0};
+            pack.src_format=instruction.subop()?usse::PackFormat::S16:usse::PackFormat::U16;
+            pack.dst_format=usse::PackFormat::F32;
+            pack.dest_mask=1;
+            pack.no_schedule=false;
+            if (!builder.instruction(pack)) {
+                out.error="failed to encode narrow16-to-F32 VPCK";
+                return false;
+            }
             break;
         }
         case MachineOpcode::Count:

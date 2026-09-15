@@ -345,7 +345,8 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                                      const std::vector<MachineOperand> *literal_bindings = nullptr,
                                      std::vector<MachineOperand> *lowered_values = nullptr,
                                      bool ignore_output_stores = false,
-                                     const std::vector<bool> *precomputed_reciprocals = nullptr) {
+                                     const std::vector<bool> *precomputed_reciprocals = nullptr,
+                                     const std::vector<uint16_t> *matrix_word_bindings = nullptr) {
     if (reset_machine) machine = {};
     error.clear();
     if (stored_output) *stored_output = {};
@@ -484,10 +485,34 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             value_defined[instruction.dst.id()]=true;
             break;
         case TypedOpcode::ConstructPosition:
-        case TypedOpcode::TransformPosition:
         case TypedOpcode::TransformVector3:
             error = "high-level typed shader operation requires compile_typed_shader";
             return false;
+        case TypedOpcode::TransformPosition: {
+            if (!matrix_word_bindings || instruction.aux>=matrix_word_bindings->size() ||
+                (*matrix_word_bindings)[instruction.aux]==std::numeric_limits<uint16_t>::max() ||
+                instruction.dst.type()!=TypedType::F32x4 || instruction.src0.type()!=TypedType::F32x4) {
+                error="typed mat4 transform lacks a validated matrix binding";
+                return false;
+            }
+            const uint16_t word=(*matrix_word_bindings)[instruction.aux];
+            if ((word&1u) || word/2u>=128) {
+                error="typed mat4 transform matrix binding is not SA aligned";
+                return false;
+            }
+            const auto src=lower_value(typed,instruction.src0,values,literals,machine);
+            const auto dst=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+            if (src.kind()==MachineOperandKind::None || dst.kind()==MachineOperandKind::None ||
+                !machine.emit<MachineOpcode::TransformMat4>(0,dst,src,
+                    machine.physical(machine_secondary(static_cast<uint8_t>(word/2u)),MachineType::F32))) {
+                error="failed to lower typed generic mat4 transform";
+                return false;
+            }
+            values[instruction.dst.id()]=dst;
+            value_types[instruction.dst.id()]=TypedType::F32x4;
+            value_defined[instruction.dst.id()]=true;
+            break;
+        }
         case TypedOpcode::Sample2D: {
             if (instruction.dst.type()!=TypedType::F32x4 || instruction.src0.type()!=TypedType::Sampler2D ||
                 instruction.src1.type()!=TypedType::F32x2 || instruction.src0.id()>=sampler_bindings.size() ||
@@ -1061,6 +1086,44 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         case TypedOpcode::S32ToFloat:
             error="typed S32->F32 conversion requires compile_typed_shader oracle profile";
             return false;
+        case TypedOpcode::Narrow16ToFloat: {
+            const bool signed_half=instruction.subop()==1;
+            const TypedType expected=signed_half?TypedType::S32:TypedType::U32;
+            if (instruction.subop()>1 || instruction.dst.type()!=TypedType::F32 ||
+                instruction.src0.type()!=expected) {
+                error="typed narrow16 conversion requires U32/S32 source and F32 destination";
+                return false;
+            }
+            const auto src=lower_value(typed,instruction.src0,values,literals,machine);
+            const auto dst=machine.make_value<MachineType::F32>();
+            if (src.kind()==MachineOperandKind::None || dst.kind()==MachineOperandKind::None ||
+                !machine.emit<MachineOpcode::Narrow16ToF32>(instruction.subop(),dst,src)) {
+                error="failed to lower typed narrow16 conversion";
+                return false;
+            }
+            values[instruction.dst.id()]=dst;
+            value_types[instruction.dst.id()]=TypedType::F32;
+            value_defined[instruction.dst.id()]=true;
+            break;
+        }
+        case TypedOpcode::Bitcast: {
+            const MachineType dst_type=machine_type(instruction.dst.type());
+            const MachineType src_type=machine_type(instruction.src0.type());
+            const bool dst32=dst_type==MachineType::F32 || dst_type==MachineType::U32 || dst_type==MachineType::S32;
+            const bool src32=src_type==MachineType::F32 || src_type==MachineType::U32 || src_type==MachineType::S32;
+            const auto src=lower_value(typed,instruction.src0,values,literals,machine);
+            const auto dst=machine.make_value(dst_type);
+            if (!dst32 || !src32 || instruction.dst.type()==instruction.src0.type() ||
+                src.kind()==MachineOperandKind::None || dst.kind()==MachineOperandKind::None ||
+                !machine.emit<MachineOpcode::Bitcast>(0,dst,src)) {
+                error="typed bitcast requires distinct scalar 32-bit F32/U32/S32 types";
+                return false;
+            }
+            values[instruction.dst.id()]=dst;
+            value_types[instruction.dst.id()]=instruction.dst.type();
+            value_defined[instruction.dst.id()]=true;
+            break;
+        }
         case TypedOpcode::Bitwise: {
             const bool integer=(instruction.dst.type()==TypedType::U32 || instruction.dst.type()==TypedType::S32) &&
                 instruction.src0.type()==instruction.dst.type() && instruction.src1.type()==instruction.dst.type();
@@ -1315,6 +1378,111 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             const uint16_t resource_id = static_cast<uint16_t>(resource - resources.data());
             matrix_for_resource[resource_id] = static_cast<uint32_t>(vertex_matrices.size());
             vertex_matrices.push_back({shader.resource_name(*resource), resource->index});
+        }
+
+        // Fixed 16.16 vitaGL vertex shape. The source values are ordinary float
+        // attributes whose bits are reinterpreted as signed/unsigned 16-bit
+        // halves, combined as hi + lo/65536, then transformed by the same two
+        // mat4 resources as the regular one-texture + COLOR + PSIZE profile.
+        size_t fixed_store_count=0,fixed_narrow_count=0;
+        for (const auto &instruction:instructions) {
+            fixed_store_count += instruction.opcode()==TypedOpcode::StoreOutput;
+            fixed_narrow_count += instruction.opcode()==TypedOpcode::Narrow16ToFloat;
+        }
+        if (fixed_store_count==4 && fixed_narrow_count>=12 && vertex_attributes.size()==3 &&
+            vertex_matrices.size()==2 && vertex_uniforms.size()==1 &&
+            vertex_attributes[0].components==4 && vertex_attributes[0].resource_index==0 &&
+            vertex_attributes[1].components==2 && vertex_attributes[1].resource_index==4 &&
+            vertex_attributes[2].components==4 && vertex_attributes[2].resource_index==8 &&
+            vertex_matrices[0].resource_index==0 && vertex_matrices[1].resource_index==16 &&
+            vertex_uniforms[0]->type==TypedType::F32 && vertex_uniforms[0]->index==32) {
+            TypedValue position{},texcoord{},color{},point{};
+            bool shape=true;
+            for (const auto &instruction:instructions) {
+                if (instruction.opcode()!=TypedOpcode::StoreOutput) continue;
+                if (instruction.aux>=resources.size()) { shape=false; break; }
+                const auto &output=resources[instruction.aux];
+                auto semantic=output.semantic;
+                if (semantic==TypedSemantic::None) semantic=infer_semantic(shader.resource_name(output));
+                if (semantic==TypedSemantic::Position && position.kind()==TypedValueKind::None) position=instruction.src0;
+                else if (semantic==TypedSemantic::Color && color.kind()==TypedValueKind::None) color=instruction.src0;
+                else if (semantic==TypedSemantic::TexCoord && output.semantic_index==0 && texcoord.kind()==TypedValueKind::None)
+                    texcoord=instruction.src0;
+                else if (semantic==TypedSemantic::PointSize && point.kind()==TypedValueKind::None) point=instruction.src0;
+                else { shape=false; break; }
+            }
+            const auto *position_transform=shape?definition(position):nullptr;
+            const auto *tex_swizzle=shape?definition(texcoord):nullptr;
+            const auto *tex_transform=tex_swizzle && tex_swizzle->opcode()==TypedOpcode::FloatSwizzle &&
+                tex_swizzle->subop()==static_cast<uint8_t>(TypedFloatSwizzleOp::XY) ? definition(tex_swizzle->src0) : nullptr;
+            const auto color_it=color.kind()==TypedValueKind::Value ? attribute_for_value.find(color.id()) : attribute_for_value.end();
+            const auto *point_resource=resource_for_value(point);
+            shape = shape && position_transform && position_transform->opcode()==TypedOpcode::TransformPosition &&
+                tex_transform && tex_transform->opcode()==TypedOpcode::TransformPosition &&
+                position_transform->aux<resources.size() && tex_transform->aux<resources.size() &&
+                resources[position_transform->aux].kind==TypedResourceKind::Matrix4 &&
+                resources[tex_transform->aux].kind==TypedResourceKind::Matrix4 &&
+                resources[position_transform->aux].index==0 && resources[tex_transform->aux].index==16 &&
+                color_it!=attribute_for_value.end() && color_it->second==2 &&
+                point_resource==vertex_uniforms[0];
+            if (shape) {
+                MachineProgram primary;
+                if (!primary.emit<MachineOpcode::Phase>()) {
+                    out.error="failed to start fixed16 vertex Machine program";
+                    return false;
+                }
+                std::vector<MachineOperand> literal_bindings(program.literals().size());
+                for (uint32_t id=0;id<program.literals().size();++id) {
+                    const uint32_t bits=program.literals()[id];
+                    if (bits==0) literal_bindings[id]=primary.physical(machine_immediate(0),MachineType::F32);
+                    else if (bits==0x3f800000u) literal_bindings[id]=primary.physical(machine_special(2),MachineType::F32,0);
+                    else if (bits==0x37800000u) literal_bindings[id]=primary.physical(machine_secondary(17),MachineType::F32,0);
+                }
+                std::vector<uint16_t> matrix_bindings(resources.size(),std::numeric_limits<uint16_t>::max());
+                for (uint16_t id=0;id<resources.size();++id)
+                    if (resources[id].kind==TypedResourceKind::Matrix4) matrix_bindings[id]=resources[id].index;
+                std::vector<MachineOperand> lowered;
+                std::string machine_error;
+                if (!lower_typed_program_impl(program,primary,machine_error,false,nullptr,nullptr,nullptr,
+                        false,std::numeric_limits<uint16_t>::max(),&literal_bindings,&lowered,true,nullptr,&matrix_bindings)) {
+                    out.error="fixed16 Typed->Machine lowering failed: "+machine_error;
+                    return false;
+                }
+                auto lowered_value=[&](TypedValue value) -> MachineOperand {
+                    return value.kind()==TypedValueKind::Value && value.id()<lowered.size()?lowered[value.id()]:MachineOperand{};
+                };
+                const auto p=lowered_value(position);
+                const auto uv=lowered_value(texcoord);
+                const auto c=lowered_value(color);
+                const auto ps=lowered_value(point);
+                if (p.kind()==MachineOperandKind::None || uv.kind()==MachineOperandKind::None ||
+                    c.kind()==MachineOperandKind::None || ps.kind()==MachineOperandKind::None ||
+                    !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                        machine_move_config(3,4,1),primary.physical(machine_vertex_output(0),MachineType::F32),p) ||
+                    !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                        machine_move_config(3),primary.physical(machine_vertex_output(4),MachineType::F32),uv) ||
+                    !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                        machine_move_config(3,4,1),primary.physical(machine_vertex_output(2),MachineType::F32),c)) {
+                    out.error="failed to append fixed16 vertex output moves";
+                    return false;
+                }
+                const auto point_low=primary.make_value<MachineType::F32>();
+                const auto point_clamped=primary.make_value<MachineType::F32>();
+                if (point_low.kind()==MachineOperandKind::None || point_clamped.kind()==MachineOperandKind::None ||
+                    !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Max),
+                        machine_vector_config(1),point_low,ps,primary.physical(machine_special(2),MachineType::F32,0)) ||
+                    !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Min),
+                        machine_vector_config(1),point_clamped,point_low,
+                        primary.physical(machine_secondary(17),MachineType::F32,1)) ||
+                    !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                        machine_move_config(1),primary.physical(machine_vertex_output(10),MachineType::F32),point_clamped) ||
+                    !primary.emit<MachineOpcode::Emit>()) {
+                    out.error="failed to append fixed16 point-size/output finalizer";
+                    return false;
+                }
+                return compile_vertex_fixed16_matrix_machine(primary,vertex_attributes,vertex_matrices,
+                    {shader.resource_name(*vertex_uniforms[0]),1,32},0,0,out);
+            }
         }
 
         // vitaGL's Phong vertex FFP shape combines two position matrices, one
@@ -1636,6 +1804,27 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 if (!transform || transform->opcode()!=TypedOpcode::TransformPosition ||
                     matrix_it==matrix_for_resource.end() || !xy01_attribute(transform->src0,attribute)) {
                     out.error="typed varying output is outside direct-input or mat4-transformed TEXCOORD subset";
+                    if (swizzle) out.error += ": producer=" + std::string(descriptor(swizzle->opcode())->name);
+                    if (transform) {
+                        out.error += ", transform-src=";
+                        if (const auto *src_def=definition(transform->src0)) {
+                            out.error += descriptor(src_def->opcode())->name;
+                            if (src_def->opcode()==TypedOpcode::FloatCompose &&
+                                src_def->aux<program.float4_composites().size()) {
+                                out.error += "[";
+                                const auto &parts=program.float4_composites()[src_def->aux];
+                                for (uint8_t lane=0;lane<2;++lane) {
+                                    if (lane) out.error += ",";
+                                    if (const auto *part=definition(parts[lane]))
+                                        out.error += descriptor(part->opcode())->name;
+                                    else if (resource_for_value(parts[lane])) out.error += "resource";
+                                    else out.error += "literal";
+                                }
+                                out.error += "]";
+                            }
+                        }
+                        else out.error += "resource/literal";
+                    }
                     return false;
                 }
                 transformed_varying=true;

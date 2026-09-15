@@ -269,6 +269,8 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
         std::unordered_map<uint32_t, uint32_t> loop_headers;
         std::unordered_set<uint32_t> kill_labels;
         std::unordered_set<uint32_t> s32_loop_state_ids;
+        std::unordered_set<uint32_t> narrow_u16_ids;
+        std::unordered_set<uint32_t> narrow_s16_ids;
 
         auto add_resource = [&](backend::TypedResourceKind kind, backend::TypedValue value,
                                 backend::TypedType type, const std::string &resource_name,
@@ -1377,6 +1379,43 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     return false;
                 }
                 values[args[1]]=dst;
+            } else if (op==spv::OpBitcast) {
+                if (count!=4) { error="invalid scalar bitcast instruction"; return false; }
+                const auto result_type=typed_type(compiler.get_type(args[0]));
+                const auto source=values.find(args[2]);
+                const auto scalar32=[](backend::TypedType type) {
+                    return type==backend::TypedType::F32 || type==backend::TypedType::U32 || type==backend::TypedType::S32;
+                };
+                if (!scalar32(result_type) || source==values.end() || !scalar32(source->second.type()) ||
+                    result_type==source->second.type()) {
+                    error="OpBitcast is outside the scalar F32/U32/S32 reinterpretation subset";
+                    return false;
+                }
+                const auto dst=program.make_value(result_type);
+                if (dst.kind()==backend::TypedValueKind::None ||
+                    !program.emit<backend::TypedOpcode::Bitcast>(0,dst,source->second)) {
+                    error="failed to emit Typed scalar 32-bit bitcast";
+                    return false;
+                }
+                values[args[1]]=dst;
+            } else if (op == spv::OpConvertUToF) {
+                if (count!=4 || typed_type(compiler.get_type(args[0]))!=backend::TypedType::F32 ||
+                    !narrow_u16_ids.count(args[2])) {
+                    error="unsigned-to-float conversion is outside the validated narrow U16 subset";
+                    return false;
+                }
+                const auto source=values.find(args[2]);
+                if (source==values.end() || source->second.type()!=backend::TypedType::U32) {
+                    error="narrow U16 conversion source is unresolved";
+                    return false;
+                }
+                const auto dst=program.make_value<backend::TypedType::F32>();
+                if (dst.kind()==backend::TypedValueKind::None ||
+                    !program.emit<backend::TypedOpcode::Narrow16ToFloat>(0,dst,source->second)) {
+                    error="failed to emit narrow U16->F32 conversion";
+                    return false;
+                }
+                values[args[1]]=dst;
             } else if (op == spv::OpConvertSToF) {
                 if (count!=4 || typed_type(compiler.get_type(args[0]))!=backend::TypedType::F32) {
                     error="signed-to-float conversion is outside the validated scalar F32 subset";
@@ -1388,8 +1427,10 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     return false;
                 }
                 const auto dst=program.make_value<backend::TypedType::F32>();
+                const bool narrow=narrow_s16_ids.count(args[2])!=0;
                 if (dst.kind()==backend::TypedValueKind::None ||
-                    !program.emit<backend::TypedOpcode::S32ToFloat>(0,dst,source->second)) {
+                    !(narrow ? program.emit<backend::TypedOpcode::Narrow16ToFloat>(1,dst,source->second) :
+                              program.emit<backend::TypedOpcode::S32ToFloat>(0,dst,source->second))) {
                     error="failed to emit Typed S32->F32 conversion";
                     return false;
                 }
@@ -1431,6 +1472,16 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         return false;
                     }
                     values[args[1]]=dst;
+                    auto constant_is=[&](uint32_t id,uint32_t expected) {
+                        const auto it=constants.find(id);
+                        return it!=constants.end() && it->second==expected;
+                    };
+                    if (result_type==backend::TypedType::U32 && bitwise==usse::BitwiseOp::And &&
+                        (constant_is(args[2],0xffffu) || constant_is(args[3],0xffffu)))
+                        narrow_u16_ids.insert(args[1]);
+                    if (result_type==backend::TypedType::S32 && bitwise==usse::BitwiseOp::ArithmeticShiftRight &&
+                        constant_is(args[3],16u))
+                        narrow_s16_ids.insert(args[1]);
                 } else if (map_compare(op,compare)) {
                     if (count!=5) { error="invalid scalar integer compare instruction"; return false; }
                     auto resolve_u32=[&](uint32_t id, backend::TypedValue &value) -> bool {
