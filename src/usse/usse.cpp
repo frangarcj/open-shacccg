@@ -466,14 +466,16 @@ bool decode_vcomp_rcp_scalar_f32_semantic(uint64_t word, VcompRcpScalarF32Semant
 bool encode_vcomp_f32_semantic(const VcompF32Semantic &i, uint64_t *word) {
     if (!word || i.src_component >= 4 || i.dest_mask == 0 || i.dest_mask >= 16 ||
         i.dst.num >= 128 || i.src.num >= 128 ||
-        (i.op != ComplexOp::Reciprocal && i.op != ComplexOp::Log2))
+        (i.op != ComplexOp::Reciprocal && i.op != ComplexOp::Log2 && i.op != ComplexOp::Exp2))
         return false;
     VcompFields f{};
     if (!encode_dest_bank(i.dst.bank,&f.dest_bank,&f.dest_ext) ||
         !encode_src1_bank(i.src.bank,&f.src1_bank,&f.src1_ext)) return false;
     f.pred=static_cast<uint8_t>(Predicate::Always);
     f.skip_invalid=i.skip_invalid;
-    f.dest_type=0; // F32
+    // Exp2 uses the alternate destination-type selector in every independently
+    // observed Sony profile; reciprocal/log2 use the base F32 selector.
+    f.dest_type=i.op==ComplexOp::Exp2 ? 1 : 0;
     f.end=i.end;
     f.no_schedule=i.no_schedule;
     f.op2=static_cast<uint8_t>(i.op);
@@ -490,13 +492,17 @@ bool decode_vcomp_f32_semantic(uint64_t word, VcompF32Semantic *i) {
     if (!i) return false;
     VcompFields f{};
     if (!decode_vcomp(word,&f) || f.pred!=static_cast<uint8_t>(Predicate::Always) ||
-        f.dest_type!=0 || f.sync_start || f.repeat_count!=0 || f.src_type!=0 ||
+        f.sync_start || f.repeat_count!=0 || f.src_type!=0 ||
         f.src1_mod!=0 || f.src_component>=4 || f.write_mask==0 ||
         (f.op2!=static_cast<uint8_t>(ComplexOp::Reciprocal) &&
-         f.op2!=static_cast<uint8_t>(ComplexOp::Log2))) return false;
+         f.op2!=static_cast<uint8_t>(ComplexOp::Log2) &&
+         f.op2!=static_cast<uint8_t>(ComplexOp::Exp2))) return false;
+    const auto op=static_cast<ComplexOp>(f.op2);
+    if ((op==ComplexOp::Exp2 && f.dest_type!=1) || (op!=ComplexOp::Exp2 && f.dest_type!=0))
+        return false;
     if (!decode_dest_bank(f.dest_bank,f.dest_ext,&i->dst.bank) ||
         !decode_src1_bank(f.src1_bank,f.src1_ext,&i->src.bank)) return false;
-    i->op=static_cast<ComplexOp>(f.op2);
+    i->op=op;
     i->dst.num=f.dest_num;
     i->src.num=f.src1_num;
     i->src_component=f.src_component;

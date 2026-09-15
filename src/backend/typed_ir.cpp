@@ -723,9 +723,10 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                                        instruction.dst.type()==TypedType::F32x4) &&
                                       instruction.src0.type()==instruction.dst.type();
             if (!supported_type || unary_op > TypedFloatUnaryOp::Floor ||
-                ((unary_op==TypedFloatUnaryOp::Log2 || unary_op==TypedFloatUnaryOp::Floor) &&
+                ((unary_op==TypedFloatUnaryOp::Log2 || unary_op==TypedFloatUnaryOp::Exp2 ||
+                  unary_op==TypedFloatUnaryOp::Floor) &&
                  instruction.dst.type()!=TypedType::F32)) {
-                error = "typed float unary currently supports scalar/F32-vector negate/absolute/saturate plus scalar Log2/Floor";
+                error = "typed float unary currently supports scalar/F32-vector negate/absolute/saturate plus scalar Log2/Exp2/Floor";
                 return false;
             }
             const auto src = lower_value(typed, instruction.src0, values, literals, machine);
@@ -733,11 +734,12 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             const uint8_t width=static_cast<uint8_t>(components>2 ? 2 : 1);
             const uint8_t mask=static_cast<uint8_t>((1u<<components)-1u);
             MachineOperand dst{};
-            if (unary_op==TypedFloatUnaryOp::Log2) {
+            if (unary_op==TypedFloatUnaryOp::Log2 || unary_op==TypedFloatUnaryOp::Exp2) {
                 dst=machine.make_value<MachineType::F32>();
                 if (src.kind()==MachineOperandKind::None || dst.kind()==MachineOperandKind::None ||
-                    !machine.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(usse::ComplexOp::Log2),dst,src)) {
-                    error="failed to lower scalar Log2 to validated VCOMP";
+                    !machine.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(
+                        unary_op==TypedFloatUnaryOp::Log2 ? usse::ComplexOp::Log2 : usse::ComplexOp::Exp2),dst,src)) {
+                    error="failed to lower scalar complex operation to validated VCOMP";
                     return false;
                 }
             } else if (unary_op==TypedFloatUnaryOp::Floor) {
@@ -2296,7 +2298,7 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             out.error="failed to build oracle F32 division Machine profile";
             return false;
         }
-        return compile_fragment_arithmetic_machine(primary,{},input_count,components,0,0,out);
+        return compile_fragment_arithmetic_machine(primary,{}, {},input_count,components,0,0,out);
     }
     if (root_def->opcode()==TypedOpcode::FloatSplat &&
         (root.type()==TypedType::F32x2 || root.type()==TypedType::F32x3)) {
@@ -2327,7 +2329,7 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 out.error="failed to build oracle narrow dot-splat Machine profile";
                 return false;
             }
-            return compile_fragment_arithmetic_machine(primary,{},2,components,0,0,out);
+            return compile_fragment_arithmetic_machine(primary,{}, {},2,components,0,0,out);
         }
     }
     if (root_def->opcode()==TypedOpcode::FloatSwizzle &&
@@ -2420,6 +2422,11 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         }
         arithmetic_uniforms.push_back({shader.resource_name(*uniform),components,uniform->index});
     }
+    uint32_t arithmetic_uniform_words=0;
+    for (const auto &uniform:arithmetic_uniforms)
+        arithmetic_uniform_words=std::max<uint32_t>(arithmetic_uniform_words,
+            uniform.resource_index+uniform.components);
+    arithmetic_uniform_words=(arithmetic_uniform_words+1u)&~1u;
     if (store->aux >= resources.size() || resources[store->aux].kind != TypedResourceKind::Output ||
         resources[store->aux].index != 0 || resources[store->aux].type != arithmetic_type) {
         out.error = "typed generic arithmetic output must match the F32 vector result at Location 0";
@@ -2435,8 +2442,25 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     TypedType stored_type = TypedType::Invalid;
     uint16_t stored_resource = 0;
     std::string machine_error;
+    std::vector<MachineOperand> literal_bindings(program.literals().size());
+    std::vector<IrLiteralF32> literal_meta;
+    std::unordered_map<uint32_t,uint32_t> literal_index_by_bits;
+    for (uint32_t id=0;id<program.literals().size();++id) {
+        const uint32_t bits=program.literals()[id];
+        if (bits==0) {
+            literal_bindings[id]=primary.physical(machine_immediate(0),MachineType::F32);
+            continue;
+        }
+        auto [it,inserted]=literal_index_by_bits.emplace(bits,static_cast<uint32_t>(literal_meta.size()));
+        if (inserted) literal_meta.push_back({it->second,bits});
+        const uint32_t word=arithmetic_uniform_words+it->second;
+        if (word>=254) { out.error="typed arithmetic literal table exceeds compact SA subset"; return false; }
+        literal_bindings[id]=primary.physical(machine_secondary(static_cast<uint8_t>(word/2u)),MachineType::F32,
+                                              static_cast<uint8_t>(word&1u));
+    }
     if (!lower_typed_program_impl(program,primary,machine_error,false,
-                                  &stored_value,&stored_type,&stored_resource)) {
+                                  &stored_value,&stored_type,&stored_resource,false,
+                                  std::numeric_limits<uint16_t>::max(),&literal_bindings)) {
         out.error = machine_error;
         return false;
     }
@@ -2463,7 +2487,7 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         out.error = "failed to append typed arithmetic output pack";
         return false;
     }
-    return compile_fragment_arithmetic_machine(primary,arithmetic_uniforms,
+    return compile_fragment_arithmetic_machine(primary,arithmetic_uniforms,literal_meta,
                                                static_cast<uint8_t>(used_input_locations.size()),
                                                arithmetic_components,0,0,out);
 }

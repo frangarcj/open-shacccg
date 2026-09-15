@@ -982,6 +982,31 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         return false;
                     }
                     values[args[1]]=dst;
+                } else if (ext == GLSLstd450Exp) {
+                    if (count!=6 || result_type!=backend::TypedType::F32) {
+                        error="GLSL.std.450 Exp is outside the validated scalar F32 subset";
+                        return false;
+                    }
+                    const auto source=values.find(args[4]);
+                    if (source==values.end() || source->second.type()!=backend::TypedType::F32) {
+                        error="unresolved GLSL.std.450 Exp operand";
+                        return false;
+                    }
+                    // Hardware VCOMP op2=3 is Exp2. Sony's Cg exp() profile
+                    // scales by LOG2E first, so preserve that decomposition.
+                    const auto log2e=program.literal_f32(0x3fb8aa3au);
+                    const auto scaled=program.make_value<backend::TypedType::F32>();
+                    const auto dst=program.make_value<backend::TypedType::F32>();
+                    if (log2e.kind()==backend::TypedValueKind::None || scaled.kind()==backend::TypedValueKind::None ||
+                        dst.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::FloatBinary>(
+                            static_cast<uint8_t>(backend::TypedFloatOp::Mul),scaled,source->second,log2e) ||
+                        !program.emit<backend::TypedOpcode::FloatUnary>(
+                            static_cast<uint8_t>(backend::TypedFloatUnaryOp::Exp2),dst,scaled)) {
+                        error="failed to lower scalar Exp through LOG2E*Exp2";
+                        return false;
+                    }
+                    values[args[1]]=dst;
                 } else if (ext == GLSLstd450Floor) {
                     if (count!=6 || result_type!=backend::TypedType::F32) {
                         error="GLSL.std.450 Floor is outside the validated scalar F32 subset";

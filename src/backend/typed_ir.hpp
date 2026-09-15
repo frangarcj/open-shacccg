@@ -105,6 +105,7 @@ enum class TypedFloatUnaryOp : uint8_t {
     Abs,
     Saturate,
     Log2,
+    Exp2,
     Floor,
 };
 

@@ -586,6 +586,19 @@ int test_usse() {
             failures += fail("oracle F32 uniform > 0.5 VTST mismatch");
     }
     {
+        VcompF32Semantic exp2{};
+        exp2.op=ComplexOp::Exp2;
+        exp2.dst={RegisterBank::PrimaryAttribute,0};
+        exp2.src={RegisterBank::PrimaryAttribute,0};
+        uint64_t word=0;
+        VcompF32Semantic decoded{};
+        if (!encode_vcomp_f32_semantic(exp2,&word) || word!=0x30a0060280000001ULL ||
+            !decode_vcomp_f32_semantic(word,&decoded) || decoded.op!=ComplexOp::Exp2 ||
+            decoded.dst.bank!=RegisterBank::PrimaryAttribute || decoded.dst.num!=0 ||
+            decoded.src.bank!=RegisterBank::PrimaryAttribute || decoded.src.num!=0)
+            failures += fail("oracle Exp2 VCOMP semantic mismatch");
+    }
+    {
         VtstF32LaneLessScalarSemantic alpha_cmp{};
         alpha_cmp.vector_lane={RegisterBank::PrimaryAttribute,1};
         alpha_cmp.scalar={RegisterBank::SecondaryAttribute,0};

@@ -137,6 +137,7 @@ struct VcompRcpScalarF32Semantic {
 enum class ComplexOp : uint8_t {
     Reciprocal = 0,
     Log2 = 2,
+    Exp2 = 3,
 };
 
 // Field-level VCOMP shape independently anchored by reciprocal and Log2

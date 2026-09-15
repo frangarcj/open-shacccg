@@ -1912,6 +1912,7 @@ bool compile_fragment_s32x2_machine(const MachineProgram &primary, const Machine
 
 bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
                                          const std::vector<IrUniformFloat> &uniforms,
+                                         const std::vector<IrLiteralF32> &literal_values,
                                          uint8_t float_input_count,
                                          uint8_t float_components,
                                          uint32_t binary_guid, uint32_t source_guid,
@@ -1930,6 +1931,7 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
     uint8_t interface_block[32]{};
     std::vector<gxp::ParameterContainerDesc> containers;
     std::vector<gxp::ParameterDesc> parameters;
+    std::vector<gxp::LiteralDesc> literals;
 
     const uint8_t component_code=float_components==1 ? 0x00 : (float_components==2 ? 0x40 : 0xc0);
     const uint8_t component_tail=float_components==1 ? 0x00 : (float_components==2 ? 0x10 : 0x30);
@@ -1960,6 +1962,8 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
         uniform_words=(uniform_words+1u)&~1u;
         if (uniform_words>0xffffu) { out.error="mixed arithmetic uniform footprint is too large"; return false; }
         containers.push_back({14,0,0,static_cast<uint16_t>(uniform_words)});
+        if (!literal_values.empty())
+            containers.push_back({19,0,static_cast<uint16_t>(uniform_words),static_cast<uint16_t>(literal_values.size())});
     }
     for(size_t i=0;i<uniforms.size();++i) {
         if(uniforms[i].name.empty()) { out.error="arithmetic uniform name cannot be empty"; return false; }
@@ -1968,6 +1972,14 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
             return false;
         }
         parameters.push_back({uniforms[i].name.c_str(),1,0,uniforms[i].components,14,0,0,1,uniforms[i].resource_index});
+    }
+    literals.reserve(literal_values.size());
+    for (const auto &literal:literal_values) {
+        if (literal.resource_index>=literal_values.size()) {
+            out.error="arithmetic literal resource index is out of range";
+            return false;
+        }
+        literals.push_back({literal.resource_index,literal.value_bits});
     }
 
     MachineCompileResult compiled;
@@ -2007,11 +2019,11 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
         image.program_flags=0x00081001;
         image.buffer_flags=0x10000000;
         image.primary_register_count=static_cast<uint16_t>(float_input_count*4u);
-        image.secondary_register_count=static_cast<uint16_t>(uniform_words);
+        image.secondary_register_count=static_cast<uint16_t>(uniform_words+literal_values.size());
         image.fragment_additional_inputs=static_cast<uint8_t>(float_input_count-1);
         image.fragment_input_components=4;
         image.default_uniform_buffer_count=uniform_words;
-        image.data_buffer_count=0;
+        image.data_buffer_count=static_cast<uint32_t>(literal_values.size());
         image.compiler_version_raw=0x0002df30;
     }
     image.primary_instructions=compiled.words.data();
@@ -2020,6 +2032,8 @@ bool compile_fragment_arithmetic_machine(const MachineProgram &primary,
     image.container_count=containers.size();
     image.parameters=parameters.data();
     image.parameter_count=parameters.size();
+    image.literals=literals.data();
+    image.literal_count=literals.size();
 
     const size_t needed=gxp::required_size(image);
     if(!needed){out.error="GXP writer rejected arithmetic Machine IR";return false;}

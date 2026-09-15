@@ -987,9 +987,9 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
         case MachineOpcode::ComplexF32: {
             const uint16_t config=instruction.config();
             if (guard!=usse::Predicate::Always ||
-                instruction.subop()>static_cast<uint8_t>(usse::ComplexOp::Log2) ||
+                instruction.subop()>static_cast<uint8_t>(usse::ComplexOp::Exp2) ||
                 instruction.subop()==1 || (config&~0x0003u)) {
-                out.error="machine complex F32 operation is outside reciprocal/log2 subset";
+                out.error="machine complex F32 operation is outside reciprocal/log2/exp2 subset";
                 return false;
             }
             usse::RegisterRef dst{},src{};

@@ -15,6 +15,7 @@
     "vitagl:ffp_f_alpha",
     "vitagl:ffp_f_baseline",
     "vitagl:ffp_f_color",
+    "vitagl:ffp_f_fog_exp2",
     "vitagl:ffp_f_fog_linear",
     "vitagl:ffp_f_texture1",
     "vitagl:ffp_f_texture2",

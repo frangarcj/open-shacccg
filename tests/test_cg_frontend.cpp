@@ -900,6 +900,10 @@ int test_cg_frontend() {
             "out_color.rgb=lerp(fog_color.rgb,color.rgb,f);return out_color;}",
             "float3-fmix-replace-rgb.cg"))
         failures += fail("float3 FMix + RGB replacement did not compile end to end");
+    if (!compile_fragment_gxp(
+            "float main(float x:TEXCOORD0):COLOR0{return exp(x);}",
+            "scalar-exp.cg"))
+        failures += fail("scalar Exp did not lower through LOG2E + Exp2 VCOMP");
     if (!compile_matrix_point_size_profile(false))
         failures += fail("oracle matrix + uniform PSIZE vertex profile did not reproduce the validated stream");
     if (!compile_matrix_point_size_profile(true))
