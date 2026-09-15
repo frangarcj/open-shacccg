@@ -1458,8 +1458,8 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             }
             return compile_vertex_construct_position(vertex_attributes[position_attribute],0,0,out);
         }
-        if (transformed_position && point_size_written && !varying_written && vertex_attributes.size()==1 &&
-            vertex_matrices.size()==1 && position_attribute<vertex_attributes.size() && position_matrix==0 &&
+        if (transformed_position && point_size_written && vertex_matrices.size()==1 &&
+            position_attribute<vertex_attributes.size() && position_matrix==0 &&
             vertex_attributes[position_attribute].components==4 && vertex_uniforms.size()==1) {
             const auto *point_resource=resource_for_value(point_size_value);
             if (!point_resource || point_resource!=vertex_uniforms[0] || point_resource->type!=TypedType::F32 ||
@@ -1467,8 +1467,23 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 out.error="typed matrix point-size profile requires direct scalar uniform resource 16";
                 return false;
             }
+            const IrUniformFloat point_meta={shader.resource_name(*point_resource),1,point_resource->index};
+            if (varying_written) {
+                if (vertex_attributes.size()!=2 || varying_attribute>=vertex_attributes.size() ||
+                    varying_attribute==position_attribute) {
+                    out.error="typed matrix varying point-size profile requires two distinct attributes";
+                    return false;
+                }
+                return compile_vertex_uniform_matrix_varying_point_size(vertex_attributes[position_attribute],
+                    vertex_attributes[varying_attribute],vertex_matrices[0],point_meta,
+                    selected_varying_semantic,0,0,out);
+            }
+            if (vertex_attributes.size()!=1) {
+                out.error="typed matrix point-size profile requires one position attribute";
+                return false;
+            }
             return compile_vertex_uniform_matrix_point_size(vertex_attributes[position_attribute],vertex_matrices[0],
-                {shader.resource_name(*point_resource),1,point_resource->index},0,0,out);
+                point_meta,0,0,out);
         }
         if (point_size_written) {
             out.error="typed vertex point-size shape is outside the validated uniform-matrix profile";

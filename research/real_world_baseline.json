@@ -13,6 +13,7 @@
     "geometrizer:POLY_VS",
     "geometrizer:TM2_FAST_FS",
     "vitagl:ffp_v_baseline",
+    "vitagl:ffp_v_color",
     "vitagl:precompiled_blit_f",
     "vitagl:precompiled_blit_v",
     "vitagl:precompiled_clear_f"

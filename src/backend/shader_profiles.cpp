@@ -643,6 +643,119 @@ bool compile_vertex_uniform_matrix_point_size(const IrAttribute &position,
     return true;
 }
 
+bool compile_vertex_uniform_matrix_varying_point_size(const IrAttribute &position,
+                                                      const IrAttribute &varying,
+                                                      const IrMatrix4Uniform &matrix,
+                                                      const IrUniformFloat &point_size,
+                                                      IrVaryingSemantic semantic,
+                                                      uint32_t binary_guid, uint32_t source_guid,
+                                                      IrCompileResult &out) {
+    out={};
+    if (!valid_attribute(position) || !valid_attribute(varying) || position.resource_index!=0 ||
+        varying.resource_index!=4 || position.components!=4 || varying.components!=4 ||
+        semantic!=IrVaryingSemantic::Color || matrix.name.empty() || matrix.resource_index!=0 ||
+        point_size.name.empty() || point_size.components!=1 || point_size.resource_index!=16) {
+        out.error="matrix varying point-size profile requires float4 position/color, mat4@0 and scalar point size@16";
+        return false;
+    }
+
+    MachineProgram primary,secondary;
+    const auto gpi0=primary.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
+    const auto zero=primary.literal_u32(0);
+    if (gpi0.kind()==MachineOperandKind::None || zero.kind()==MachineOperandKind::None ||
+        !primary.emit<MachineOpcode::Phase>() ||
+        !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+            machine_move_config(3,4,1,true,true),primary.physical(machine_vertex_output(2),MachineType::F32),
+            primary.physical(machine_primary(2),MachineType::F32)) ||
+        !primary.emit_config<MachineOpcode::Pack>(machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F32),
+            machine_pack_config(0xF,true,false),gpi0,
+            primary.physical(machine_primary(0),MachineType::F32),
+            primary.physical(machine_primary(1),MachineType::F32)) ||
+        !primary.emit<MachineOpcode::VmadUniformMat4>(0,
+            primary.physical(machine_vertex_output(0),MachineType::F32),gpi0) ||
+        !primary.emit<MachineOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),
+            primary.physical(machine_vertex_output(8),MachineType::U32),
+            primary.physical(machine_secondary(16),MachineType::U32),zero) ||
+        !primary.emit<MachineOpcode::Emit>() ||
+        !secondary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Max),
+            machine_vector_config(1),secondary.physical(machine_primary(8),MachineType::F32),
+            secondary.physical(machine_primary(8),MachineType::F32),
+            secondary.physical(machine_primary(9),MachineType::F32,1)) ||
+        !secondary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Min),
+            machine_vector_config(1),secondary.physical(machine_primary(8),MachineType::F32),
+            secondary.physical(machine_primary(8),MachineType::F32),
+            secondary.physical(machine_primary(9),MachineType::F32,0)) ||
+        !secondary.emit_config<MachineOpcode::Nop>(0,machine_nop_config(true,true))) {
+        out.error="failed to build matrix varying point-size Machine profile";
+        return false;
+    }
+    MachineCompileResult primary_compiled,secondary_compiled;
+    if (!compile_words(primary,primary_compiled,out,"matrix varying point-size primary lowering failed") ||
+        !compile_words(secondary,secondary_compiled,out,"matrix varying point-size secondary lowering failed"))
+        return false;
+    const uint64_t expected_primary[]={
+        0xfa44070000000000ULL,0x38801d2183080080ULL,0x40800dbcaf998002ULL,
+        0x18903081c011a200ULL,0x50810009e1000800ULL,0xfb275000a0200000ULL,
+    };
+    const uint64_t expected_secondary[]={
+        0x08a41086a2046209ULL,0x08a40086a2045209ULL,0xf804014000000000ULL,
+    };
+    if (primary_compiled.words.size()!=std::size(expected_primary) ||
+        !std::equal(primary_compiled.words.begin(),primary_compiled.words.end(),std::begin(expected_primary)) ||
+        secondary_compiled.words.size()!=std::size(expected_secondary) ||
+        !std::equal(secondary_compiled.words.begin(),secondary_compiled.words.end(),std::begin(expected_secondary))) {
+        out.error="matrix varying point-size Machine stream no longer matches Sony oracle words";
+        return false;
+    }
+
+    const uint8_t interface_block[32]={
+        0xff,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0x19,0,0x09,0,0,0,0,0,0,0,0,0,0,0,0,
+    };
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,18},{19,0,18,2}};
+    const gxp::LiteralDesc literals[]={{0,0x43ff8000u},{1,0x3f800000u}};
+    const gxp::ParameterDesc parameters[]={
+        {position.name.c_str(),0,0,4,0,0,0,1,0},
+        {varying.name.c_str(),0,0,4,0,0,0,1,4},
+        {matrix.name.c_str(),1,0,4,14,0,0,4,0},
+        {point_size.name.c_str(),1,0,1,14,0,0,1,16},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00090000;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=8;
+    image.secondary_register_count=20;
+    image.primary_phase_count=1;
+    image.data_buffer_count=2;
+    image.default_uniform_buffer_count=18;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.secondary_instructions=secondary_compiled.words.data();
+    image.secondary_instruction_count=secondary_compiled.words.size();
+    image.primary_instructions=primary_compiled.words.data();
+    image.primary_instruction_count=primary_compiled.words.size();
+    image.containers=containers;
+    image.container_count=2;
+    image.parameters=parameters;
+    image.parameter_count=4;
+    image.literals=literals;
+    image.literal_count=2;
+    image.vertex_primary_padding_word=true;
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected matrix varying point-size profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for matrix varying point-size profile"; return false;
+    }
+    return true;
+}
+
 } // namespace vsc::backend
 
 namespace vsc::backend {

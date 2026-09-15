@@ -242,6 +242,66 @@ bool compile_vitagl_blit_vertex_profile() {
     return ok;
 }
 
+bool compile_matrix_point_size_profile(bool with_color) {
+    const char *source=with_color ?
+        "uniform float4x4 Jwvp; uniform float Mpoint_size; "
+        "void main(float4 Nposition,float4 Pcolor,float4 out vPosition:POSITION,float4 out vColor:COLOR,float out psize:PSIZE){"
+        "vPosition=mul(Jwvp,Nposition);vColor=Pcolor;psize=Mpoint_size;}" :
+        "uniform float4x4 Jwvp; uniform float Mpoint_size; "
+        "void main(float4 Nposition,float4 out vPosition:POSITION,float out psize:PSIZE){"
+        "vPosition=mul(Jwvp,Nposition);psize=Mpoint_size;}";
+    VscCompileRequest request{};
+    request.source_name=with_color ? "matrix-color-point-size.cg" : "matrix-point-size.cg";
+    request.source=source;
+    request.source_size=std::strlen(source);
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_VERTEX;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    const uint64_t base_words[]={
+        0xfa44070000000000ULL,0xf800094000000000ULL,0x40800dbcaf998002ULL,
+        0x18903081c011a200ULL,0x50810009e0800800ULL,0xfb275000a0200000ULL,
+    };
+    const uint64_t color_words[]={
+        0xfa44070000000000ULL,0x38801d2183080080ULL,0x40800dbcaf998002ULL,
+        0x18903081c011a200ULL,0x50810009e1000800ULL,0xfb275000a0200000ULL,
+    };
+    const uint64_t secondary_words[]={
+        0x08a41086a2046209ULL,0x08a40086a2045209ULL,0xf804014000000000ULL,
+    };
+    const uint8_t base_interface[]={
+        0x0f,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0x11,0,0x05,0,0,0,0,0,0,0,0,0,0,0,0,
+    };
+    const uint8_t color_interface[]={
+        0xff,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0x19,0,0x09,0,0,0,0,0,0,0,0,0,0,0,0,
+    };
+    bool ok=rc==0 && result.gxp_data && result.diagnostic_count==0;
+    if (ok) {
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        const auto primary=view.primary_program();
+        const auto secondary=view.secondary_program();
+        const auto interface=view.varyings();
+        const uint64_t *expected_primary=with_color ? color_words : base_words;
+        const uint8_t *expected_interface=with_color ? color_interface : base_interface;
+        ok=view.valid() && view.logical_size()==(with_color ? 390u : 367u) &&
+            view.flags()==0x00090000 && view.primary_register_count()==(with_color ? 8u : 4u) &&
+            view.secondary_register_count()==20 && view.primary_instruction_count()==6 &&
+            view.secondary_instruction_count()==3 && view.literal_count()==2 && view.container_count()==2 &&
+            view.parameter_count()==(with_color ? 4u : 3u) &&
+            primary.size==sizeof(base_words) && std::memcmp(primary.data,expected_primary,sizeof(base_words))==0 &&
+            secondary.size==sizeof(secondary_words) && std::memcmp(secondary.data,secondary_words,sizeof(secondary_words))==0 &&
+            interface.size==sizeof(base_interface) &&
+            std::memcmp(interface.data,expected_interface,sizeof(base_interface))==0;
+    }
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: %s diagnostic=%s\n",request.source_name,
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
+
 bool compile_loop_gxp(const std::string &source, const char *name, uint8_t step) {
     VscCompileRequest request{};
     request.source_name=name;
@@ -677,12 +737,10 @@ int test_cg_frontend() {
         failures += fail("unused unsupported uniform member type blocked an otherwise valid shader");
     if (!compile_vitagl_blit_vertex_profile())
         failures += fail("vitaGL public blit vertex profile did not reproduce its observed v1.5 GXP shape");
-    if (!compile_shader_gxp(
-            "uniform float4x4 Jwvp; uniform float Mpoint_size; "
-            "void main(float4 Nposition,float4 out vPosition:POSITION,float out psize:PSIZE){"
-            "vPosition=mul(Jwvp,Nposition);psize=Mpoint_size;}",
-            "matrix-point-size.cg",VSC_STAGE_VERTEX))
-        failures += fail("oracle matrix + uniform PSIZE vertex profile did not compile end to end");
+    if (!compile_matrix_point_size_profile(false))
+        failures += fail("oracle matrix + uniform PSIZE vertex profile did not reproduce the validated stream");
+    if (!compile_matrix_point_size_profile(true))
+        failures += fail("oracle matrix + COLOR + uniform PSIZE profile did not reproduce the validated stream");
     struct PublicShader { const char *name; VscStage stage; };
     const PublicShader public_shaders[] = {
         {"clear_f", VSC_STAGE_FRAGMENT},

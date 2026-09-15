@@ -90,6 +90,13 @@ bool compile_vertex_uniform_matrix_point_size(const IrAttribute &position,
                                               const IrUniformFloat &point_size,
                                               uint32_t binary_guid, uint32_t source_guid,
                                               IrCompileResult &out);
+bool compile_vertex_uniform_matrix_varying_point_size(const IrAttribute &position,
+                                                      const IrAttribute &varying,
+                                                      const IrMatrix4Uniform &matrix,
+                                                      const IrUniformFloat &point_size,
+                                                      IrVaryingSemantic semantic,
+                                                      uint32_t binary_guid, uint32_t source_guid,
+                                                      IrCompileResult &out);
 bool compile_vertex_generic_machine(const MachineProgram &primary, const MachineProgram &secondary,
                                     const std::vector<IrAttribute> &attributes,
                                     const std::vector<IrUniformFloat> &uniforms,
