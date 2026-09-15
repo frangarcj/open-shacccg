@@ -17,15 +17,17 @@ instruction count/layout is an optimization milestone.
 Current integration fixture: `oracle_corpus_v2/vp-geometrizer-poly.cg`.
 
 - Sony: 14 primary + 4 secondary instructions, 480-byte GXP.
-- Open: 21 primary + 0 secondary instructions, 496-byte GXP at the current
-  generic-vertex baseline.
+- Open after reciprocal hoisting: 19 primary + 2 secondary instructions,
+  496-byte GXP. The two secondary words are byte-identical to Sony's first
+  reciprocal pair: `0x3080000a80000002`, `0x3080000280000001`.
 - Reflection/interface is compatible; Open intentionally uses validated
   VCOMP/V32NMAD/VMOV forms instead of Sony's tighter VMAD2 schedule.
 
 Pending optimizations:
 
-1. Hoist reciprocal computations of screen-size uniforms into the secondary
-   program when the denominator is draw-constant.
+1. ~~Hoist reciprocal computations of screen-size uniforms into the secondary
+   program when the denominator is draw-constant.~~ Done for denominator-only
+   uniform components; the analysis is use-driven and not shader-name-specific.
 2. Fold `x * reciprocal`, scale-by-two and +/-1 projection chains into the
    VMAD2 forms selected by Sony.
 3. Canonicalize the literal set/order to Sony's `{depth_scale, -1, 2, 1}`
@@ -41,8 +43,10 @@ Current integration fixture: `oracle_corpus_v2/vp-geometrizer-poly3d.cg`.
 
 - Sony: 20 primary + 10 secondary instructions, logical size 701 bytes
   (704 bytes on disk), PA=20, SA=14.
-- Open baseline after generic-resource support: 43 primary + 0 secondary
-  instructions, logical size 797 bytes (800 bytes on disk), PA=20, SA=13.
+- Open after denominator-only reciprocal hoisting: 39 primary + 2 secondary
+  instructions, logical size 781 bytes (784 bytes on disk), PA=20, SA=13.
+  This reduces total USSE words from 43 to 41 and moves both screen-size
+  reciprocals out of primary code.
 - Sony uses four literals: `0.0602059935`, `-1`, `1`, `2`; Open currently
   omits the standalone `-1` literal and uses three.
 - Attribute/uniform reflection, GXP semantics, PA count and program flag
@@ -50,9 +54,10 @@ Current integration fixture: `oracle_corpus_v2/vp-geometrizer-poly3d.cg`.
 
 Pending optimizations:
 
-1. Hoist both `1/u_screen.x` and `1/u_screen.y` plus draw-constant projection
-   work into secondary code.  Sony's 10-word secondary program is the target
-   evidence set.
+1. The `1/u_screen.x` / `1/u_screen.y` denominator hoist is complete. Continue
+   with the remaining draw-constant projection work in Sony's 10-word secondary
+   evidence set; unlike POLY, Sony relocates one reciprocal result instead of
+   overwriting both uniform slots in place.
 2. Replace the generic four-VMOV materialization of `float4(a_pos.xyz, 1)` with
    the VPCK/GPI staging used by Sony.
 3. Lower the three `dot(matrix_row, xyz1)` operations through the compact
@@ -117,8 +122,9 @@ Pending optimizations:
 
 ### High value
 
-- **Secondary-program hoisting.** Move uniform-only reciprocal/arithmetic out of
-  primary code when oracle evidence proves the value is phase-safe.
+- **Secondary-program hoisting.** Denominator-only scalar reciprocals are now
+  hoisted generically: POLY 21+0 -> 19+2 and POLY3D 43+0 -> 39+2. Continue with
+  uniform-only add/mul/VMAD2 chains proven phase-safe by the Sony streams.
 - **VMAD2 selection.** Derive semantic VMAD2 forms used by real Geometrizer
   projection shaders instead of keeping them as opaque one-off words.
 - **VMAD/VDP dot selection.** Prefer GPI staging + vector dot/FMA when it removes

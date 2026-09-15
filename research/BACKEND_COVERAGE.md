@@ -460,8 +460,9 @@ float uniforms, materializes the intermediate `float4(a_pos.xyz,1)` only because
 the value feeds three dot products, and preserves Sony's observable resource
 metadata: program flags `0x00090004`, PA=20, TEXCOORD0..3 + COLOR0 semantics and
 uniform word offsets 0/2/4/6/8. Sony emits 20 primary + 10 secondary instructions;
-Open currently emits a deliberately unoptimized 43-word primary program and no
-secondary stream. Code-size/scheduling differences are tracked separately in
+Open now hoists denominator-only screen reciprocals and emits 39 primary + 2
+secondary instructions (41 total, down from the original 43-word primary-only
+baseline). Code-size/scheduling differences are tracked separately in
 `research/OPTIMIZATION_BACKLOG.md` so they do not obscure correctness coverage.
 
 `CMP_FS` is the first production fragment target and is exact outside GUIDs. Its

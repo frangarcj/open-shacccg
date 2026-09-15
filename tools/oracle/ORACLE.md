@@ -192,7 +192,9 @@ uses 27 primary words; Open's generic correctness baseline currently uses 31.
 
 `--feature integration` contains a production-shaped vertex probe based on the
 current Geometrizer `POLY_VS` semantics. Sony emits 14 primary + 4 secondary words;
-Open currently emits a semantically equivalent longer primary-only schedule. This
+Open now hoists the two denominator-only screen reciprocals into a 2-word secondary
+stream, reducing its primary program from 21 to 19 words. Those two VCOMP words are
+byte-identical to Sony. This
 case is intentionally a coverage oracle rather than a byte-identity gate: it drives
 component extraction, packed float uniforms, dynamic clamp, reciprocal division,
 VCOMP Log2, literal-table use and generic POSITION+COLOR finalization together.

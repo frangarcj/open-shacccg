@@ -329,7 +329,8 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                                      uint16_t fragment_output_resource = std::numeric_limits<uint16_t>::max(),
                                      const std::vector<MachineOperand> *literal_bindings = nullptr,
                                      std::vector<MachineOperand> *lowered_values = nullptr,
-                                     bool ignore_output_stores = false) {
+                                     bool ignore_output_stores = false,
+                                     const std::vector<bool> *precomputed_reciprocals = nullptr) {
     if (reset_machine) machine = {};
     error.clear();
     if (stored_output) *stored_output = {};
@@ -660,14 +661,25 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             }
 
             if (float_op==TypedFloatOp::Div) {
-                const auto reciprocal=machine.make_value<MachineType::F32>();
-                if (reciprocal.kind()==MachineOperandKind::None ||
-                    !machine.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(usse::ComplexOp::Reciprocal),
-                        reciprocal,src1) ||
-                    !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Mul),
-                        machine_vector_config(1),dst,src0,reciprocal)) {
-                    error="failed to lower scalar F32 division through reciprocal VCOMP";
-                    return false;
+                const bool precomputed=precomputed_reciprocals && instruction.src1.kind()==TypedValueKind::Value &&
+                    instruction.src1.id()<precomputed_reciprocals->size() &&
+                    (*precomputed_reciprocals)[instruction.src1.id()];
+                if (precomputed) {
+                    if (!machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Mul),
+                            machine_vector_config(1),dst,src0,src1)) {
+                        error="failed to lower scalar F32 division using precomputed reciprocal";
+                        return false;
+                    }
+                } else {
+                    const auto reciprocal=machine.make_value<MachineType::F32>();
+                    if (reciprocal.kind()==MachineOperandKind::None ||
+                        !machine.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(usse::ComplexOp::Reciprocal),
+                            reciprocal,src1) ||
+                        !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Mul),
+                            machine_vector_config(1),dst,src0,reciprocal)) {
+                        error="failed to lower scalar F32 division through reciprocal VCOMP";
+                        return false;
+                    }
                 }
                 values[instruction.dst.id()]=dst;
                 value_types[instruction.dst.id()]=instruction.dst.type();
@@ -1208,7 +1220,80 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             uniform_words=(uniform_words+1u)&~1u;
             if (uniform_words>=254) { out.error="generic vertex uniform footprint exceeds compact SA subset"; return false; }
 
-            MachineProgram primary;
+            // Hoist only uniform scalar reciprocals that are provably used as
+            // division denominators and nowhere else. The secondary program
+            // sees uniform SA words through the PA namespace and may replace a
+            // slot in place before primary execution.
+            std::vector<bool> precomputed_reciprocals(program.value_count(),false);
+            struct ReciprocalSlot { uint16_t word=0; std::vector<uint32_t> values; };
+            std::vector<ReciprocalSlot> reciprocal_slots;
+            auto only_div_denominator=[&](TypedValue value) -> bool {
+                if (value.kind()!=TypedValueKind::Value || value.type()!=TypedType::F32) return false;
+                bool used=false;
+                for (const auto &candidate:instructions) {
+                    if (candidate.dst.bits==value.bits) continue;
+                    if (candidate.src0.bits==value.bits) return false;
+                    if (candidate.src1.bits==value.bits) {
+                        if (candidate.opcode()!=TypedOpcode::FloatBinary ||
+                            candidate.subop()!=static_cast<uint8_t>(TypedFloatOp::Div)) return false;
+                        used=true;
+                    }
+                }
+                for (const auto &composite:program.float4_composites())
+                    for (const auto component:composite)
+                        if (component.bits==value.bits) return false;
+                for (const auto &select:program.float_selects())
+                    if (select.true_value.bits==value.bits || select.false_value.bits==value.bits) return false;
+                return used;
+            };
+            auto vector_used_only_by_extracts=[&](TypedValue value) -> bool {
+                for (const auto &candidate:instructions) {
+                    if (candidate.dst.bits==value.bits) continue;
+                    if (candidate.src0.bits==value.bits && candidate.opcode()==TypedOpcode::FloatExtract) continue;
+                    if (candidate.src0.bits==value.bits || candidate.src1.bits==value.bits) return false;
+                }
+                return true;
+            };
+            for (const auto *uniform:vertex_uniforms) {
+                if (uniform->type==TypedType::F32) {
+                    if (only_div_denominator(uniform->value))
+                        reciprocal_slots.push_back({uniform->index,{uniform->value.id()}});
+                    continue;
+                }
+                const uint8_t components=typed_component_count(uniform->type);
+                if ((uniform->type!=TypedType::F32x2 && uniform->type!=TypedType::F32x3 &&
+                     uniform->type!=TypedType::F32x4) || !vector_used_only_by_extracts(uniform->value))
+                    continue;
+                for (uint8_t component=0;component<components;++component) {
+                    std::vector<uint32_t> extracted;
+                    bool safe=true;
+                    for (const auto &candidate:instructions) {
+                        if (candidate.opcode()!=TypedOpcode::FloatExtract || candidate.src0.bits!=uniform->value.bits ||
+                            candidate.subop()!=component) continue;
+                        extracted.push_back(candidate.dst.id());
+                        safe = safe && only_div_denominator(candidate.dst);
+                    }
+                    if (safe && !extracted.empty())
+                        reciprocal_slots.push_back({static_cast<uint16_t>(uniform->index+component),std::move(extracted)});
+                }
+            }
+            std::sort(reciprocal_slots.begin(),reciprocal_slots.end(),[](const auto &a,const auto &b) {
+                return a.word>b.word;
+            });
+
+            MachineProgram primary,secondary;
+            for (const auto &slot:reciprocal_slots) {
+                const uint8_t reg=static_cast<uint8_t>(slot.word/2u);
+                const uint8_t component=static_cast<uint8_t>(slot.word&1u);
+                const auto physical=secondary.physical(machine_primary(reg),MachineType::F32,component);
+                if (!secondary.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(usse::ComplexOp::Reciprocal),
+                        physical,physical)) {
+                    out.error="failed to build generic vertex secondary reciprocal";
+                    return false;
+                }
+                for (uint32_t value:slot.values)
+                    if (value<precomputed_reciprocals.size()) precomputed_reciprocals[value]=true;
+            }
             if (!primary.emit<MachineOpcode::Phase>()) {
                 out.error="failed to start generic vertex Machine program";
                 return false;
@@ -1249,7 +1334,8 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             std::vector<MachineOperand> lowered_values;
             std::string machine_error;
             if (!lower_typed_program_impl(program,primary,machine_error,false,nullptr,nullptr,nullptr,
-                    false,std::numeric_limits<uint16_t>::max(),&literal_bindings,&lowered_values,true)) {
+                    false,std::numeric_limits<uint16_t>::max(),&literal_bindings,&lowered_values,true,
+                    &precomputed_reciprocals)) {
                 out.error="generic vertex Typed->Machine lowering failed: "+machine_error;
                 return false;
             }
@@ -1287,7 +1373,7 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 out.error="failed to append generic vertex COLOR/EMIT";
                 return false;
             }
-            return compile_vertex_generic_machine(primary,vertex_attributes,uniform_meta,literal_meta,
+            return compile_vertex_generic_machine(primary,secondary,vertex_attributes,uniform_meta,literal_meta,
                                                   selected_varying_semantic,0,0,out);
         }
         if (passthrough_position) {

@@ -138,6 +138,23 @@ int test_machine_ir() {
     }
 
     {
+        MachineProgram program;
+        const auto uniform=program.physical(machine_primary(0),MachineType::F32);
+        const auto y=program.physical(machine_primary(0),MachineType::F32,1);
+        const auto x=program.physical(machine_primary(0),MachineType::F32,0);
+        (void)uniform;
+        if (!program.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(usse::ComplexOp::Reciprocal),y,y) ||
+            !program.emit<MachineOpcode::ComplexF32>(static_cast<uint8_t>(usse::ComplexOp::Reciprocal),x,x)) {
+            failures += fail("could not construct vertex secondary reciprocal hoist");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=2 ||
+                result.words[0]!=0x3080000a80000002ULL || result.words[1]!=0x3080000280000001ULL)
+                failures += fail("vertex secondary reciprocal hoist did not reproduce Sony POLY words");
+        }
+    }
+
+    {
         const uint64_t expected2[]={
             0x08c11f889f040041ULL,0x3880052083f40000ULL,0x10c0418a00047f7cULL,
         };

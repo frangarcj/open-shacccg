@@ -319,7 +319,7 @@ bool compile_geometrizer_poly_vertex(const std::string &source) {
         ok=view.valid() && view.sdk_version()==0x0165 && view.flags()==0x00090000 &&
             view.primary_register_count()==8 && view.secondary_register_count()>=7 &&
             view.parameter_count()==4 && view.literal_count()>=3 &&
-            view.primary_instruction_count()>=15;
+            view.primary_instruction_count()==19 && view.secondary_instruction_count()==2;
         const char *names[]={"a_pos","a_color","u_screen_size","u_z_max"};
         const uint32_t resources[]={0,4,0,2};
         for (uint32_t i=0;ok && i<4;++i) {
@@ -336,7 +336,10 @@ bool compile_geometrizer_poly_vertex(const std::string &source) {
             v32 |= family==vsc::usse::MajorClass::V32Nmad;
             vmov |= family==vsc::usse::MajorClass::Vmov;
         }
-        ok=ok && vcomp && v32 && vmov;
+        const uint64_t secondary_words[]={0x3080000a80000002ULL,0x3080000280000001ULL};
+        const auto secondary=view.secondary_program();
+        ok=ok && vcomp && v32 && vmov && secondary.size==sizeof(secondary_words) &&
+            std::memcmp(secondary.data,secondary_words,sizeof(secondary_words))==0;
     }
     if (!ok && result.diagnostic_count && result.diagnostics)
         std::fprintf(stderr,"test_cg_frontend: Geometrizer POLY_VS diagnostic=%s\n",
@@ -360,7 +363,7 @@ bool compile_geometrizer_poly3d_vertex(const std::string &source) {
         ok=view.valid() && view.sdk_version()==0x0165 && view.flags()==0x00090004 &&
             view.primary_register_count()==20 && view.secondary_register_count()>=13 &&
             view.parameter_count()==10 && view.literal_count()>=3 &&
-            view.primary_instruction_count()>=20;
+            view.primary_instruction_count()==39 && view.secondary_instruction_count()==2;
         const char *names[]={"a_m0","a_m1","a_m2","a_pos","a_color",
                              "u_xc","u_zoom","u_view","u_screen","u_z_max"};
         const uint32_t resources[]={0,4,8,12,16,0,2,4,6,8};

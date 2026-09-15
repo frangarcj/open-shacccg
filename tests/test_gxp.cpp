@@ -323,6 +323,38 @@ int test_gxp_writer() {
     }
 
     {
+        // The same SDK 1.6.5 padding sits after a real vertex secondary
+        // stream. POLY/POLY3D both place secondary at interface end and begin
+        // primary exactly four bytes after secondary_end.
+        const uint64_t secondary_words[]={0x1111111111111111ULL,0x2222222222222222ULL};
+        ProgramImage padded{};
+        padded.type=ProgramType::Vertex;
+        padded.interface_block=interface_block;
+        padded.interface_block_size=sizeof(interface_block);
+        padded.secondary_instructions=secondary_words;
+        padded.secondary_instruction_count=2;
+        padded.primary_instructions=primary;
+        padded.primary_instruction_count=2;
+        padded.vertex_primary_padding_word=true;
+        const size_t padded_need=required_size(padded);
+        std::vector<uint8_t> padded_bytes(padded_need);
+        if (!padded_need || !write_program(padded,padded_bytes.data(),padded_bytes.size())) {
+            failures += fail("vertex secondary + primary padding layout was rejected");
+        } else {
+            auto get_u32=[&](size_t off) {
+                uint32_t value=0;
+                std::memcpy(&value,padded_bytes.data()+off,sizeof(value));
+                return value;
+            };
+            const size_t secondary_off=0x48u+get_u32(0x48);
+            const size_t secondary_end=0x4cu+get_u32(0x4c);
+            const size_t primary_off=0x40u+get_u32(0x40);
+            if (secondary_off!=0xb8 || secondary_end!=0xc8 || primary_off!=0xcc)
+                failures += fail("vertex secondary/padding pointers do not match SDK 1.6.5 oracle layout");
+        }
+    }
+
+    {
         // SDK 1.6.5 fragment arithmetic/control profiles append one 16-byte
         // descriptor per additional homogeneous F32 input, then retain the normal
         // 8-byte no-secondary anchor before primary code.

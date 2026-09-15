@@ -292,7 +292,7 @@ bool compile_vertex_passthrough_varying(const IrAttribute &position, const IrAtt
     return true;
 }
 
-bool compile_vertex_generic_machine(const MachineProgram &primary,
+bool compile_vertex_generic_machine(const MachineProgram &primary, const MachineProgram &secondary,
                                     const std::vector<IrAttribute> &attributes,
                                     const std::vector<IrUniformFloat> &uniforms,
                                     const std::vector<IrLiteralF32> &literal_values,
@@ -349,8 +349,9 @@ bool compile_vertex_generic_machine(const MachineProgram &primary,
         literals.push_back({literal.resource_index,literal.value_bits});
     }
 
-    MachineCompileResult compiled;
-    if (!compile_words(primary,compiled,out,"generic vertex Machine IR lowering failed")) return false;
+    MachineCompileResult compiled,secondary_compiled;
+    if (!compile_words(primary,compiled,out,"generic vertex Machine IR lowering failed") ||
+        !compile_words(secondary,secondary_compiled,out,"generic vertex secondary Machine IR lowering failed")) return false;
 
     uint8_t interface_block[32]{};
     for (size_t i=0;i<attributes.size();++i) {
@@ -377,6 +378,8 @@ bool compile_vertex_generic_machine(const MachineProgram &primary,
     image.compiler_version_raw=0x0002df30;
     image.interface_block=interface_block;
     image.interface_block_size=sizeof(interface_block);
+    image.secondary_instructions=secondary_compiled.words.data();
+    image.secondary_instruction_count=secondary_compiled.words.size();
     image.primary_instructions=compiled.words.data();
     image.primary_instruction_count=compiled.words.size();
     image.containers=containers.data();

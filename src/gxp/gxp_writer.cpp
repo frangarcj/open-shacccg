@@ -110,8 +110,7 @@ bool valid_desc(const ProgramImage &image) {
         (image.type != ProgramType::Fragment || image.secondary_instruction_count != 0 ||
          image.primary_instruction_count == 0))
         return false;
-    if (image.vertex_primary_padding_word &&
-        (image.type != ProgramType::Vertex || image.secondary_instruction_count != 0))
+    if (image.vertex_primary_padding_word && image.type != ProgramType::Vertex)
         return false;
     if (image.primary_instruction_count && !image.primary_instructions)
         return false;
@@ -196,12 +195,20 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
         if (image.type == ProgramType::Fragment && image.secondary_instruction_count == 0) {
             if (!add_size(cursor, static_cast<size_t>(image.fragment_additional_inputs) * 16u)) return false;
             if (!add_size(cursor, sizeof(uint64_t))) return false;
-        } else if (image.type == ProgramType::Vertex && image.vertex_primary_padding_word) {
+        } else if (image.type == ProgramType::Vertex && image.vertex_primary_padding_word &&
+                   image.secondary_instruction_count == 0) {
             if (!add_size(cursor, sizeof(uint32_t))) return false;
         }
         l.secondary_off = image.secondary_instruction_count ? cursor : cursor - 4;
         if (!mul_size(image.secondary_instruction_count, sizeof(uint64_t), bytes) || !add_size(cursor, bytes)) return false;
         l.secondary_end = image.secondary_instruction_count ? cursor : l.secondary_off;
+        // SDK 1.6.5 vertex programs keep the same 32-bit primary padding word
+        // after a real secondary stream (POLY/POLY3D: secondary starts at
+        // interface end, primary begins secondary_end+4).
+        if (image.type == ProgramType::Vertex && image.vertex_primary_padding_word &&
+            image.secondary_instruction_count != 0) {
+            if (!add_size(cursor, sizeof(uint32_t))) return false;
+        }
     }
 
     if (!primary_overlap) l.primary_off = cursor;

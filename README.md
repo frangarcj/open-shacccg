@@ -62,6 +62,10 @@ Implemented now:
   attributes, five packed float uniforms, `float4(xyz,1)` materialization and three dot
   products; resource flags/semantics/PA layout match the Sony oracle. Remaining instruction
   selection/scheduling work is tracked in `research/OPTIMIZATION_BACKLOG.md`
+- denominator-only scalar uniform divisions in generic vertex shaders are hoisted to
+  secondary VCOMP reciprocals when the component has no other consumers. This moves POLY
+  from 21+0 to 19+2 primary/secondary words and POLY3D from 43+0 to 39+2 without a
+  shader-name special case
 - Geometrizer `CMP_FS` is oracle-exact outside GUIDs: the texture/alpha-select shape lowers
   through F32 VTST (`uniform > 0.5`), semantic predicated VMOV, VPCK/VBW and the observed
   one-word secondary setup; no opaque shader-specific qwords are injected

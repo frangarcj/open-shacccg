@@ -80,7 +80,7 @@ bool compile_vertex_passthrough_varying(const IrAttribute &position, const IrAtt
 bool compile_vertex_uniform_matrix(const IrAttribute &position, const IrMatrix4Uniform &matrix,
                                    uint32_t binary_guid, uint32_t source_guid,
                                    IrCompileResult &out);
-bool compile_vertex_generic_machine(const MachineProgram &primary,
+bool compile_vertex_generic_machine(const MachineProgram &primary, const MachineProgram &secondary,
                                     const std::vector<IrAttribute> &attributes,
                                     const std::vector<IrUniformFloat> &uniforms,
                                     const std::vector<IrLiteralF32> &literals,
