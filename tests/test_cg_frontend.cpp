@@ -841,6 +841,11 @@ int test_cg_frontend() {
             "float4 main(float2 uv:TEXCOORD0):COLOR0{return tex2D(tex[0],uv)*tint;}",
             "sampler-array1-texture-tint.cg",VSC_STAGE_FRAGMENT))
         failures += fail("constant sampler2D[1] element 0 did not lower through texture-tint profile");
+    if (!compile_shader_gxp(
+            "uniform sampler2D tex[2]; "
+            "float4 main(float2 uv:TEXCOORD1):COLOR0{return tex2D(tex[1],uv);}",
+            "sampler-array2-binding1-texcoord1.cg",VSC_STAGE_FRAGMENT))
+        failures += fail("constant sampler2D[2] element 1 / TEXCOORD1 did not lower through direct texture profile");
     if (!compile_vitagl_blit_vertex_profile())
         failures += fail("vitaGL public blit vertex profile did not reproduce its observed v1.5 GXP shape");
     if (!compile_matrix_point_size_profile(false))

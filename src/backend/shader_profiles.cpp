@@ -1455,20 +1455,21 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
 
     case FragmentMachineProfile::Texture2D:
         if (!uniforms.empty() || samplers.size()!=1 || samplers[0].name.empty() ||
-            samplers[0].resource_index!=0) {
-            out.error="texture fragment profile requires one sampler2D at resource 0";
+            samplers[0].resource_index>1 || samplers[0].texcoord_index>1) {
+            out.error="texture fragment profile requires sampler2D/TEXCOORD index 0 or 1";
             return false;
         }
         interface_block[10]=1; interface_block[11]=4; interface_block[12]=1; interface_block[14]=1; interface_block[16]=4;
-        interface_block[20]=0x00; interface_block[21]=0xf9;
+        interface_block[20]=samplers[0].texcoord_index; interface_block[21]=0xf9;
+        interface_block[24]=static_cast<uint8_t>(samplers[0].resource_index);
         interface_block[28]=0x40;
         fragment_extension[0]=0x20;
         image.fragment_interface_extension=fragment_extension;
         image.fragment_interface_extension_size=sizeof(fragment_extension);
         containers={{19,0,0,2}};
-        parameters.push_back({samplers[0].name.c_str(),2,0,4,0,2,0,1,0});
+        parameters.push_back({samplers[0].name.c_str(),2,0,4,0,2,0,1,samplers[0].resource_index});
         image.program_flags=0x800;
-        image.texunit_flags[0]=1;
+        image.texunit_flags[0]=1u<<(4u*samplers[0].resource_index);
         image.primary_register_count=2;
         image.secondary_register_count=2;
         image.compiler_version_raw=0;

@@ -2132,13 +2132,20 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         const auto *coordinate_resource=resource_for_value(root_def->src1);
         if (!sampler_resource || sampler_resource->kind!=TypedResourceKind::Sampler2D ||
             !coordinate_resource || coordinate_resource->kind!=TypedResourceKind::Input ||
-            coordinate_resource->type!=TypedType::F32x2 || coordinate_resource->index!=0 ||
+            coordinate_resource->type!=TypedType::F32x2 || coordinate_resource->index>1 ||
+            sampler_resource->index>1 ||
             coordinate_resource->semantic==TypedSemantic::PointCoord) {
-            out.error="typed direct texture profile requires sampler2D + TEXCOORD float2 input";
+            out.error="typed direct texture profile requires sampler2D + TEXCOORD float2 index 0/1";
             return false;
         }
+        auto direct_samplers=fragment_samplers;
+        if (direct_samplers.size()!=1) {
+            out.error="typed direct texture profile requires exactly one active sampler";
+            return false;
+        }
+        direct_samplers[0].texcoord_index=static_cast<uint8_t>(coordinate_resource->index);
         return compile_fragment_machine_profile(FragmentMachineProfile::Texture2D,
-                                                fragment_uniforms,fragment_samplers,0,0,out);
+                                                fragment_uniforms,direct_samplers,0,0,out);
     }
     if (root_def->opcode()==TypedOpcode::FloatBinary &&
         root_def->subop()==static_cast<uint8_t>(TypedFloatOp::Div)) {

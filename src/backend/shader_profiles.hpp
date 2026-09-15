@@ -52,6 +52,7 @@ struct IrLiteralF32 {
 struct IrSampler2D {
     std::string name;
     uint32_t resource_index = 0;
+    uint8_t texcoord_index = 0;
 };
 
 enum class FragmentMachineProfile : uint8_t {
