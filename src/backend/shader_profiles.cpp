@@ -1007,6 +1007,153 @@ bool compile_vertex_uniform_matrix_two_texcoords_color_point_size(
     return true;
 }
 
+bool compile_vertex_indexed_clear(const IrUniformVec4 &position,
+                                  const IrUniformFloat &clear_depth,
+                                  uint32_t binary_guid, uint32_t source_guid,
+                                  IrCompileResult &out) {
+    out={};
+    if (position.name.empty() || position.resource_index!=0 || clear_depth.name.empty() ||
+        clear_depth.components!=1 || clear_depth.resource_index!=4) {
+        out.error="indexed-clear profile requires float4 uniform@0 and scalar depth@4";
+        return false;
+    }
+
+    ProgramBuilder primary,secondary;
+    if (!primary.phase()) { out.error="failed to emit indexed-clear PHAS"; return false; }
+    auto compare=[&](usse::Predicate guard,uint8_t predicate,uint8_t literal_sa) {
+        usse::VtstSemantic op{};
+        op.lhs={usse::RegisterBank::PrimaryAttribute,0};
+        op.rhs={usse::RegisterBank::SecondaryAttribute,literal_sa};
+        op.predicate=guard;
+        op.op=usse::CompareOp::Equal;
+        op.predicate_destination=predicate;
+        return primary.instruction(op);
+    };
+    auto copy_u32=[&](uint8_t dst,uint8_t src) {
+        usse::VbwSemantic op{};
+        op.op=usse::BitwiseOp::Or;
+        op.dst={usse::RegisterBank::Output,dst};
+        op.src1={usse::RegisterBank::SecondaryAttribute,src};
+        op.src2_is_immediate=true;
+        op.immediate=0;
+        return primary.instruction(op);
+    };
+    auto move=[&](usse::Predicate predicate,uint8_t dst,usse::RegisterBank src_bank,
+                  uint8_t src,uint8_t mask,uint8_t swizzle) {
+        usse::VmovSemantic op{};
+        op.dst={usse::RegisterBank::Output,dst};
+        op.src={src_bank,src};
+        op.predicate=predicate;
+        op.data_type=usse::DataType::F32;
+        op.dest_mask=mask;
+        op.swizzle=swizzle;
+        return primary.instruction(op);
+    };
+    if (!compare(usse::Predicate::Always,1,6) ||
+        !compare(usse::Predicate::Always,0,8) ||
+        !compare(usse::Predicate::NotP0,0,6) ||
+        !copy_u32(2,12) ||
+        !move(usse::Predicate::NotP0,1,usse::RegisterBank::SecondaryAttribute,1,1,0) ||
+        !compare(usse::Predicate::NotP1,1,7) ||
+        !copy_u32(0,0) ||
+        !move(usse::Predicate::P1,0,usse::RegisterBank::SecondaryAttribute,0,1,1) ||
+        !move(usse::Predicate::Always,0,usse::RegisterBank::Output,1,2,0) ||
+        !move(usse::Predicate::Always,1,usse::RegisterBank::SecondaryAttribute,5,3,4) ||
+        !primary.emit()) {
+        out.error="failed to build indexed-clear primary semantic stream";
+        return false;
+    }
+
+    usse::VmovSemantic depth_tail{};
+    depth_tail.dst={usse::RegisterBank::PrimaryAttribute,6};
+    depth_tail.src={usse::RegisterBank::PrimaryAttribute,1};
+    depth_tail.data_type=usse::DataType::F32;
+    depth_tail.dest_mask=1;
+    depth_tail.swizzle=1;
+    usse::V32NmadSemantic depth_one{};
+    depth_one.op=usse::VectorOp::Mul;
+    depth_one.dst={usse::RegisterBank::PrimaryAttribute,5};
+    depth_one.src1={usse::RegisterBank::PrimaryAttribute,2};
+    depth_one.src2={usse::RegisterBank::Special,1};
+    depth_one.dest_mask=3;
+    depth_one.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::One,
+                             usse::SwizzleChannel::X,usse::SwizzleChannel::X}};
+    depth_one.src2_swizzle={{usse::SwizzleChannel::Y,usse::SwizzleChannel::Y,
+                             usse::SwizzleChannel::Y,usse::SwizzleChannel::Y}};
+    depth_one.skip_invalid=true;
+    usse::NopSemantic end{};
+    end.no_schedule=false;
+    end.end=true;
+    if (!secondary.instruction(depth_tail) || !secondary.instruction(depth_one) ||
+        !secondary.instruction(end)) {
+        out.error="failed to build indexed-clear secondary semantic stream";
+        return false;
+    }
+
+    const uint64_t expected_primary[]={
+        0xfa44070000000000ULL,0x48880185b007c006ULL,0x48880181b007c008ULL,
+        0x4d880181b007c006ULL,0x50810009e0400600ULL,0x3d800501c1040040ULL,
+        0x4e880185b007c007ULL,0x50810009e0000000ULL,0x3a800509c1000000ULL,
+        0x3880050142000040ULL,0x38800521c3040140ULL,0xfb275000a0200000ULL,
+    };
+    const uint64_t expected_secondary[]={
+        0x3880050a81180040ULL,0x0881118291540081ULL,0xf804014000000000ULL,
+    };
+    if (primary.words().size()!=std::size(expected_primary) ||
+        !std::equal(primary.words().begin(),primary.words().end(),std::begin(expected_primary)) ||
+        secondary.words().size()!=std::size(expected_secondary) ||
+        !std::equal(secondary.words().begin(),secondary.words().end(),std::begin(expected_secondary))) {
+        out.error="indexed-clear semantic stream no longer matches public vitaGL words";
+        return false;
+    }
+
+    const uint8_t interface_block[32]={
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0x10,0,0x04,0,0,0,0,0,0,0,0,0,0,0,0,
+    };
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,6},{19,0,6,3}};
+    const gxp::LiteralDesc literals[]={{0,2},{1,1},{2,3}};
+    const gxp::ParameterDesc parameters[]={
+        {position.name.c_str(),1,0,4,14,0,0,1,0},
+        {clear_depth.name.c_str(),1,0,1,14,0,0,1,4},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.minor_version=5;
+    image.sdk_version=0x0350;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x001b0000;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=1;
+    image.secondary_register_count=13;
+    image.primary_phase_count=1;
+    image.data_buffer_count=3;
+    image.default_uniform_buffer_count=6;
+    image.compiler_version_raw=0x00033e40;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.secondary_instructions=secondary.words().data();
+    image.secondary_instruction_count=secondary.words().size();
+    image.primary_instructions=primary.words().data();
+    image.primary_instruction_count=primary.words().size();
+    image.containers=containers;
+    image.container_count=2;
+    image.parameters=parameters;
+    image.parameter_count=2;
+    image.literals=literals;
+    image.literal_count=3;
+    image.vertex_primary_padding_word=true;
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected indexed-clear profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for indexed-clear profile"; return false;
+    }
+    return true;
+}
+
 } // namespace vsc::backend
 
 namespace vsc::backend {

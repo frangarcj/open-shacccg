@@ -161,7 +161,14 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
         kV15FixedPrefixSize : kFixedPrefixSize;
     l.interface_off = cursor;
     if (!add_size(cursor, kInterfaceSize)) return false;
-    cursor = align_up(cursor, 8); if (!cursor) return false;
+    // Public vitaGL v1.5 clear_v anchors the vertex secondary stream directly
+    // at interface+32 (0xbc), even though that address is only 4-byte aligned.
+    // No-secondary v1.5 vertex programs still align their primary stream to 8.
+    const bool v15_vertex_secondary=image.type==ProgramType::Vertex &&
+        image.secondary_instruction_count && image.major_version==1 && image.minor_version>=5;
+    if (!v15_vertex_secondary) {
+        cursor = align_up(cursor, 8); if (!cursor) return false;
+    }
 
     size_t bytes = 0;
     const bool primary_overlap=image.fragment_primary_overlaps_interface;

@@ -1031,6 +1031,47 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         return false;
                     }
                     values[args[1]]=dst;
+                } else if (map_compare(op,compare)) {
+                    if (count!=5) { error="invalid scalar integer compare instruction"; return false; }
+                    auto resolve_u32=[&](uint32_t id, backend::TypedValue &value) -> bool {
+                        if (auto it=values.find(id); it!=values.end() && it->second.type()==backend::TypedType::U32) {
+                            value=it->second;
+                            return true;
+                        }
+                        const auto constant=constants.find(id);
+                        if (constant==constants.end()) return false;
+                        value=program.literal_u32(constant->second);
+                        return value.kind()!=backend::TypedValueKind::None;
+                    };
+                    backend::TypedValue lhs{},rhs{};
+                    if (!resolve_u32(args[2],lhs) || !resolve_u32(args[3],rhs)) {
+                        error="integer compare operands are outside the validated scalar U32 subset";
+                        return false;
+                    }
+                    const auto dst=program.make_predicate();
+                    if (dst.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::Compare>(static_cast<uint8_t>(compare),dst,lhs,rhs)) {
+                        error="failed to emit Typed U32 compare";
+                        return false;
+                    }
+                    values[args[1]]=dst;
+                } else if (op==spv::OpLogicalOr) {
+                    if (count!=5) { error="invalid logical-or instruction"; return false; }
+                    const auto lhs=values.find(args[2]);
+                    const auto rhs=values.find(args[3]);
+                    if (lhs==values.end() || rhs==values.end() ||
+                        lhs->second.kind()!=backend::TypedValueKind::Predicate ||
+                        rhs->second.kind()!=backend::TypedValueKind::Predicate) {
+                        error="logical-or operands are not Typed predicates";
+                        return false;
+                    }
+                    const auto dst=program.make_predicate();
+                    if (dst.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::PredicateOr>(0,dst,lhs->second,rhs->second)) {
+                        error="failed to emit Typed predicate OR";
+                        return false;
+                    }
+                    values[args[1]]=dst;
                 } else if (op==spv::OpSLessThan) {
                     if (count!=5) { error="invalid signed integer compare instruction"; return false; }
                     const auto lhs=values.find(args[2]);
@@ -1375,6 +1416,36 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     // The corresponding stores were sunk into the predecessor blocks.
                 } else if (op == spv::OpSelect) {
                     const auto select=select_sinks.find(args[1]);
+                    if (select==select_sinks.end() && stage==backend::TypedStage::Vertex) {
+                        const auto result_type=typed_type(compiler.get_type(args[0]));
+                        const auto predicate=values.find(args[2]);
+                        auto resolve_scalar=[&](uint32_t id, backend::TypedValue &value) -> bool {
+                            if (auto it=values.find(id);it!=values.end() && it->second.type()==backend::TypedType::F32) {
+                                value=it->second;
+                                return true;
+                            }
+                            if (auto constant=constants.find(id);constant!=constants.end()) {
+                                value=program.literal_f32(constant->second);
+                                return value.kind()!=backend::TypedValueKind::None;
+                            }
+                            return false;
+                        };
+                        backend::TypedValue true_value{},false_value{};
+                        if (result_type!=backend::TypedType::F32 || predicate==values.end() ||
+                            predicate->second.kind()!=backend::TypedValueKind::Predicate ||
+                            !resolve_scalar(args[3],true_value) || !resolve_scalar(args[4],false_value)) {
+                            error="vertex OpSelect is outside the validated scalar F32 subset";
+                            return false;
+                        }
+                        const auto selected=program.select_f32(predicate->second,true_value,false_value);
+                        if (selected.kind()==backend::TypedValueKind::None) {
+                            error="failed to emit Typed scalar vertex select";
+                            return false;
+                        }
+                        values[args[1]]=selected;
+                        offset+=count;
+                        continue;
+                    }
                     if (select==select_sinks.end()) {
                         error="OpSelect was not recorded by the structured pre-scan";
                         return false;

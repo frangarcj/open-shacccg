@@ -18,6 +18,7 @@
     "vitagl:ffp_v_texture2_color",
     "vitagl:precompiled_blit_f",
     "vitagl:precompiled_blit_v",
-    "vitagl:precompiled_clear_f"
+    "vitagl:precompiled_clear_f",
+    "vitagl:precompiled_clear_v"
   ]
 }

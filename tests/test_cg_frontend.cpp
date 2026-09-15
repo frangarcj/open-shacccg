@@ -319,6 +319,62 @@ bool compile_matrix_point_size_profile(bool with_color) {
     return ok;
 }
 
+bool compile_indexed_clear_vertex_profile() {
+    static constexpr const char *source=
+        "float4 main(unsigned int i:INDEX,uniform float4 bounds,uniform float depth):POSITION{"
+        "float x=(i==1||i==2)?bounds.y:bounds.x;"
+        "float y=(i==2||i==3)?bounds.w:bounds.z;return float4(x,y,depth,1.f);}";
+    VscCompileRequest request{};
+    request.source_name="indexed-clear.cg";
+    request.source=source;
+    request.source_size=std::strlen(source);
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_VERTEX;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.diagnostic_count==0;
+    if (ok) {
+        const uint64_t primary_words[]={
+            0xfa44070000000000ULL,0x48880185b007c006ULL,0x48880181b007c008ULL,
+            0x4d880181b007c006ULL,0x50810009e0400600ULL,0x3d800501c1040040ULL,
+            0x4e880185b007c007ULL,0x50810009e0000000ULL,0x3a800509c1000000ULL,
+            0x3880050142000040ULL,0x38800521c3040140ULL,0xfb275000a0200000ULL,
+        };
+        const uint64_t secondary_words[]={
+            0x3880050a81180040ULL,0x0881118291540081ULL,0xf804014000000000ULL,
+        };
+        const uint8_t interface_block[]={
+            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+            0,0x10,0,0x04,0,0,0,0,0,0,0,0,0,0,0,0,
+        };
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        const auto primary=view.primary_program();
+        const auto secondary=view.secondary_program();
+        const auto interface=view.varyings();
+        vsc::gxp::ParameterView bounds{},depth{};
+        ok=view.valid() && view.major_version()==1 && view.minor_version()==5 &&
+            view.sdk_version()==0x0350 && view.flags()==0x001b0000 &&
+            view.primary_register_count()==1 && view.secondary_register_count()==13 &&
+            view.compiler_version_raw()==0x00033e40 && view.literal_count()==3 &&
+            view.container_count()==2 && view.parameter_count()==2 &&
+            primary.size==sizeof(primary_words) &&
+            std::memcmp(primary.data,primary_words,sizeof(primary_words))==0 &&
+            secondary.size==sizeof(secondary_words) &&
+            std::memcmp(secondary.data,secondary_words,sizeof(secondary_words))==0 &&
+            interface.size==sizeof(interface_block) &&
+            std::memcmp(interface.data,interface_block,sizeof(interface_block))==0 &&
+            view.parameter(0,bounds) && bounds.name=="bounds" && bounds.category==1 &&
+            bounds.component_count==4 && bounds.container_index==14 && bounds.resource_index==0 &&
+            view.parameter(1,depth) && depth.name=="depth" && depth.category==1 &&
+            depth.component_count==1 && depth.container_index==14 && depth.resource_index==4;
+    }
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: indexed-clear diagnostic=%s\n",
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
+
 bool compile_loop_gxp(const std::string &source, const char *name, uint8_t step) {
     VscCompileRequest request{};
     request.source_name=name;
@@ -782,6 +838,8 @@ int test_cg_frontend() {
         failures += fail("oracle matrix + uniform PSIZE vertex profile did not reproduce the validated stream");
     if (!compile_matrix_point_size_profile(true))
         failures += fail("oracle matrix + COLOR + uniform PSIZE profile did not reproduce the validated stream");
+    if (!compile_indexed_clear_vertex_profile())
+        failures += fail("indexed clear vertex profile did not reproduce the public vitaGL semantic stream");
     struct PublicShader { const char *name; VscStage stage; };
     const PublicShader public_shaders[] = {
         {"clear_f", VSC_STAGE_FRAGMENT},

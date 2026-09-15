@@ -1007,6 +1007,9 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             predicate_defined[instruction.dst.id()] = true;
             break;
         }
+        case TypedOpcode::PredicateOr:
+            error="typed predicate OR requires compile_typed_shader profile selection";
+            return false;
         case TypedOpcode::Discard: {
             auto predicate = predicates[instruction.src0.id()];
             if (instruction.src0.inverted()) predicate = MachineOperand::virtual_predicate(predicate.id(), true);
@@ -1086,6 +1089,87 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         std::sort(inputs.begin(), inputs.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
         std::sort(matrices.begin(), matrices.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
         std::sort(vertex_uniforms.begin(), vertex_uniforms.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
+
+        // Public vitaGL clear vertex: a scalar U32 INDEX chooses x/y from one
+        // float4 uniform, then combines those selections with a scalar depth
+        // and literal 1. Recognize the semantic dataflow before the generic
+        // float-attribute path rejects the integer built-in input.
+        if (inputs.size()==1 && inputs[0]->index==0 && inputs[0]->type==TypedType::U32 &&
+            matrices.empty() && vertex_uniforms.size()==2 &&
+            vertex_uniforms[0]->index==0 && vertex_uniforms[0]->type==TypedType::F32x4 &&
+            vertex_uniforms[1]->index==4 && vertex_uniforms[1]->type==TypedType::F32) {
+            const TypedInstruction *store=nullptr;
+            for (const auto &instruction:instructions) {
+                if (instruction.opcode()!=TypedOpcode::StoreOutput) continue;
+                if (store) { store=nullptr; break; }
+                store=&instruction;
+            }
+            auto predicate_definition=[&](TypedValue predicate) -> const TypedInstruction * {
+                if (predicate.kind()!=TypedValueKind::Predicate) return nullptr;
+                for (const auto &instruction:instructions)
+                    if (instruction.dst.kind()==TypedValueKind::Predicate && instruction.dst.id()==predicate.id())
+                        return &instruction;
+                return nullptr;
+            };
+            auto literal_u32=[&](TypedValue value,uint32_t &bits) -> bool {
+                if (value.kind()!=TypedValueKind::Literal || value.type()!=TypedType::U32 ||
+                    value.id()>=program.literals().size()) return false;
+                bits=program.literals()[value.id()];
+                return true;
+            };
+            auto compare_literal=[&](TypedValue predicate,uint32_t &bits) -> bool {
+                const auto *compare=predicate_definition(predicate);
+                if (!compare || compare->opcode()!=TypedOpcode::Compare ||
+                    compare->subop()!=static_cast<uint8_t>(usse::CompareOp::Equal)) return false;
+                const auto *lhs=resource_for_value(compare->src0);
+                const auto *rhs=resource_for_value(compare->src1);
+                if (lhs==inputs[0]) return literal_u32(compare->src1,bits);
+                if (rhs==inputs[0]) return literal_u32(compare->src0,bits);
+                return false;
+            };
+            auto predicate_pair=[&](TypedValue predicate,uint32_t a,uint32_t b) -> bool {
+                const auto *logical=predicate_definition(predicate);
+                if (!logical || logical->opcode()!=TypedOpcode::PredicateOr) return false;
+                uint32_t x=0,y=0;
+                if (!compare_literal(logical->src0,x) || !compare_literal(logical->src1,y)) return false;
+                return (x==a && y==b) || (x==b && y==a);
+            };
+            auto selected_lane=[&](TypedValue value,uint8_t true_lane,uint8_t false_lane,
+                                   uint32_t literal0,uint32_t literal1) -> bool {
+                const auto *select=definition(value);
+                if (!select || select->opcode()!=TypedOpcode::FloatSelect ||
+                    select->aux>=program.float_selects().size()) return false;
+                const auto &desc=program.float_selects()[select->aux];
+                const auto *true_extract=definition(desc.true_value);
+                const auto *false_extract=definition(desc.false_value);
+                if (!true_extract || !false_extract ||
+                    true_extract->opcode()!=TypedOpcode::FloatExtract ||
+                    false_extract->opcode()!=TypedOpcode::FloatExtract ||
+                    true_extract->subop()!=true_lane || false_extract->subop()!=false_lane ||
+                    true_extract->src0.bits!=vertex_uniforms[0]->value.bits ||
+                    false_extract->src0.bits!=vertex_uniforms[0]->value.bits)
+                    return false;
+                return predicate_pair(desc.predicate,literal0,literal1);
+            };
+            if (store && store->aux<resources.size() && resources[store->aux].kind==TypedResourceKind::Output &&
+                resources[store->aux].index==0 && resources[store->aux].type==TypedType::F32x4) {
+                const auto *compose=definition(store->src0);
+                if (compose && compose->opcode()==TypedOpcode::FloatCompose &&
+                    compose->aux<program.float4_composites().size()) {
+                    const auto &components=program.float4_composites()[compose->aux];
+                    const bool one=components[3].kind()==TypedValueKind::Literal &&
+                        components[3].type()==TypedType::F32 && components[3].id()<program.literals().size() &&
+                        program.literals()[components[3].id()]==0x3f800000u;
+                    if (selected_lane(components[0],1,0,1,2) &&
+                        selected_lane(components[1],3,2,2,3) &&
+                        components[2].bits==vertex_uniforms[1]->value.bits && one) {
+                        return compile_vertex_indexed_clear(
+                            {shader.resource_name(*vertex_uniforms[0]),vertex_uniforms[0]->index},
+                            {shader.resource_name(*vertex_uniforms[1]),1,vertex_uniforms[1]->index},0,0,out);
+                    }
+                }
+            }
+        }
         if (inputs.empty()) { out.error = "typed vertex shader has no inputs"; return false; }
 
         std::unordered_map<uint32_t, uint32_t> attribute_for_value;
