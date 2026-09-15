@@ -852,6 +852,9 @@ int test_cg_frontend() {
         failures += fail("Cg scalar bit_cast<unsigned int> did not normalize to HLSL asuint");
     if (!compile("void f(float4 inout a){a+=1.f;} float4 main(float4 a:TEXCOORD0):COLOR0{f(a);return a;}", VSC_STAGE_FRAGMENT))
         failures += fail("Cg post-type inout qualifier normalization did not compile");
+    if (!compile("float4 main(float4 p:POSITION,uniform float4x4 model,uniform float4x4 mvp):POSITION{"
+                 "mvp=mul(mvp,model);return mul(mvp,p);}", VSC_STAGE_VERTEX))
+        failures += fail("Cg mutable uniform parameter was not normalized to a local copy");
     if (!compile_vertex_gxp(
             "void main(float4 p,float2 uv,uniform float4x4 mvp,uniform float4x4 texmat[1],uniform float point_size,"
             "float2 out tc:TEXCOORD0,float4 out pos:POSITION,float out ps:PSIZE){"
