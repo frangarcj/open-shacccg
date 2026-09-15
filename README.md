@@ -87,8 +87,9 @@ Implemented now:
   Typed/Machine loop state, signed-32 `i<n` VTST, I32MAD2 counter update/feed-through and BR back-edges
 - structured fragment `if/else` from glslang: two-way `OpPhi` values that feed COLOR0 are
   sunk into branch-local output packs, so real Cg conditionals reach Machine BR/GXP without a physical phi opcode
-- all seven public libvita2d Cg shaders now pass through the Typed Vita IR path; generated GXPs are
-  byte-identical to the preserved public samples except for Sony's two 32-bit GUID fields
+- all seven public libvita2d Cg shaders pass through the Typed Vita IR path; six generated GXPs
+  remain byte-identical to the preserved historical samples outside Sony's two GUID fields, while
+  standalone `texture_f` now targets the newer SDK 3.0.0 v1.5 layout byte-for-byte
 - frontend -> SPIR-V and SPIR-V -> Vita IR -> USSE/GXP boundaries
 - independent structured GXP reader for real Vita program images
 - canonical GXP serializer for interface data, primary/secondary code, parameter containers,
@@ -452,8 +453,8 @@ the otherwise-free control bits, while VMAD uses a compact virtual-pair operand
 for its two GPI inputs. A zero-word dependent-sample pseudo-op connects the
 coordinate GPI lifetime to the asynchronously produced texture TEMP. As a
 result, `shader_profiles.cpp` no longer constructs USSE semantic instruction structs or
-performs a second lifetime pass. The seven public libvita2d GXP regressions
-remain byte-identical.
+performs a second lifetime pass. Six preserved libvita2d GXP regressions remain
+byte-identical; standalone `texture_f` instead reproduces the newer SDK 3.0.0 GXP.
 
 Typed IR can also lower validated F32x4 arithmetic directly to Machine IR:
 multiply, add, subtract-as-negated-add, min/max, dot, negate and absolute. The

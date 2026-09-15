@@ -56,6 +56,7 @@ constexpr size_t kOffTextureDependentSamplerCount = 0x88;
 constexpr size_t kOffTextureDependentSamplers = 0x8c;
 constexpr size_t kOffContainerCount = 0x90;
 constexpr size_t kOffContainers = 0x94;
+constexpr size_t kOffSamplerQueryInfo = 0x98;
 
 size_t align_up(size_t value, size_t alignment) {
     if (!alignment) return value;
@@ -128,6 +129,12 @@ bool valid_desc(const ProgramImage &image) {
         return false;
     if (image.container_count && !image.containers)
         return false;
+    if ((image.sampler_query_info_count && !image.sampler_query_info) ||
+        (!image.sampler_query_info_count && image.sampler_query_info))
+        return false;
+    if (image.sampler_query_info_count &&
+        (image.major_version!=1 || image.minor_version<5 || image.sampler_query_info_count!=16))
+        return false;
     if (image.parameter_count && !image.parameters)
         return false;
     if (image.literal_count && !image.literals)
@@ -156,6 +163,7 @@ struct Layout {
     size_t aux_off = 0;
     size_t containers_off = 0;
     size_t parameters_off = 0;
+    size_t sampler_query_off = 0;
     size_t strings_off = 0;
     size_t logical_size = 0;
     size_t physical_size = 0;
@@ -173,9 +181,10 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
     // Public vitaGL v1.5 clear_v anchors the vertex secondary stream directly
     // at interface+32 (0xbc), even though that address is only 4-byte aligned.
     // No-secondary v1.5 vertex programs still align their primary stream to 8.
-    const bool v15_vertex_secondary=image.type==ProgramType::Vertex &&
-        image.secondary_instruction_count && image.major_version==1 && image.minor_version>=5;
-    if (!v15_vertex_secondary) {
+    const bool v15_unaligned_interface=image.major_version==1 && image.minor_version>=5 &&
+        (image.type==ProgramType::Fragment ||
+         (image.type==ProgramType::Vertex && image.secondary_instruction_count));
+    if (!v15_unaligned_interface) {
         cursor = align_up(cursor, 8); if (!cursor) return false;
     }
 
@@ -252,6 +261,8 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
 
     l.parameters_off = cursor;
     if (!mul_size(image.parameter_count, ProgramView::kParameterSize, bytes) || !add_size(cursor, bytes)) return false;
+    l.sampler_query_off = cursor;
+    if (!mul_size(image.sampler_query_info_count,sizeof(uint16_t),bytes) || !add_size(cursor,bytes)) return false;
     l.strings_off = cursor;
     const size_t names = string_bytes(image);
     if (image.parameter_count && !names) return false;
@@ -319,6 +330,8 @@ bool write_program(const ProgramImage &image, uint8_t *output, size_t capacity,
     binary::store<uint32_t>(output, kOffTextureDependentSamplerCount, 0);
     if (!put_rel32(output, kOffTextureDependentSamplers, l.aux_off)) return false;
     if (!put_rel32(output, kOffContainers, l.containers_off)) return false;
+    if (image.sampler_query_info_count &&
+        !put_rel32(output,kOffSamplerQueryInfo,l.sampler_query_off)) return false;
 
     if (image.interface_block)
         std::memcpy(output + l.interface_off, image.interface_block, kInterfaceSize);
@@ -372,6 +385,9 @@ bool write_program(const ProgramImage &image, uint8_t *output, size_t capacity,
             binary::MemberField<uint16_t, &ParameterContainerDesc::size_in_f32, 6>
         >(output, off, c);
     }
+
+    for (size_t i=0;i<image.sampler_query_info_count;++i)
+        binary::store<uint16_t>(output,l.sampler_query_off+i*sizeof(uint16_t),image.sampler_query_info[i]);
 
     size_t name_cursor = l.strings_off;
     for (size_t i = 0; i < image.parameter_count; ++i) {

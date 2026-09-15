@@ -30,6 +30,7 @@ constexpr size_t kOffLiteralCount = 0x70;
 constexpr size_t kOffUniformBufferCount = 0x78;
 constexpr size_t kOffDependentSamplerCount = 0x80;
 constexpr size_t kOffContainerCount = 0x90;
+constexpr size_t kOffSamplerQueryInfo = 0x98;
 } // namespace
 
 ProgramView::ProgramView(const void *data, size_t size)
@@ -178,6 +179,14 @@ void ProgramView::validate() {
         }
     }
 
+    if (u8(kOffMajor)==1 && u8(kOffMinor)>=5 && u32(kOffSamplerQueryInfo)) {
+        ByteRange sampler_query;
+        if (!self_relative_range(kOffSamplerQueryInfo,u32(kOffSamplerQueryInfo),32,sampler_query)) {
+            error_ = "GXP sampler-query table is out of range";
+            return;
+        }
+    }
+
     error_ = nullptr;
 }
 
@@ -225,6 +234,13 @@ ByteRange ProgramView::varyings() const {
     // The fixed varying/interface block in GXP v1.4 is 32 bytes. Some future
     // revisions may differ; callers should treat it as opaque for now.
     self_relative_range(kOffVaryings, u32(kOffVaryings), 32, out);
+    return out;
+}
+
+ByteRange ProgramView::sampler_query_info() const {
+    ByteRange out;
+    if (!valid() || major_version()!=1 || minor_version()<5 || !u32(kOffSamplerQueryInfo)) return out;
+    self_relative_range(kOffSamplerQueryInfo,u32(kOffSamplerQueryInfo),32,out);
     return out;
 }
 

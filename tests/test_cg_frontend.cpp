@@ -1012,7 +1012,6 @@ int test_cg_frontend() {
     const PublicShader public_shaders[] = {
         {"clear_f", VSC_STAGE_FRAGMENT},
         {"color_f", VSC_STAGE_FRAGMENT},
-        {"texture_f", VSC_STAGE_FRAGMENT},
         {"texture_tint_f", VSC_STAGE_FRAGMENT},
         {"clear_v", VSC_STAGE_VERTEX},
         {"color_v", VSC_STAGE_VERTEX},
@@ -1020,6 +1019,25 @@ int test_cg_frontend() {
     };
     for (const auto &shader : public_shaders)
         if (!compile_matches_public_gxp(shader.name, shader.stage)) ++failures;
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/research/public_samples/libvita2d/texture_f.cg");
+        VscCompileRequest request{};
+        request.source_name="texture_f.cg"; request.source=source.data(); request.source_size=source.size();
+        request.entrypoint="main"; request.stage=VSC_STAGE_FRAGMENT;
+        VscCompileResult result{};
+        bool ok=!source.empty() && vsc_compile(&request,&result)==0 && result.gxp_data && result.diagnostic_count==0;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            const auto query=view.sampler_query_info();
+            uint16_t query0=0;
+            if (query.size>=sizeof(query0)) std::memcpy(&query0,query.data,sizeof(query0));
+            ok=view.valid() && view.logical_size()==256 && view.minor_version()==5 && view.sdk_version()==0x0300 &&
+                view.flags()==0x00180801 && view.secondary_register_count()==0 && view.container_count()==0 &&
+                view.compiler_version_raw()==0x00033a90 && query.size==32 && query0==0x0302;
+        }
+        if (!ok) failures += fail("texture_f did not reproduce the SDK 3.0.0 standalone texture profile");
+        vsc_destroy_result(&request.allocator,&result);
+    }
     const std::string control_source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-if-big.cg");
     if (control_source.empty() || !compile_control_flow_gxp(control_source))
         failures += fail("large Cg if/else did not compile through Typed/Machine BR to a control-flow GXP");

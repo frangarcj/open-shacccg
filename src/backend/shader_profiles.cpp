@@ -2227,6 +2227,7 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
 
     uint8_t interface_block[32]{};
     uint8_t fragment_extension[8]{};
+    std::array<uint16_t,16> sampler_query_info{};
     std::vector<gxp::ParameterContainerDesc> containers;
     std::vector<gxp::ParameterDesc> parameters;
     std::vector<gxp::LiteralDesc> literals;
@@ -2355,13 +2356,18 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
         fragment_extension[0]=0x20;
         image.fragment_interface_extension=fragment_extension;
         image.fragment_interface_extension_size=sizeof(fragment_extension);
-        containers={{19,0,0,2}};
         parameters.push_back({samplers[0].name.c_str(),2,0,4,0,2,0,1,samplers[0].resource_index});
-        image.program_flags=0x800;
+        sampler_query_info[samplers[0].resource_index]=0x0302;
+        image.minor_version=5;
+        image.sdk_version=0x0300;
+        image.program_flags=0x00180800;
         image.texunit_flags[0]=1u<<(4u*samplers[0].resource_index);
         image.primary_register_count=2;
-        image.secondary_register_count=2;
-        image.compiler_version_raw=0;
+        image.secondary_register_count=0;
+        image.data_buffer_count=0;
+        image.compiler_version_raw=0x00033a90;
+        image.sampler_query_info=sampler_query_info.data();
+        image.sampler_query_info_count=sampler_query_info.size();
         break;
 
     case FragmentMachineProfile::SwizzleWzyx: {

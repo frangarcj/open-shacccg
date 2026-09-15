@@ -121,15 +121,25 @@ int test_gxp() {
     }
 
     {
-        auto expected = load("texture_f.gxp");
         vsc::backend::IrCompileResult generated;
         const std::vector<vsc::backend::IrSampler2D> samplers = {{"tex",0}};
         if (!vsc::backend::compile_fragment_machine_profile(vsc::backend::FragmentMachineProfile::Texture2D,
-                {},samplers,0xa0cb639e,0x6033c77b,generated)) failures += fail("texture_f Machine profile compilation failed");
-        else if (generated.gxp.size()!=expected.size() || std::memcmp(generated.gxp.data(),expected.data(),expected.size())!=0) {
-            size_t first=0; while(first<generated.gxp.size() && first<expected.size() && generated.gxp[first]==expected[first]) ++first;
-            std::fprintf(stderr,"test_gxp: texture_f Machine profile differs at 0x%zx (generated=%zu expected=%zu)\n",first,generated.gxp.size(),expected.size());
-            ++failures;
+                {},samplers,0,0,generated)) failures += fail("texture_f Machine profile compilation failed");
+        else {
+            ProgramView view(generated.gxp.data(),generated.gxp.size());
+            ParameterView tex{};
+            const auto query=view.sampler_query_info();
+            uint16_t query0=0;
+            if (query.size>=sizeof(query0)) std::memcpy(&query0,query.data,sizeof(query0));
+            if (!view.valid() || view.major_version()!=1 || view.minor_version()!=5 ||
+                view.sdk_version()!=0x0300 || view.logical_size()!=256 || view.flags()!=0x00180801 ||
+                view.primary_register_count()!=2 || view.secondary_register_count()!=0 ||
+                view.compiler_version_raw()!=0x00033a90 || view.container_count()!=0 ||
+                view.parameter_count()!=1 || !view.parameter(0,tex) || tex.name!="tex" ||
+                tex.category!=2 || tex.semantic!=2 || tex.resource_index!=0 ||
+                query.size!=32 || query0!=0x0302) {
+                failures += fail("texture_f Machine profile does not match SDK 3.0.0 metadata");
+            }
         }
     }
 

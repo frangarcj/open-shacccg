@@ -63,6 +63,7 @@ public:
     ByteRange primary_program() const;
     ByteRange secondary_program() const;
     ByteRange varyings() const;
+    ByteRange sampler_query_info() const;
 
     uint32_t compiler_version_raw() const;
     uint32_t literal_count() const;

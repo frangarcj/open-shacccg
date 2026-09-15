@@ -82,11 +82,12 @@ Current integration fixture: `oracle_corpus_v2/fp-geometrizer-cmp.cg`.
   opaque instruction word is injected by the shader profile.
 - There is therefore no instruction-selection optimization debt for this shape.
 
-Related texture cleanup still pending:
+Related texture cleanup:
 
-1. Bring the simpler standalone `Texture2D` profile's GXP metadata in line with
-   SDK 1.6.5 (Sony uses flags `0x00080801`, SA=0, no data/container padding for
-   the one-fetch probe; the older public-profile layout currently differs).
+1. The standalone `Texture2D` profile now follows the newer SDK 3.0.0 oracle:
+   GXP v1.5, flags `0x00180801`, SA=0, no data/container padding, and the
+   16-entry sampler-query table (`0x0302` for a direct read). The older public
+   libvita2d GXP remains a historical v1.4 fixture rather than the codegen target.
 2. Generalize predicated scalar/component selection only when another real
    shader needs it; do not replace the exact CMP shape with branch-heavy generic
    select lowering.

@@ -114,6 +114,11 @@ struct ProgramImage {
     const uint64_t *primary_instructions = nullptr;
     size_t primary_instruction_count = 0;
 
+    // GXP v1.5 sampler-query metadata. Sony emits one uint16_t per TEXUNIT,
+    // with 16 entries in the validated SDK 3.0.0 fragment profiles.
+    const uint16_t *sampler_query_info = nullptr;
+    size_t sampler_query_info_count = 0;
+
     const ParameterContainerDesc *containers = nullptr;
     size_t container_count = 0;
     const ParameterDesc *parameters = nullptr;

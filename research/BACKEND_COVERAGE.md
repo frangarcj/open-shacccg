@@ -157,8 +157,9 @@ inventing an SMP instruction that is absent from the public sample.
 
 The vertex, texture-tint and generic fragment arithmetic paths no longer carry
 their own TEMP/GPI free lists, direct register-bank selections or semantic USSE
-instruction construction in `shader_profiles.cpp`. The public clear/color/texture vertex
-and fragment GXPs remain byte-identical after the migration.
+instruction construction in `shader_profiles.cpp`. Six preserved libvita2d GXPs
+remain byte-identical after the migration; standalone `texture_f` now deliberately
+tracks the newer SDK 3.0.0 v1.5 oracle layout instead of its historical v1.4 sample.
 
 Typed IR now lowers F32x4 mul/add/sub/min/max, scalar dot, negate and absolute
 through the same Machine IR. SPIRV-Cross also recognizes `OpFNegate` without
