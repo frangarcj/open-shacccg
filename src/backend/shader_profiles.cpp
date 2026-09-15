@@ -1397,6 +1397,118 @@ bool compile_vertex_matrix_normal_multivarying_point_size(
     return true;
 }
 
+bool compile_vertex_lighting_machine(const MachineProgram &primary,
+                                     const std::vector<IrAttribute> &attributes,
+                                     const std::vector<IrUniformFloat> &uniforms,
+                                     const std::vector<IrMatrix4Uniform> &matrices,
+                                     const IrMatrix3Uniform &normal_matrix,
+                                     const std::vector<IrLiteralF32> &literal_values,
+                                     uint32_t binary_guid, uint32_t source_guid,
+                                     IrCompileResult &out) {
+    out={};
+    if (attributes.size()!=7 || matrices.size()!=3 || normal_matrix.name.empty()) {
+        out.error="lighting vertex profile requires seven attributes, three mat4s and one mat3";
+        return false;
+    }
+    const uint8_t expected_components[]={4,2,4,4,4,4,3};
+    uint32_t primary_words=0;
+    for (size_t i=0;i<attributes.size();++i) {
+        if (!valid_attribute(attributes[i]) || attributes[i].resource_index!=i*4u ||
+            attributes[i].components!=expected_components[i]) {
+            out.error="lighting vertex attributes do not match the validated FFP layout";
+            return false;
+        }
+        primary_words=std::max(primary_words,attributes[i].resource_index+4u);
+    }
+
+    uint32_t uniform_words=normal_matrix.resource_index+12u;
+    for (const auto &matrix:matrices) {
+        if (matrix.name.empty() || (matrix.resource_index&1u)) {
+            out.error="lighting mat4 metadata is invalid";
+            return false;
+        }
+        uniform_words=std::max(uniform_words,matrix.resource_index+16u);
+    }
+    for (const auto &uniform:uniforms) {
+        if (uniform.name.empty() || uniform.components<1 || uniform.components>4) {
+            out.error="lighting scalar/vector uniform metadata is invalid";
+            return false;
+        }
+        uniform_words=std::max(uniform_words,uniform.resource_index+uniform.components);
+    }
+    uniform_words=(uniform_words+1u)&~1u;
+    if (uniform_words>0xffffu || uniform_words+literal_values.size()>0xffffu) {
+        out.error="lighting secondary-attribute footprint is too large";
+        return false;
+    }
+
+    MachineCompileResult compiled;
+    if (!compile_words(primary,compiled,out,"lighting vertex Machine IR lowering failed")) return false;
+
+    std::vector<gxp::ParameterDesc> parameters;
+    parameters.reserve(attributes.size()+uniforms.size()+matrices.size()+1);
+    for (const auto &attribute:attributes)
+        parameters.push_back({attribute.name.c_str(),0,0,4,0,0,0,1,attribute.resource_index});
+    for (const auto &matrix:matrices)
+        parameters.push_back({matrix.name.c_str(),1,0,4,14,0,0,4,matrix.resource_index});
+    parameters.push_back({normal_matrix.name.c_str(),1,0,3,14,0,0,3,normal_matrix.resource_index});
+    for (const auto &uniform:uniforms)
+        parameters.push_back({uniform.name.c_str(),1,0,uniform.components,14,0,0,1,uniform.resource_index});
+
+    std::vector<gxp::LiteralDesc> literals;
+    literals.reserve(literal_values.size());
+    for (const auto &literal:literal_values) {
+        if (literal.resource_index>=literal_values.size()) {
+            out.error="lighting literal resource index is out of range";
+            return false;
+        }
+        literals.push_back({literal.resource_index,literal.value_bits});
+    }
+    std::vector<gxp::ParameterContainerDesc> containers;
+    containers.push_back({14,0,0,static_cast<uint16_t>(uniform_words)});
+    if (!literals.empty())
+        containers.push_back({19,0,static_cast<uint16_t>(uniform_words),static_cast<uint16_t>(literals.size())});
+
+    // Independently captured from vitaGL's one-light smooth FFP vertex shape.
+    // POSITION occupies O0/O1, COLOR O2/O3, TEXCOORD0 O4 and PSIZE O10.
+    const uint8_t interface_block[32]={
+        0x3f,0xf7,0x77,0x07,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0x19,0,0x0b,0x01,0,0,0,0,0,0,0,0,0,0,0,
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00090002;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=static_cast<uint16_t>(primary_words);
+    image.secondary_register_count=static_cast<uint16_t>(uniform_words+literals.size());
+    image.primary_phase_count=1;
+    image.data_buffer_count=static_cast<uint32_t>(literals.size());
+    image.default_uniform_buffer_count=uniform_words;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=compiled.words.data();
+    image.primary_instruction_count=compiled.words.size();
+    image.containers=containers.data();
+    image.container_count=containers.size();
+    image.parameters=parameters.data();
+    image.parameter_count=parameters.size();
+    image.literals=literals.data();
+    image.literal_count=literals.size();
+    image.vertex_primary_padding_word=true;
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected lighting vertex profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for lighting vertex profile"; return false;
+    }
+    return true;
+}
+
 bool compile_vertex_indexed_clear(const IrUniformVec4 &position,
                                   const IrUniformFloat &clear_depth,
                                   uint32_t binary_guid, uint32_t source_guid,

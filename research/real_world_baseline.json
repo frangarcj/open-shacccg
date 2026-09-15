@@ -26,6 +26,7 @@
     "vitagl:ffp_v_color",
     "vitagl:ffp_v_fixed_half",
     "vitagl:ffp_v_lighting_phong",
+    "vitagl:ffp_v_lighting_smooth",
     "vitagl:ffp_v_texture1",
     "vitagl:ffp_v_texture2_color",
     "vitagl:precompiled_blit_f",

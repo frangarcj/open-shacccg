@@ -134,6 +134,14 @@ bool compile_vertex_matrix_normal_multivarying_point_size(
     const IrMatrix4Uniform &texcoord_matrix, const IrMatrix3Uniform &normal_matrix,
     const IrUniformFloat &point_size,
     uint32_t binary_guid, uint32_t source_guid, IrCompileResult &out);
+bool compile_vertex_lighting_machine(const MachineProgram &primary,
+                                     const std::vector<IrAttribute> &attributes,
+                                     const std::vector<IrUniformFloat> &uniforms,
+                                     const std::vector<IrMatrix4Uniform> &matrices,
+                                     const IrMatrix3Uniform &normal_matrix,
+                                     const std::vector<IrLiteralF32> &literals,
+                                     uint32_t binary_guid, uint32_t source_guid,
+                                     IrCompileResult &out);
 bool compile_vertex_indexed_clear(const IrUniformVec4 &position,
                                   const IrUniformFloat &clear_depth,
                                   uint32_t binary_guid, uint32_t source_guid,

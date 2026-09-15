@@ -1758,6 +1758,34 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         error="OpDot operands are outside the validated F32 vector subset";
                         return false;
                     }
+                    const uint8_t components=backend::typed_component_count(lhs->second.type());
+                    if (stage==backend::TypedStage::Vertex && components<4) {
+                        std::array<backend::TypedValue,3> products{};
+                        bool ok=true;
+                        for (uint8_t lane=0;lane<components;++lane) {
+                            const auto a=program.make_value<backend::TypedType::F32>();
+                            const auto b=program.make_value<backend::TypedType::F32>();
+                            products[lane]=program.make_value<backend::TypedType::F32>();
+                            ok = ok && a.kind()!=backend::TypedValueKind::None && b.kind()!=backend::TypedValueKind::None &&
+                                products[lane].kind()!=backend::TypedValueKind::None &&
+                                program.emit<backend::TypedOpcode::FloatExtract>(lane,a,lhs->second) &&
+                                program.emit<backend::TypedOpcode::FloatExtract>(lane,b,rhs->second) &&
+                                program.emit<backend::TypedOpcode::FloatBinary>(
+                                    static_cast<uint8_t>(backend::TypedFloatOp::Mul),products[lane],a,b);
+                        }
+                        backend::TypedValue sum=products[0];
+                        for (uint8_t lane=1;ok && lane<components;++lane) {
+                            const auto next=program.make_value<backend::TypedType::F32>();
+                            ok = next.kind()!=backend::TypedValueKind::None &&
+                                program.emit<backend::TypedOpcode::FloatBinary>(
+                                    static_cast<uint8_t>(backend::TypedFloatOp::Add),next,sum,products[lane]);
+                            sum=next;
+                        }
+                        if (!ok) { error="failed to lower narrow F32 dot to scalar arithmetic"; return false; }
+                        values[args[1]]=sum;
+                        offset+=count;
+                        continue;
+                    }
                     const auto dst=program.make_value<backend::TypedType::F32>();
                     if (!program.emit<backend::TypedOpcode::FloatBinary>(
                             static_cast<uint8_t>(backend::TypedFloatOp::Dot),dst,lhs->second,rhs->second)) {
@@ -1875,6 +1903,30 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                             return false;
                         }
                         values[args[1]]=dst;
+                        offset+=count;
+                        continue;
+                    }
+                    if (stage==backend::TypedStage::Vertex && op==spv::OpFDiv &&
+                        result_type==backend::TypedType::F32x3) {
+                        std::array<backend::TypedValue,3> lanes{};
+                        bool ok=true;
+                        for (uint8_t lane=0;lane<3;++lane) {
+                            const auto a=program.make_value<backend::TypedType::F32>();
+                            const auto b=program.make_value<backend::TypedType::F32>();
+                            lanes[lane]=program.make_value<backend::TypedType::F32>();
+                            ok = ok && a.kind()!=backend::TypedValueKind::None && b.kind()!=backend::TypedValueKind::None &&
+                                lanes[lane].kind()!=backend::TypedValueKind::None &&
+                                program.emit<backend::TypedOpcode::FloatExtract>(lane,a,lhs) &&
+                                program.emit<backend::TypedOpcode::FloatExtract>(lane,b,rhs) &&
+                                program.emit<backend::TypedOpcode::FloatBinary>(
+                                    static_cast<uint8_t>(backend::TypedFloatOp::Div),lanes[lane],a,b);
+                        }
+                        const auto composed=ok?program.compose_f32x3(lanes):backend::TypedValue{};
+                        if (!ok || composed.kind()==backend::TypedValueKind::None) {
+                            error="failed to lower vertex F32x3 division to scalar lanes";
+                            return false;
+                        }
+                        values[args[1]]=composed;
                         offset+=count;
                         continue;
                     }

@@ -758,6 +758,7 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
         else if (program.instructions()[i].opcode()==MachineOpcode::S32ToF32Scalar) words=9;
         else if (program.instructions()[i].opcode()==MachineOpcode::S32x2ColorPack) words=2;
         else if (program.instructions()[i].opcode()==MachineOpcode::TransformMat4) words=4;
+        else if (program.instructions()[i].opcode()==MachineOpcode::TransformMat3) words=3;
         else if (program.instructions()[i].opcode()==MachineOpcode::TransformTexcoordMat4XY) words=4;
         word_positions[i + 1] = word_positions[i] + words;
     }
@@ -1344,6 +1345,39 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 dot.no_schedule=lane!=3;
                 if (!builder.instruction(dot)) {
                     out.error="failed to encode generic mat4 transform";
+                    return false;
+                }
+            }
+            break;
+        }
+        case MachineOpcode::TransformMat3: {
+            usse::RegisterRef dst{},src{},matrix{};
+            if (instruction.subop()!=0 || guard!=usse::Predicate::Always ||
+                !resolve_register_value(instruction.dst,MachineType::F32,out.value_registers,&dst) ||
+                !resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&src) ||
+                !resolve_register_value(instruction.src1,MachineType::F32,out.value_registers,&matrix) ||
+                matrix.bank!=usse::RegisterBank::SecondaryAttribute || matrix.num>122) {
+                out.error="mat3 transform requires F32 vector operands and an SA matrix base";
+                return false;
+            }
+            // Matrix3 uniforms use the Sony-observed padded layout: three
+            // float3 rows/columns, four F32 words (two SA registers) apart.
+            // The padding word is not part of the reflected value; mask the
+            // source vector to xyz and rely only on the matrix's reflected xyz.
+            const usse::Swizzle4 xyz0={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                                        usse::SwizzleChannel::Z,usse::SwizzleChannel::Zero}};
+            for (uint8_t lane=0;lane<3;++lane) {
+                usse::V32NmadSemantic dot{};
+                dot.op=usse::VectorOp::Dot;
+                dot.dst=dst;
+                dot.src1=src;
+                dot.src2={usse::RegisterBank::SecondaryAttribute,static_cast<uint8_t>(matrix.num+lane*2u)};
+                dot.dest_mask=static_cast<uint8_t>(1u<<lane);
+                dot.src1_swizzle=xyz0;
+                dot.skip_invalid=true;
+                dot.no_schedule=lane!=2;
+                if (!builder.instruction(dot)) {
+                    out.error="failed to encode generic mat3 transform";
                     return false;
                 }
             }

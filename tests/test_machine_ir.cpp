@@ -202,6 +202,35 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        if (!program.emit<MachineOpcode::TransformMat3>(0,
+                program.physical(usse::RegisterBank::Temp,40,MachineType::F32),
+                program.physical(machine_primary(0),MachineType::F32),
+                program.physical(machine_secondary(0),MachineType::F32))) {
+            failures += fail("could not construct generic mat3 Machine transform");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=3) {
+                failures += fail("generic mat3 Machine transform did not compile to three lanes");
+            } else {
+                for (uint8_t lane=0;lane<3;++lane) {
+                    usse::V32NmadSemantic decoded{};
+                    if (!usse::decode_v32nmad_semantic(result.words[lane],&decoded) ||
+                        decoded.op!=usse::VectorOp::Dot || decoded.dst.bank!=usse::RegisterBank::Temp ||
+                        decoded.dst.num!=40 || decoded.dest_mask!=(1u<<lane) ||
+                        decoded.src1.bank!=usse::RegisterBank::PrimaryAttribute || decoded.src1.num!=0 ||
+                        decoded.src2.bank!=usse::RegisterBank::SecondaryAttribute || decoded.src2.num!=lane*2u ||
+                        decoded.src1_swizzle.c[0]!=usse::SwizzleChannel::X ||
+                        decoded.src1_swizzle.c[1]!=usse::SwizzleChannel::Y ||
+                        decoded.src1_swizzle.c[2]!=usse::SwizzleChannel::Z ||
+                        decoded.src1_swizzle.c[3]!=usse::SwizzleChannel::Zero)
+                        failures += fail("generic mat3 Machine transform lane encoding mismatch");
+                }
+            }
+        }
+    }
+
+    {
+        MachineProgram program;
         const uint8_t wzyx=static_cast<uint8_t>(3u | (2u<<2) | (1u<<4));
         if (!program.emit_config<MachineOpcode::PackSwizzle>(wzyx,machine_pack_config(0xF,true,false),
                 program.physical(machine_fragment_output(0),MachineType::F16),

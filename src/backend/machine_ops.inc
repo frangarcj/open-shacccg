@@ -20,6 +20,7 @@ VSC_MACHINE_OP(Narrow16ToF32, "narrow16-to-f32", ValueDef, ValueUse, None,     0
 VSC_MACHINE_OP(Vmad,    "vmad",    ValueDef,     ValueUse,     ValuePairUse, 0x0f)
 VSC_MACHINE_OP(VmadUniformMat4, "vmad-uniform-mat4", ValueDef, ValueUse, None, 0x0f)
 VSC_MACHINE_OP(TransformMat4, "transform-mat4", ValueDef, ValueUse, ValueUse, 0x0f)
+VSC_MACHINE_OP(TransformMat3, "transform-mat3", ValueDef, ValueUse, ValueUse, 0x0f)
 VSC_MACHINE_OP(TransformTexcoordMat4XY, "transform-texcoord-mat4-xy", ValueDef, ValueUse, ValueUse, 0x0f)
 VSC_MACHINE_OP(DependentSample, "dependent-sample", ValueDef, ValueUse, None, 0x0f)
 VSC_MACHINE_OP(Branch,  "branch",   None,         LabelUse,     None,         0x01)
