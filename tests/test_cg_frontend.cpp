@@ -361,6 +361,59 @@ bool compile_matrix_point_size_profile(bool with_color) {
     return ok;
 }
 
+bool compile_matrix_normal_multivarying_profile() {
+    static constexpr const char *source=
+        "void main(float4 Nposition,float2 Otexcoord0,float4 Pcolor,float4 Qdiff,float4 Rspec,"
+        "float4 Semission,float3 Tnormals,float2 out vTexcoord:TEXCOORD0,"
+        "float3 out vNormal:TEXCOORD2,float3 out vEcPosition:TEXCOORD3,"
+        "float4 out vDiffuse:TEXCOORD4,float4 out vSpecular:TEXCOORD5,"
+        "float4 out vEmission:TEXCOORD6,float4 out vPosition:POSITION,float4 out vColor:COLOR,"
+        "float out psize:PSIZE,uniform float4x4 Imodelview,uniform float4x4 Jwvp,"
+        "uniform float4x4 Ktexmat[1],uniform float Mpoint_size,uniform float3x3 Lnormal_mat){"
+        "Jwvp=mul(Jwvp,Imodelview);float4 modelpos=mul(Imodelview,Nposition);"
+        "vPosition=mul(Jwvp,Nposition);float3 normal=normalize(mul(Lnormal_mat,Tnormals));"
+        "float3 ecPosition=modelpos.xyz/modelpos.w;"
+        "vTexcoord=mul(Ktexmat[0],float4(Otexcoord0,0.f,1.f)).xy;vColor=Pcolor;"
+        "vNormal=normal;vEcPosition=ecPosition;vDiffuse=Qdiff;vSpecular=Rspec;"
+        "vEmission=Semission;psize=Mpoint_size;}";
+    VscCompileRequest request{};
+    request.source_name="matrix-normal-multivarying.cg";
+    request.source=source;
+    request.source_size=std::strlen(source);
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_VERTEX;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.gxp_size==776 && result.diagnostic_count==0;
+    if (ok) {
+        const uint8_t interface_block[]={
+            0x3f,0xff,0xff,0x07,0,0,0,0,0,0,0,0,0,0,0,0,
+            0,0x19,0,0x1d,0xc1,0xf6,0x1f,0,0,0,0,0,0,0,0,0,
+        };
+        const uint32_t resources[]={0,4,8,12,16,20,24,0,16,44,60,32};
+        const uint8_t components[]={4,4,4,4,4,4,4,4,4,4,1,3};
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        const auto interface=view.varyings();
+        ok=view.valid() && view.logical_size()==775 && view.sdk_version()==0x0165 &&
+            view.flags()==0x00090000 && view.primary_register_count()==28 &&
+            view.secondary_register_count()==64 && view.primary_instruction_count()==32 &&
+            view.secondary_instruction_count()==0 && view.literal_count()==2 &&
+            view.container_count()==2 && view.parameter_count()==12 &&
+            interface.size==sizeof(interface_block) &&
+            std::memcmp(interface.data,interface_block,sizeof(interface_block))==0;
+        for (size_t i=0;ok && i<12;++i) {
+            vsc::gxp::ParameterView parameter{};
+            ok=view.parameter(i,parameter) && parameter.resource_index==resources[i] &&
+                parameter.component_count==components[i];
+        }
+    }
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: matrix-normal multivarying diagnostic=%s\n",
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
+
 bool compile_indexed_clear_vertex_profile() {
     static constexpr const char *source=
         "float4 main(unsigned int i:INDEX,uniform float4 bounds,uniform float depth):POSITION{"
@@ -942,6 +995,8 @@ int test_cg_frontend() {
         failures += fail("oracle matrix + uniform PSIZE vertex profile did not reproduce the validated stream");
     if (!compile_matrix_point_size_profile(true))
         failures += fail("oracle matrix + COLOR + uniform PSIZE profile did not reproduce the validated stream");
+    if (!compile_matrix_normal_multivarying_profile())
+        failures += fail("matrix + normal + dense multivarying vertex profile did not preserve the Sony reflection layout");
     if (!compile_indexed_clear_vertex_profile())
         failures += fail("indexed clear vertex profile did not reproduce the public vitaGL semantic stream");
     struct PublicShader { const char *name; VscStage stage; };

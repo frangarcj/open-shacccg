@@ -1137,6 +1137,204 @@ bool compile_vertex_uniform_matrix_three_texcoords_color_point_size(
     return true;
 }
 
+bool compile_vertex_matrix_normal_multivarying_point_size(
+    const std::vector<IrAttribute> &attributes,
+    const IrMatrix4Uniform &modelview, const IrMatrix4Uniform &projection,
+    const IrMatrix4Uniform &texcoord_matrix, const IrMatrix3Uniform &normal_matrix,
+    const IrUniformFloat &point_size,
+    uint32_t binary_guid, uint32_t source_guid, IrCompileResult &out) {
+    out={};
+    if (attributes.size()!=7 || modelview.name.empty() || projection.name.empty() ||
+        texcoord_matrix.name.empty() || normal_matrix.name.empty() || point_size.name.empty() ||
+        point_size.components!=1) {
+        out.error="matrix-normal multivarying profile requires seven attributes and complete uniform metadata";
+        return false;
+    }
+    const uint8_t expected_components[]={4,2,4,4,4,4,3};
+    for (size_t i=0;i<attributes.size();++i) {
+        if (!valid_attribute(attributes[i]) || attributes[i].resource_index!=i*4u ||
+            attributes[i].components!=expected_components[i]) {
+            out.error="matrix-normal multivarying attributes do not match the validated FFP layout";
+            return false;
+        }
+    }
+
+    ProgramBuilder primary;
+    if (!primary.phase()) { out.error="failed to emit multivarying PHAS"; return false; }
+
+    auto move=[&](usse::RegisterRef dst, usse::RegisterRef src, uint8_t mask,
+                  uint8_t swizzle=4, uint8_t repeat=0) {
+        usse::VmovSemantic op{};
+        op.dst=dst; op.src=src; op.data_type=usse::DataType::F32;
+        op.dest_mask=mask; op.swizzle=swizzle; op.repeat_count=repeat;
+        op.skip_invalid=true; op.no_schedule=false;
+        return primary.instruction(op);
+    };
+    auto vop=[&](usse::VectorOp opcode, usse::RegisterRef dst, uint8_t mask,
+                 usse::RegisterRef src1, usse::RegisterRef src2,
+                 usse::Swizzle4 sw1=usse::Swizzle4{}, usse::Swizzle4 sw2=usse::Swizzle4{}) {
+        usse::V32NmadSemantic op{};
+        op.op=opcode; op.dst=dst; op.src1=src1; op.src2=src2; op.dest_mask=mask;
+        op.src1_swizzle=sw1; op.src2_swizzle=sw2; op.skip_invalid=true;
+        return primary.instruction(op);
+    };
+    const usse::Swizzle4 xxxx={{usse::SwizzleChannel::X,usse::SwizzleChannel::X,
+                                 usse::SwizzleChannel::X,usse::SwizzleChannel::X}};
+    const usse::Swizzle4 yyyy={{usse::SwizzleChannel::Y,usse::SwizzleChannel::Y,
+                                 usse::SwizzleChannel::Y,usse::SwizzleChannel::Y}};
+    const usse::Swizzle4 xyz0={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                                 usse::SwizzleChannel::Z,usse::SwizzleChannel::Zero}};
+    const usse::Swizzle4 xy01={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                                 usse::SwizzleChannel::Zero,usse::SwizzleChannel::One}};
+
+    auto mat4=[&](usse::RegisterRef dst, usse::RegisterRef src, uint8_t matrix_sa) {
+        for (uint8_t lane=0;lane<4;++lane) {
+            if (!vop(usse::VectorOp::Dot,dst,static_cast<uint8_t>(1u<<lane),src,
+                     {usse::RegisterBank::SecondaryAttribute,static_cast<uint8_t>(matrix_sa+lane*2u)}))
+                return false;
+        }
+        return true;
+    };
+
+    // Fixed POSITION/COLOR outputs and direct material varyings.
+    if (!move({usse::RegisterBank::Output,2},{usse::RegisterBank::PrimaryAttribute,4},3,4,1) ||
+        !move({usse::RegisterBank::Output,8},{usse::RegisterBank::PrimaryAttribute,6},3,4,1) ||
+        !move({usse::RegisterBank::Output,10},{usse::RegisterBank::PrimaryAttribute,8},3,4,1) ||
+        !move({usse::RegisterBank::Output,12},{usse::RegisterBank::PrimaryAttribute,10},3,4,1)) {
+        out.error="failed to emit multivarying passthrough outputs";
+        return false;
+    }
+
+    // modelpos = Imodelview * position; POSITION = Jwvp * modelpos.
+    if (!mat4({usse::RegisterBank::Temp,40},{usse::RegisterBank::PrimaryAttribute,0},0) ||
+        !mat4({usse::RegisterBank::Output,0},{usse::RegisterBank::Temp,40},8)) {
+        out.error="failed to emit multivarying model/projection transforms";
+        return false;
+    }
+
+    // TEXCOORD0 = (Ktexmat * float4(uv,0,1)).xy. Ktexmat starts at word 44 => SA22.
+    if (!vop(usse::VectorOp::Dot,{usse::RegisterBank::Output,4},1,
+             {usse::RegisterBank::PrimaryAttribute,2},{usse::RegisterBank::SecondaryAttribute,22},xy01) ||
+        !vop(usse::VectorOp::Dot,{usse::RegisterBank::Output,4},2,
+             {usse::RegisterBank::PrimaryAttribute,2},{usse::RegisterBank::SecondaryAttribute,24},xy01)) {
+        out.error="failed to emit multivarying texture transform";
+        return false;
+    }
+
+    // normal = normalize(Lnormal_mat * Tnormals). A float3x3 occupies three
+    // padded float4 columns at words 32,36,40 => SA16,18,20.
+    for (uint8_t lane=0;lane<3;++lane) {
+        if (!vop(usse::VectorOp::Dot,{usse::RegisterBank::Temp,44},static_cast<uint8_t>(1u<<lane),
+                 {usse::RegisterBank::PrimaryAttribute,12},
+                 {usse::RegisterBank::SecondaryAttribute,static_cast<uint8_t>(16+lane*2u)},xyz0)) {
+            out.error="failed to emit multivarying normal-matrix transform";
+            return false;
+        }
+    }
+    if (!vop(usse::VectorOp::Dot,{usse::RegisterBank::Temp,46},1,
+             {usse::RegisterBank::Temp,44},{usse::RegisterBank::Temp,44},xyz0)) {
+        out.error="failed to emit multivarying normal length";
+        return false;
+    }
+    usse::VcompF32Semantic rsqrt{};
+    rsqrt.op=usse::ComplexOp::Rsqrt;
+    rsqrt.dst={usse::RegisterBank::Temp,47};
+    rsqrt.src={usse::RegisterBank::Temp,46};
+    rsqrt.dest_mask=1;
+    if (!primary.instruction(rsqrt) ||
+        !vop(usse::VectorOp::Mul,{usse::RegisterBank::Temp,48},7,
+             {usse::RegisterBank::Temp,44},{usse::RegisterBank::Temp,47},usse::Swizzle4{},xxxx) ||
+        !move({usse::RegisterBank::Output,5},{usse::RegisterBank::Temp,48},3,4) ||
+        !move({usse::RegisterBank::Output,6},{usse::RegisterBank::Temp,48},1,2)) {
+        out.error="failed to emit normalized normal varying";
+        return false;
+    }
+
+    // ecPosition = modelpos.xyz / modelpos.w. The two float3 varyings are
+    // densely packed: normal => O5.xy/O6.x, ecPosition => O6.y/O7.xy.
+    usse::VcompF32Semantic reciprocal{};
+    reciprocal.op=usse::ComplexOp::Reciprocal;
+    reciprocal.dst={usse::RegisterBank::Temp,42};
+    reciprocal.src={usse::RegisterBank::Temp,40};
+    reciprocal.src_component=3;
+    reciprocal.dest_mask=1;
+    if (!primary.instruction(reciprocal) ||
+        !vop(usse::VectorOp::Mul,{usse::RegisterBank::Temp,50},7,
+             {usse::RegisterBank::Temp,40},{usse::RegisterBank::Temp,42},usse::Swizzle4{},xxxx) ||
+        !move({usse::RegisterBank::Output,6},{usse::RegisterBank::Temp,50},2,0) ||
+        !move({usse::RegisterBank::Output,7},{usse::RegisterBank::Temp,50},1,1) ||
+        !move({usse::RegisterBank::Output,7},{usse::RegisterBank::Temp,50},2,2)) {
+        out.error="failed to emit eye-space position varying";
+        return false;
+    }
+
+    // Clamp point size to Sony's observed [1,511] range. Uniform word60 is SA30;
+    // literals 511/1 occupy SA31.x/y.
+    if (!vop(usse::VectorOp::Max,{usse::RegisterBank::Temp,52},1,
+             {usse::RegisterBank::SecondaryAttribute,30},{usse::RegisterBank::SecondaryAttribute,31},xxxx,yyyy) ||
+        !vop(usse::VectorOp::Min,{usse::RegisterBank::Temp,52},1,
+             {usse::RegisterBank::Temp,52},{usse::RegisterBank::SecondaryAttribute,31},xxxx,xxxx)) {
+        out.error="failed to emit multivarying point-size clamp";
+        return false;
+    }
+    usse::VbwSemantic point_copy{};
+    point_copy.op=usse::BitwiseOp::Or;
+    point_copy.dst={usse::RegisterBank::Output,28};
+    point_copy.src1={usse::RegisterBank::Temp,52};
+    point_copy.src2_is_immediate=true;
+    point_copy.immediate=0;
+    if (!primary.instruction(point_copy) || !primary.emit()) {
+        out.error="failed to finish multivarying vertex program";
+        return false;
+    }
+
+    const uint8_t interface_block[32]={
+        0x3f,0xff,0xff,0x07,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0x19,0,0x1d,0xc1,0xf6,0x1f,0,0,0,0,0,0,0,0,0,
+    };
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,62},{19,0,62,2}};
+    const gxp::LiteralDesc literals[]={{0,0x43ff8000u},{1,0x3f800000u}};
+    const gxp::ParameterDesc parameters[]={
+        {attributes[0].name.c_str(),0,0,4,0,0,0,1,0},
+        {attributes[1].name.c_str(),0,0,4,0,0,0,1,4},
+        {attributes[2].name.c_str(),0,0,4,0,0,0,1,8},
+        {attributes[3].name.c_str(),0,0,4,0,0,0,1,12},
+        {attributes[4].name.c_str(),0,0,4,0,0,0,1,16},
+        {attributes[5].name.c_str(),0,0,4,0,0,0,1,20},
+        {attributes[6].name.c_str(),0,0,4,0,0,0,1,24},
+        {modelview.name.c_str(),1,0,4,14,0,0,4,0},
+        {projection.name.c_str(),1,0,4,14,0,0,4,16},
+        {texcoord_matrix.name.c_str(),1,0,4,14,0,0,4,44},
+        {point_size.name.c_str(),1,0,1,14,0,0,1,60},
+        {normal_matrix.name.c_str(),1,0,3,14,0,0,3,32},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid; image.source_guid=source_guid;
+    image.program_flags=0x00090000;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=28;
+    image.secondary_register_count=64;
+    image.primary_phase_count=1;
+    image.data_buffer_count=2;
+    image.default_uniform_buffer_count=62;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=primary.words().data(); image.primary_instruction_count=primary.words().size();
+    image.containers=containers; image.container_count=2;
+    image.parameters=parameters; image.parameter_count=std::size(parameters);
+    image.literals=literals; image.literal_count=2;
+    image.vertex_primary_padding_word=true;
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected matrix-normal multivarying profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for matrix-normal multivarying profile"; return false;
+    }
+    return true;
+}
+
 bool compile_vertex_indexed_clear(const IrUniformVec4 &position,
                                   const IrUniformFloat &clear_depth,
                                   uint32_t binary_guid, uint32_t source_guid,

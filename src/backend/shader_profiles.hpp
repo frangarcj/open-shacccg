@@ -21,6 +21,11 @@ struct IrMatrix4Uniform {
     uint32_t resource_index = 0;
 };
 
+struct IrMatrix3Uniform {
+    std::string name;
+    uint32_t resource_index = 0;
+};
+
 enum class IrVaryingSemantic : uint8_t { TexCoord, Color };
 
 struct IrCompileResult {
@@ -116,6 +121,12 @@ bool compile_vertex_uniform_matrix_three_texcoords_color_point_size(
     const IrAttribute &texcoord2, const IrAttribute &color, const IrMatrix4Uniform &position_matrix,
     const IrMatrix4Uniform &texcoord_matrix0, const IrMatrix4Uniform &texcoord_matrix1,
     const IrMatrix4Uniform &texcoord_matrix2, const IrUniformFloat &point_size,
+    uint32_t binary_guid, uint32_t source_guid, IrCompileResult &out);
+bool compile_vertex_matrix_normal_multivarying_point_size(
+    const std::vector<IrAttribute> &attributes,
+    const IrMatrix4Uniform &modelview, const IrMatrix4Uniform &projection,
+    const IrMatrix4Uniform &texcoord_matrix, const IrMatrix3Uniform &normal_matrix,
+    const IrUniformFloat &point_size,
     uint32_t binary_guid, uint32_t source_guid, IrCompileResult &out);
 bool compile_vertex_indexed_clear(const IrUniformVec4 &position,
                                   const IrUniformFloat &clear_depth,

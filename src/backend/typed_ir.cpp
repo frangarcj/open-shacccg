@@ -1194,14 +1194,17 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         std::vector<IrMatrix4Uniform> vertex_matrices;
         std::vector<const TypedResource *> inputs;
         std::vector<const TypedResource *> matrices;
+        std::vector<const TypedResource *> matrices3;
         std::vector<const TypedResource *> vertex_uniforms;
         for (const auto &resource : resources) {
             if (resource.kind == TypedResourceKind::Input) inputs.push_back(&resource);
             else if (resource.kind == TypedResourceKind::Matrix4) matrices.push_back(&resource);
+            else if (resource.kind == TypedResourceKind::Matrix3) matrices3.push_back(&resource);
             else if (resource.kind == TypedResourceKind::Uniform) vertex_uniforms.push_back(&resource);
         }
         std::sort(inputs.begin(), inputs.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
         std::sort(matrices.begin(), matrices.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
+        std::sort(matrices3.begin(), matrices3.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
         std::sort(vertex_uniforms.begin(), vertex_uniforms.end(), [](const auto *a, const auto *b) { return a->index < b->index; });
 
         // Public vitaGL clear vertex: a scalar U32 INDEX chooses x/y from one
@@ -1312,6 +1315,57 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             const uint16_t resource_id = static_cast<uint16_t>(resource - resources.data());
             matrix_for_resource[resource_id] = static_cast<uint32_t>(vertex_matrices.size());
             vertex_matrices.push_back({shader.resource_name(*resource), resource->index});
+        }
+
+        // vitaGL's Phong vertex FFP shape combines two position matrices, one
+        // texture matrix, a float3x3 normal matrix, dense material passthrough
+        // varyings and uniform point size. Match the semantic resource/output
+        // shape here before the older single-varying dispatcher rejects it.
+        if (vertex_attributes.size()==7 && matrices.size()==3 && matrices3.size()==1 &&
+            vertex_uniforms.size()==1 && vertex_uniforms[0]->type==TypedType::F32) {
+            auto named_matrix4=[&](const char *name) -> const TypedResource * {
+                const auto it=std::find_if(matrices.begin(),matrices.end(),[&](const TypedResource *r) {
+                    return shader.resource_name(*r)==name;
+                });
+                return it==matrices.end()?nullptr:*it;
+            };
+            const auto *modelview=named_matrix4("Imodelview");
+            const auto *projection=named_matrix4("Jwvp");
+            const auto *texmat=named_matrix4("Ktexmat");
+            const auto *normal=matrices3[0];
+            const auto *point=vertex_uniforms[0];
+            bool output_shape=modelview && projection && texmat &&
+                shader.resource_name(*normal)=="Lnormal_mat" && shader.resource_name(*point)=="Mpoint_size";
+            unsigned stores=0, transforms4=0, transforms3=0, divisions=0;
+            bool have_position=false,have_color=false,have_point=false;
+            bool texcoord_seen[7]{};
+            for (const auto &instruction:instructions) {
+                if (instruction.opcode()==TypedOpcode::TransformPosition) ++transforms4;
+                else if (instruction.opcode()==TypedOpcode::TransformVector3) ++transforms3;
+                else if (instruction.opcode()==TypedOpcode::FloatBinary &&
+                         instruction.subop()==static_cast<uint8_t>(TypedFloatOp::Div)) ++divisions;
+                if (instruction.opcode()!=TypedOpcode::StoreOutput || instruction.aux>=resources.size()) continue;
+                ++stores;
+                const auto &r=resources[instruction.aux];
+                auto semantic=r.semantic;
+                if (semantic==TypedSemantic::None) semantic=infer_semantic(shader.resource_name(r));
+                if (semantic==TypedSemantic::Position) have_position=true;
+                else if (semantic==TypedSemantic::Color) have_color=true;
+                else if (semantic==TypedSemantic::PointSize) have_point=true;
+                else if (semantic==TypedSemantic::TexCoord && r.semantic_index<7) texcoord_seen[r.semantic_index]=true;
+            }
+            output_shape = output_shape && stores==9 && have_position && have_color && have_point &&
+                texcoord_seen[0] && texcoord_seen[2] && texcoord_seen[3] && texcoord_seen[4] &&
+                texcoord_seen[5] && texcoord_seen[6] && transforms4>=3 && transforms3==1 && divisions>=1;
+            if (output_shape) {
+                const IrMatrix4Uniform model_meta={shader.resource_name(*modelview),0};
+                const IrMatrix4Uniform projection_meta={shader.resource_name(*projection),16};
+                const IrMatrix4Uniform tex_meta={shader.resource_name(*texmat),44};
+                const IrMatrix3Uniform normal_meta={shader.resource_name(*normal),32};
+                const IrUniformFloat point_meta={shader.resource_name(*point),1,60};
+                return compile_vertex_matrix_normal_multivarying_point_size(
+                    vertex_attributes,model_meta,projection_meta,tex_meta,normal_meta,point_meta,0,0,out);
+            }
         }
 
         auto profile_literal_is=[&](TypedValue value,uint32_t bits) -> bool {
