@@ -142,6 +142,13 @@ bool compile_vertex_lighting_machine(const MachineProgram &primary,
                                      const std::vector<IrLiteralF32> &literals,
                                      uint32_t binary_guid, uint32_t source_guid,
                                      IrCompileResult &out);
+bool compile_vertex_clip_machine(const MachineProgram &primary,
+                                 const std::vector<IrAttribute> &attributes,
+                                 const std::vector<IrUniformFloat> &uniforms,
+                                 const std::vector<IrMatrix4Uniform> &matrices,
+                                 const std::vector<IrLiteralF32> &literals,
+                                 uint32_t binary_guid, uint32_t source_guid,
+                                 IrCompileResult &out);
 bool compile_vertex_indexed_clear(const IrUniformVec4 &position,
                                   const IrUniformFloat &clear_depth,
                                   uint32_t binary_guid, uint32_t source_guid,

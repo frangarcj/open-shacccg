@@ -1288,6 +1288,41 @@ int test_cg_frontend() {
         if (source.empty() || !compile_oracle_s32_to_f32_profile(source,probe))
             failures += fail("Cg scalar S32->F32 conversion did not reproduce oracle profile");
     }
+    {
+        const std::string source=R"(
+void main(float4 Nposition, float2 Otexcoord0, float4 Pcolor,
+          float2 out vTexcoord:TEXCOORD0, float4 out vPosition:POSITION,
+          float4 out vColor:COLOR, float out psize:PSIZE, float out vClip[1]:CLP0,
+          uniform float4 Hclip_planes_eq[1], uniform float4x4 Imodelview,
+          uniform float4x4 Jwvp, uniform float4x4 Ktexmat[1], uniform float Mpoint_size) {
+    Jwvp=mul(Jwvp,Imodelview);
+    float4 modelpos=mul(Imodelview,Nposition);
+    for(short i=0;i<1;i++) vClip[i]=dot(modelpos,Hclip_planes_eq[i]);
+    vPosition=mul(Jwvp,Nposition);
+    vTexcoord=mul(Ktexmat[0],float4(Otexcoord0,0.0,1.0)).xy;
+    vColor=Pcolor;
+    psize=Mpoint_size;
+})";
+        VscCompileRequest request{};
+        request.source_name="vp-clip-wvp.cg";
+        request.source=source.data(); request.source_size=source.size();
+        request.entrypoint="main"; request.stage=VSC_STAGE_VERTEX;
+        VscCompileResult result{};
+        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            const uint8_t expected_interface[32]={
+                0x3f,0x0f,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                0x01,0x19,0,0x0c,0x01,0,0,0,0,0,0,0,0,0,0,0,
+            };
+            const auto varying=view.varyings();
+            ok=view.valid() && view.flags()==0x00090002 && view.primary_register_count()==12 &&
+                view.parameter_count()==8 && varying.size==sizeof(expected_interface) &&
+                std::memcmp(varying.data,expected_interface,sizeof(expected_interface))==0;
+        }
+        if (!ok) failures += fail("Cg CLP0 one-element array profile did not compile with validated interface");
+        vsc_destroy_result(&request.allocator,&result);
+    }
 #endif
     return failures;
 #endif

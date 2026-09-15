@@ -98,6 +98,8 @@ backend::TypedSemantic semantic_from_text(const std::string &text, uint8_t &inde
         return backend::TypedSemantic::PointCoord;
     if (base.find("PSIZE") != std::string::npos || base.find("POINTSIZE") != std::string::npos)
         return backend::TypedSemantic::PointSize;
+    if (base.find("CLP") != std::string::npos || base.find("CLIP") != std::string::npos)
+        return backend::TypedSemantic::ClipDistance;
     return backend::TypedSemantic::None;
 }
 
@@ -270,6 +272,8 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
         std::unordered_map<uint32_t, uint32_t> loop_headers;
         std::unordered_set<uint32_t> kill_labels;
         std::unordered_set<uint32_t> s32_loop_state_ids;
+        std::unordered_map<uint32_t, backend::TypedValue> function_array_one_states;
+        std::unordered_map<uint32_t, backend::TypedValue> function_array_one_accesses;
         bool structured_control=false;
         std::unordered_set<uint32_t> narrow_u16_ids;
         std::unordered_set<uint32_t> narrow_s16_ids;
@@ -468,7 +472,10 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             if (!compiler.has_decoration(resource.id, spv::DecorationLocation)) continue;
             const uint32_t location = compiler.get_decoration(resource.id, spv::DecorationLocation);
             if (location > std::numeric_limits<uint16_t>::max()) { error = "stage output location is too large"; return false; }
-            const auto type = typed_type(compiler.get_type(resource.type_id));
+            const auto &spv_type=compiler.get_type(resource.type_id);
+            const bool scalar_array_one=spv_type.basetype==spirv_cross::SPIRType::Float && spv_type.width==32 &&
+                spv_type.vecsize==1 && spv_type.columns==1 && spv_type.array.size()==1 && spv_type.array[0]==1;
+            const auto type = scalar_array_one ? backend::TypedType::F32 : typed_type(spv_type);
             if (type == backend::TypedType::Invalid) { error = "stage output type is unsupported by Typed IR"; return false; }
             uint8_t semantic_index = 0;
             const auto semantic = reflected_semantic(compiler, resource.id, resource.name, semantic_index);
@@ -663,7 +670,21 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             if (!in_function) { offset += count; continue; }
             if (op == spv::OpFunctionEnd) break;
 
-            if (op == spv::OpLabel && count == 2) {
+            if (op==spv::OpVariable && count>=4 && args[2]==spv::StorageClassFunction) {
+                const auto &variable_type=compiler.get_type_from_variable(args[1]);
+                if (variable_type.basetype==spirv_cross::SPIRType::Float && variable_type.width==32 &&
+                    variable_type.vecsize==1 && variable_type.columns==1 && variable_type.array.size()==1 &&
+                    variable_type.array[0]==1) {
+                    const auto zero=program.literal_f32(0);
+                    const auto state=program.make_value<backend::TypedType::F32>();
+                    if (zero.kind()==backend::TypedValueKind::None || state.kind()==backend::TypedValueKind::None ||
+                        !program.emit<backend::TypedOpcode::StateInit>(0,state,zero)) {
+                        error="failed to create scalar state for one-element function array";
+                        return false;
+                    }
+                    function_array_one_states[args[1]]=state;
+                }
+            } else if (op == spv::OpLabel && count == 2) {
                 current_label=args[0];
                 if (!block_labels.empty()) {
                     const auto label=block_labels.find(current_label);
@@ -673,6 +694,11 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     }
                 }
             } else if (op == spv::OpAccessChain && count >= 4) {
+                if (const auto state=function_array_one_states.find(args[2]);state!=function_array_one_states.end()) {
+                    function_array_one_accesses[args[1]]=state->second;
+                    offset+=count;
+                    continue;
+                }
                 const auto block = uniform_blocks.find(args[2]);
                 const auto index_it = constants.find(args[3]);
                 const auto sampler_array=sampler_arrays.find(args[2]);
@@ -743,6 +769,12 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         error="uniform access-chain shape is outside the validated scalar/vector subset";
                         return false;
                     }
+                } else if (const auto aggregate=access_chain_members.find(args[2]);
+                           aggregate!=access_chain_members.end() && aggregate->second.vector_array_one) {
+                    // A one-element vector array may retain a dynamic loop
+                    // index in optimized SPIR-V. Any defined access is element
+                    // zero, so collapse the element pointer to the vector.
+                    access_chain_members[args[1]]=aggregate->second;
                 } else if (index_it != constants.end()) {
                     const auto matrix_array=access_chain_members.find(args[2]);
                     if (matrix_array!=access_chain_members.end() && matrix_array->second.matrix &&
@@ -767,6 +799,10 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             } else if (op == spv::OpLoad && count >= 4) {
                 if (auto it = values.find(args[2]); it != values.end()) {
                     values[args[1]] = it->second;
+                } else if (auto it=function_array_one_states.find(args[2]);it!=function_array_one_states.end()) {
+                    values[args[1]]=it->second;
+                } else if (auto it=function_array_one_accesses.find(args[2]);it!=function_array_one_accesses.end()) {
+                    values[args[1]]=it->second;
                 } else if (auto it=sampler_access_chains.find(args[2]); it!=sampler_access_chains.end()) {
                     values[args[1]]=it->second;
                 } else if (auto it = access_chain_members.find(args[2]); it != access_chain_members.end()) {
@@ -2264,6 +2300,16 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         return false;
                     }
                 } else if (op == spv::OpStore && count >= 3) {
+                    if (const auto state=function_array_one_accesses.find(args[0]);state!=function_array_one_accesses.end()) {
+                        const auto value=values.find(args[1]);
+                        if (value==values.end() || value->second.type()!=backend::TypedType::F32 ||
+                            !program.emit<backend::TypedOpcode::StateUpdate>(0,state->second,value->second)) {
+                            error="failed to update scalar one-element function array";
+                            return false;
+                        }
+                        offset+=count;
+                        continue;
+                    }
                     const auto phi=phi_sinks.find(args[1]);
                     const auto select=select_sinks.find(args[1]);
                     if ((phi!=phi_sinks.end() && !phi->second.loop_state && phi->second.output_resource!=std::numeric_limits<uint16_t>::max()) ||

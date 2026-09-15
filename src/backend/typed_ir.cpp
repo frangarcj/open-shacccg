@@ -71,6 +71,7 @@ TypedSemantic infer_semantic(const std::string &name) {
     if (lower.find("position") != std::string::npos || lower == "pos") return TypedSemantic::Position;
     if (lower.find("color") != std::string::npos || lower.find("colour") != std::string::npos) return TypedSemantic::Color;
     if (lower.find("tex") != std::string::npos || lower.find("uv") != std::string::npos) return TypedSemantic::TexCoord;
+    if (lower.find("clip") != std::string::npos || lower.find("clp") != std::string::npos) return TypedSemantic::ClipDistance;
     return TypedSemantic::None;
 }
 
@@ -569,6 +570,19 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                     return false;
                 }
                 values[instruction.dst.id()]=dst;
+            } else if (instruction.dst.type()==TypedType::F32 && instruction.src0.type()==TypedType::F32) {
+                const auto src=lower_value(typed,instruction.src0,values,literals,machine);
+                const auto dst=machine.make_value<MachineType::F32>();
+                uint8_t swizzle=0;
+                if (src.kind()==MachineOperandKind::PhysicalValue && src.physical_component()!=0xff)
+                    swizzle=src.physical_component();
+                if (src.kind()==MachineOperandKind::None || dst.kind()==MachineOperandKind::None ||
+                    !machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                        machine_move_config(1,swizzle),dst,src)) {
+                    error="failed to initialize mutable F32 state";
+                    return false;
+                }
+                values[instruction.dst.id()]=dst;
             } else if (instruction.dst.type()==TypedType::S32 && instruction.src0.type()==TypedType::S32 &&
                        instruction.src0.kind()==TypedValueKind::Literal &&
                        instruction.src0.id()<typed.literals().size() && typed.literals()[instruction.src0.id()]==0) {
@@ -579,7 +593,7 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 }
                 values[instruction.dst.id()]=dst;
             } else {
-                error="typed state init supports only float4 copy or S32 literal zero";
+                error="typed state init supports F32/F32x4 copy or S32 literal zero";
                 return false;
             }
             value_types[instruction.dst.id()]=instruction.dst.type();
@@ -587,16 +601,21 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             break;
         }
         case TypedOpcode::StateUpdate: {
-            if (instruction.dst.type()!=TypedType::F32x4 || instruction.src0.type()!=TypedType::F32x4) {
-                error="typed state update currently supports only float4 loop state";
+            if ((instruction.dst.type()!=TypedType::F32x4 && instruction.dst.type()!=TypedType::F32) ||
+                instruction.src0.type()!=instruction.dst.type()) {
+                error="typed state update currently supports F32/F32x4 loop state";
                 return false;
             }
             const auto state=values[instruction.dst.id()];
             const auto src=lower_value(typed,instruction.src0,values,literals,machine);
+            uint8_t swizzle=0;
+            if (src.kind()==MachineOperandKind::PhysicalValue && src.physical_component()!=0xff)
+                swizzle=src.physical_component();
+            const uint8_t mask=instruction.dst.type()==TypedType::F32 ? 1 : 0xF;
             if (state.kind()!=MachineOperandKind::VirtualValue || src.kind()==MachineOperandKind::None ||
                 !machine.emit_config<MachineOpcode::MoveUpdate>(static_cast<uint8_t>(usse::DataType::F32),
-                    machine_move_config(0xF),state,src)) {
-                error="failed to update mutable float4 loop state";
+                    machine_move_config(mask,swizzle),state,src)) {
+                error="failed to update mutable float loop state";
                 return false;
             }
             break;
@@ -1534,6 +1553,170 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 }
                 return compile_vertex_fixed16_matrix_machine(primary,vertex_attributes,vertex_matrices,
                     {shader.resource_name(*vertex_uniforms[0]),1,32},0,0,out);
+            }
+        }
+
+        // One-plane clip FFP vertex shape. The source keeps CLP0 as float[1]
+        // and computes it in a one-iteration loop; the SPIR-V adapter collapses
+        // that aggregate to one mutable F32 state. Match the remaining resource
+        // and output structure, then lower the complete CFG generically.
+        if (vertex_attributes.size()==3 && matrices.size()==3 && matrices3.empty() &&
+            vertex_uniforms.size()==2 && !program.labels().empty()) {
+            auto named_matrix4=[&](const char *name) -> const TypedResource * {
+                const auto it=std::find_if(matrices.begin(),matrices.end(),[&](const TypedResource *r) {
+                    return shader.resource_name(*r)==name;
+                });
+                return it==matrices.end()?nullptr:*it;
+            };
+            const auto *modelview=named_matrix4("Imodelview");
+            const auto *projection=named_matrix4("Jwvp");
+            const auto *texmat=named_matrix4("Ktexmat");
+            const auto clip_uniform_it=std::find_if(vertex_uniforms.begin(),vertex_uniforms.end(),[&](const TypedResource *r) {
+                return shader.resource_name(*r)=="Hclip_planes_eq" && r->type==TypedType::F32x4;
+            });
+            const auto point_it=std::find_if(vertex_uniforms.begin(),vertex_uniforms.end(),[&](const TypedResource *r) {
+                return shader.resource_name(*r)=="Mpoint_size" && r->type==TypedType::F32;
+            });
+            const auto *clip_uniform=clip_uniform_it==vertex_uniforms.end()?nullptr:*clip_uniform_it;
+            const auto *point=point_it==vertex_uniforms.end()?nullptr:*point_it;
+            TypedValue position{},color{},texcoord{},point_value{},clip{};
+            bool shape=modelview && projection && texmat && clip_uniform && point &&
+                vertex_attributes[0].components==4 && vertex_attributes[0].resource_index==0 &&
+                vertex_attributes[1].components==2 && vertex_attributes[1].resource_index==4 &&
+                vertex_attributes[2].components==4 && vertex_attributes[2].resource_index==8;
+            unsigned stores=0;
+            for (const auto &instruction:instructions) {
+                if (instruction.opcode()!=TypedOpcode::StoreOutput) continue;
+                if (instruction.aux>=resources.size()) { shape=false; break; }
+                ++stores;
+                const auto &output=resources[instruction.aux];
+                auto semantic=output.semantic;
+                if (semantic==TypedSemantic::None) semantic=infer_semantic(shader.resource_name(output));
+                if (semantic==TypedSemantic::Position && position.kind()==TypedValueKind::None) position=instruction.src0;
+                else if (semantic==TypedSemantic::Color && color.kind()==TypedValueKind::None) color=instruction.src0;
+                else if (semantic==TypedSemantic::TexCoord && output.semantic_index==0 && texcoord.kind()==TypedValueKind::None)
+                    texcoord=instruction.src0;
+                else if (semantic==TypedSemantic::PointSize && point_value.kind()==TypedValueKind::None) point_value=instruction.src0;
+                else if (semantic==TypedSemantic::ClipDistance && output.semantic_index==0 && clip.kind()==TypedValueKind::None)
+                    clip=instruction.src0;
+                else { shape=false; break; }
+            }
+            const auto *outer=shape?definition(position):nullptr;
+            const auto *inner=outer && outer->opcode()==TypedOpcode::TransformPosition ? definition(outer->src0) : nullptr;
+            const auto *tex_swizzle=shape?definition(texcoord):nullptr;
+            const auto *tex_transform=tex_swizzle && tex_swizzle->opcode()==TypedOpcode::FloatSwizzle &&
+                tex_swizzle->subop()==static_cast<uint8_t>(TypedFloatSwizzleOp::XY) ? definition(tex_swizzle->src0) : nullptr;
+            const auto color_it=color.kind()==TypedValueKind::Value ? attribute_for_value.find(color.id()) : attribute_for_value.end();
+            shape = shape && stores==5 && outer && inner && tex_transform &&
+                outer->opcode()==TypedOpcode::TransformPosition && inner->opcode()==TypedOpcode::TransformPosition &&
+                outer->aux==static_cast<uint16_t>(projection-resources.data()) &&
+                inner->aux==static_cast<uint16_t>(modelview-resources.data()) &&
+                tex_transform->opcode()==TypedOpcode::TransformPosition &&
+                tex_transform->aux==static_cast<uint16_t>(texmat-resources.data()) &&
+                color_it!=attribute_for_value.end() && color_it->second==2 &&
+                point_value.bits==point->value.bits && clip.type()==TypedType::F32;
+            if (shape) {
+                uint32_t uniform_words=0;
+                for (const auto &resource:resources) {
+                    uint32_t words=0;
+                    if (resource.kind==TypedResourceKind::Matrix4) words=16;
+                    else if (resource.kind==TypedResourceKind::Uniform) words=typed_component_count(resource.type);
+                    if (words) uniform_words=std::max<uint32_t>(uniform_words,resource.index+words);
+                }
+                uniform_words=(uniform_words+1u)&~1u;
+                if (uniform_words!=54) { out.error="clip vertex uniform footprint is not 54 words"; return false; }
+
+                MachineProgram primary;
+                if (!primary.emit<MachineOpcode::Phase>()) { out.error="failed to start clip vertex Machine program"; return false; }
+                std::vector<MachineOperand> literal_bindings(program.literals().size());
+                std::vector<IrLiteralF32> literal_meta;
+                std::unordered_map<uint32_t,uint32_t> literal_index_by_bits;
+                auto bind_literal=[&](TypedValue value) -> bool {
+                    if (value.kind()!=TypedValueKind::Literal || value.id()>=program.literals().size()) return true;
+                    if (value.type()!=TypedType::F32 && value.type()!=TypedType::S32) return true;
+                    if (literal_bindings[value.id()].kind()!=MachineOperandKind::None) return true;
+                    const uint32_t bits=program.literals()[value.id()];
+                    if (value.type()==TypedType::F32 && bits==0) {
+                        literal_bindings[value.id()]=primary.physical(machine_immediate(0),MachineType::F32);
+                        return true;
+                    }
+                    auto [it,inserted]=literal_index_by_bits.emplace(bits,static_cast<uint32_t>(literal_meta.size()));
+                    if (inserted) literal_meta.push_back({it->second,bits});
+                    const uint32_t word=uniform_words+it->second;
+                    if (word>=254) return false;
+                    literal_bindings[value.id()]=primary.physical(machine_secondary(static_cast<uint8_t>(word/2u)),
+                        value.type()==TypedType::S32?MachineType::S32:MachineType::F32,
+                        static_cast<uint8_t>(word&1u));
+                    return true;
+                };
+                for (const auto &instruction:instructions)
+                    if (!bind_literal(instruction.dst) || !bind_literal(instruction.src0) || !bind_literal(instruction.src1)) {
+                        out.error="clip vertex literal table exceeds compact SA subset"; return false;
+                    }
+                for (const auto &composite:program.float4_composites())
+                    for (const auto component:composite)
+                        if (!bind_literal(component)) { out.error="clip vertex composite literal table overflow"; return false; }
+                auto [point_literal_it,point_literal_inserted]=literal_index_by_bits.emplace(
+                    0x43ff8000u,static_cast<uint32_t>(literal_meta.size()));
+                if (point_literal_inserted) literal_meta.push_back({point_literal_it->second,0x43ff8000u});
+                const uint32_t point_literal_word=uniform_words+point_literal_it->second;
+                if (point_literal_word>=254) { out.error="clip point-size literal is out of SA range"; return false; }
+
+                std::vector<uint16_t> matrix_bindings(resources.size(),std::numeric_limits<uint16_t>::max());
+                for (uint16_t id=0;id<resources.size();++id)
+                    if (resources[id].kind==TypedResourceKind::Matrix4) matrix_bindings[id]=resources[id].index;
+                std::vector<MachineOperand> lowered;
+                std::string machine_error;
+                if (!lower_typed_program_impl(program,primary,machine_error,false,nullptr,nullptr,nullptr,
+                        false,std::numeric_limits<uint16_t>::max(),&literal_bindings,&lowered,true,nullptr,&matrix_bindings)) {
+                    out.error="clip vertex Typed->Machine lowering failed: "+machine_error;
+                    return false;
+                }
+                auto lowered_value=[&](TypedValue value) -> MachineOperand {
+                    if (value.kind()==TypedValueKind::Value)
+                        return value.id()<lowered.size()?lowered[value.id()]:MachineOperand{};
+                    if (value.kind()==TypedValueKind::Literal)
+                        return value.id()<literal_bindings.size()?literal_bindings[value.id()]:MachineOperand{};
+                    return {};
+                };
+                const auto p=lowered_value(position),uv=lowered_value(texcoord),c=lowered_value(color);
+                const auto ps=lowered_value(point_value),cl=lowered_value(clip);
+                if (p.kind()==MachineOperandKind::None || uv.kind()==MachineOperandKind::None ||
+                    c.kind()==MachineOperandKind::None || ps.kind()==MachineOperandKind::None ||
+                    cl.kind()==MachineOperandKind::None ||
+                    !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                        machine_move_config(3,4,1),primary.physical(machine_vertex_output(0),MachineType::F32),p) ||
+                    !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                        machine_move_config(3,4,1),primary.physical(machine_vertex_output(2),MachineType::F32),c) ||
+                    !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                        machine_move_config(3),primary.physical(machine_vertex_output(4),MachineType::F32),uv) ||
+                    !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                        machine_move_config(2,0),primary.physical(machine_vertex_output(5),MachineType::F32),cl)) {
+                    out.error="failed to append clip vertex varying/output moves";
+                    return false;
+                }
+                const auto point_low=primary.make_value<MachineType::F32>();
+                const auto point_clamped=primary.make_value<MachineType::F32>();
+                const auto max_point=primary.physical(machine_secondary(static_cast<uint8_t>(point_literal_word/2u)),
+                    MachineType::F32,static_cast<uint8_t>(point_literal_word&1u));
+                if (point_low.kind()==MachineOperandKind::None || point_clamped.kind()==MachineOperandKind::None ||
+                    !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Max),
+                        machine_vector_config(1),point_low,ps,primary.physical(machine_special(2),MachineType::F32,0)) ||
+                    !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Min),
+                        machine_vector_config(1),point_clamped,point_low,max_point) ||
+                    !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                        machine_move_config(1),primary.physical(machine_vertex_output(10),MachineType::F32),point_clamped) ||
+                    !primary.emit<MachineOpcode::Emit>()) {
+                    out.error="failed to append clip vertex point-size/EMIT";
+                    return false;
+                }
+
+                std::vector<IrUniformFloat> uniform_meta;
+                for (const auto *uniform:vertex_uniforms)
+                    uniform_meta.push_back({shader.resource_name(*uniform),typed_component_count(uniform->type),uniform->index});
+                std::vector<IrMatrix4Uniform> matrix_meta;
+                for (const auto *matrix:matrices) matrix_meta.push_back({shader.resource_name(*matrix),matrix->index});
+                return compile_vertex_clip_machine(primary,vertex_attributes,uniform_meta,matrix_meta,literal_meta,0,0,out);
             }
         }
 
