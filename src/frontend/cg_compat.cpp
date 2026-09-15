@@ -37,11 +37,150 @@ bool is_cg_type_token(const std::string &token) {
     return false;
 }
 
-std::string normalize_cg_for_hlsl(const char *source, size_t size) {
+struct GlobalInterfaceDecl {
+    std::string type;
+    std::string name;
+    std::string semantic;
+    bool output = false;
+};
+
+void skip_space(const std::string &text, size_t &offset) {
+    while (offset < text.size() && std::isspace(static_cast<unsigned char>(text[offset]))) ++offset;
+}
+
+bool read_identifier(const std::string &text, size_t &offset, std::string &value) {
+    skip_space(text, offset);
+    if (offset >= text.size() || !is_identifier_start(text[offset])) return false;
+    const size_t begin = offset++;
+    while (offset < text.size() && is_identifier_char(text[offset])) ++offset;
+    value = text.substr(begin, offset - begin);
+    return true;
+}
+
+bool parse_global_interface_line(const std::string &line, GlobalInterfaceDecl &decl) {
+    size_t offset = 0;
+    std::string type, direction, name, semantic;
+    if (!read_identifier(line, offset, type) || !is_cg_type_token(type) ||
+        !read_identifier(line, offset, direction) || (direction != "in" && direction != "out") ||
+        !read_identifier(line, offset, name)) return false;
+    skip_space(line, offset);
+    if (offset >= line.size() || line[offset++] != ':') return false;
+    if (!read_identifier(line, offset, semantic)) return false;
+    skip_space(line, offset);
+    if (offset >= line.size() || line[offset++] != ';') return false;
+    skip_space(line, offset);
+    if (offset < line.size() && line.compare(offset, 2, "//") != 0) return false;
+    decl = {std::move(type), std::move(name), std::move(semantic), direction == "out"};
+    return true;
+}
+
+int top_level_brace_delta(const std::string &line, bool &block_comment) {
+    int delta = 0;
+    for (size_t i = 0; i < line.size();) {
+        if (block_comment) {
+            const size_t end = line.find("*/", i);
+            if (end == std::string::npos) break;
+            block_comment = false;
+            i = end + 2;
+            continue;
+        }
+        if (line.compare(i, 2, "//") == 0) break;
+        if (line.compare(i, 2, "/*") == 0) {
+            block_comment = true;
+            i += 2;
+            continue;
+        }
+        if (line[i] == '{') ++delta;
+        else if (line[i] == '}') --delta;
+        ++i;
+    }
+    return delta;
+}
+
+bool find_entrypoint_parameters(const std::string &source, const std::string &entrypoint,
+                                size_t &open_paren, size_t &close_paren) {
+    for (size_t i = 0; i < source.size();) {
+        if (!is_identifier_start(source[i])) { ++i; continue; }
+        size_t end = i + 1;
+        while (end < source.size() && is_identifier_char(source[end])) ++end;
+        if (source.compare(i, end - i, entrypoint) != 0) { i = end; continue; }
+        size_t next = end;
+        skip_space(source, next);
+        if (next >= source.size() || source[next] != '(') { i = end; continue; }
+        open_paren = next;
+        int depth = 1;
+        for (size_t p = next + 1; p < source.size(); ++p) {
+            if (source[p] == '(') ++depth;
+            else if (source[p] == ')' && --depth == 0) {
+                close_paren = p;
+                return true;
+            }
+        }
+        return false;
+    }
+    return false;
+}
+
+std::string rewrite_global_cg_interfaces(const std::string &input, const std::string &entrypoint) {
+    std::vector<GlobalInterfaceDecl> interfaces;
+    std::string rewritten;
+    rewritten.reserve(input.size());
+    int brace_depth = 0;
+    bool block_comment = false;
+    for (size_t offset = 0; offset < input.size();) {
+        const size_t end = input.find('\n', offset);
+        const size_t line_end = end == std::string::npos ? input.size() : end;
+        const std::string line = input.substr(offset, line_end - offset);
+        GlobalInterfaceDecl decl;
+        if (brace_depth == 0 && !block_comment && parse_global_interface_line(line, decl)) {
+            interfaces.push_back(decl);
+            if (!decl.output) rewritten += "static " + decl.type + " " + decl.name + ";";
+        } else {
+            rewritten += line;
+        }
+        const int delta = top_level_brace_delta(line, block_comment);
+        brace_depth += delta;
+        if (end == std::string::npos) break;
+        rewritten.push_back('\n');
+        offset = end + 1;
+    }
+    if (interfaces.empty()) return rewritten;
+
+    size_t open_paren = 0, close_paren = 0;
+    if (!find_entrypoint_parameters(rewritten, entrypoint, open_paren, close_paren)) return rewritten;
+    std::string added;
+    bool have_existing = false;
+    for (size_t i = open_paren + 1; i < close_paren; ++i)
+        if (!std::isspace(static_cast<unsigned char>(rewritten[i]))) { have_existing = true; break; }
+    for (const auto &decl : interfaces) {
+        if (have_existing || !added.empty()) added += ", ";
+        if (decl.output) {
+            added += "out " + decl.type + " " + decl.name + " : " + decl.semantic;
+        } else {
+            added += decl.type + " _vsc_in_" + decl.name + " : " + decl.semantic;
+        }
+    }
+    rewritten.insert(close_paren, added);
+
+    close_paren += added.size();
+    const size_t body = rewritten.find('{', close_paren);
+    if (body == std::string::npos) return rewritten;
+    std::string assignments;
+    for (const auto &decl : interfaces) {
+        if (!decl.output)
+            assignments += "\n    " + decl.name + " = _vsc_in_" + decl.name + ";";
+    }
+    if (!assignments.empty()) rewritten.insert(body + 1, assignments);
+    return rewritten;
+}
+
+std::string normalize_cg_for_hlsl(const char *source, size_t size, const char *entrypoint) {
     std::string input(source, size);
     if (input.size() >= 3 && static_cast<unsigned char>(input[0]) == 0xef &&
         static_cast<unsigned char>(input[1]) == 0xbb && static_cast<unsigned char>(input[2]) == 0xbf)
         input.erase(0, 3);
+
+    input = rewrite_global_cg_interfaces(input, entrypoint ? entrypoint : "main");
 
     std::string output;
     output.reserve(input.size());
@@ -106,7 +245,7 @@ bool cg_to_spirv(const VscCompileRequest &request, FrontendOutput &out) {
         return false;
     }
 
-    const std::string source = normalize_cg_for_hlsl(request.source, request.source_size);
+    const std::string source = normalize_cg_for_hlsl(request.source, request.source_size, request.entrypoint);
     const char *source_ptr = source.c_str();
     const int source_length = static_cast<int>(source.size());
     const char *source_name = (request.source_name && *request.source_name) ? request.source_name : "shader.cg";

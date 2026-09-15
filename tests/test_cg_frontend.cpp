@@ -618,6 +618,10 @@ int test_cg_frontend() {
         failures += fail("Cg matrix mul did not compile through glslang HLSL");
     if (!compile("void main(float3 aPosition,float4 aColor,uniform float4x4 wvp,float4 out vPosition:POSITION,float4 out vColor:COLOR){vPosition=mul(float4(aPosition,1.f),wvp);vColor=aColor;}", VSC_STAGE_VERTEX))
         failures += fail("Cg post-type out qualifier normalization did not compile");
+    if (!compile("float2 in uv:TEXCOORD0;\nfloat sample_x(){return uv.x;}\nfloat4 main():COLOR0{return float4(sample_x(),0,0,1);}\n", VSC_STAGE_FRAGMENT))
+        failures += fail("Cg global input semantic did not normalize into an entry-point parameter");
+    if (!compile("float4 out gl_Position:POSITION;\nfloat2 out uv:TEXCOORD0;\nvoid main(float4 p:POSITION){gl_Position=p;uv=p.xy;}\n", VSC_STAGE_VERTEX))
+        failures += fail("Cg global output semantics did not normalize into entry-point parameters");
 #if defined(OPENSHACCG_ENABLE_SPIRV_CROSS)
     struct PublicShader { const char *name; VscStage stage; };
     const PublicShader public_shaders[] = {
