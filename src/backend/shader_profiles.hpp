@@ -58,6 +58,7 @@ struct IrSampler2D {
     std::string name;
     uint32_t resource_index = 0;
     uint8_t texcoord_index = 0;
+    bool point_coord = false;
 };
 
 enum class FragmentMachineProfile : uint8_t {

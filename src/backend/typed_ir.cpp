@@ -3215,15 +3215,21 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         if (sample && tint && uniforms.size() == 1 && samplers.size() == 1) {
             const auto *sampler_resource=resource_for_value(sample->src0);
             const auto *coordinate_resource=resource_for_value(sample->src1);
+            const bool point_coord=coordinate_resource &&
+                coordinate_resource->semantic==TypedSemantic::PointCoord;
             if (!sampler_resource || sampler_resource->kind!=TypedResourceKind::Sampler2D ||
                 !coordinate_resource || coordinate_resource->kind!=TypedResourceKind::Input ||
-                coordinate_resource->type!=TypedType::F32x2 || coordinate_resource->index!=0 ||
-                coordinate_resource->semantic==TypedSemantic::PointCoord) {
-                out.error="typed texture-tint profile requires sampler2D + TEXCOORD float2 input";
+                coordinate_resource->type!=TypedType::F32x2 || (!point_coord && coordinate_resource->index!=0) ||
+                (coordinate_resource->semantic!=TypedSemantic::None &&
+                 coordinate_resource->semantic!=TypedSemantic::TexCoord &&
+                 coordinate_resource->semantic!=TypedSemantic::PointCoord)) {
+                out.error="typed texture-tint profile requires sampler2D + TEXCOORD/POINTCOORD float2 input";
                 return false;
             }
+            auto profile_samplers=fragment_samplers;
+            profile_samplers[0].point_coord=point_coord;
             return compile_fragment_machine_profile(FragmentMachineProfile::TextureTint2D,
-                                                    fragment_uniforms,fragment_samplers,0,0,out);
+                                                    fragment_uniforms,profile_samplers,0,0,out);
         }
     }
 

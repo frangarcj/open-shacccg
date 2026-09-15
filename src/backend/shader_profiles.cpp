@@ -2325,14 +2325,14 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
             return false;
         }
         interface_block[10]=1; interface_block[11]=4; interface_block[12]=1; interface_block[14]=1; interface_block[16]=4;
-        interface_block[20]=0x00; interface_block[21]=0xf9; interface_block[28]=0xc0;
+        interface_block[20]=0x00; interface_block[21]=samplers[0].point_coord ? 0xfd : 0xf9; interface_block[28]=0xc0;
         fragment_extension[0]=0x30;
         image.fragment_interface_extension=fragment_extension;
         image.fragment_interface_extension_size=sizeof(fragment_extension);
         containers={{14,0,0,4},{19,0,4,2}};
         parameters.push_back({uniforms[0].name.c_str(),1,0,4,14,0,0,1,0});
         parameters.push_back({samplers[0].name.c_str(),2,0,4,0,1,0,1,0});
-        image.program_flags=0x801;
+        image.program_flags=samplers[0].point_coord ? 0x821 : 0x801;
         image.buffer_flags=0x10000000;
         image.texunit_flags[0]=1;
         image.primary_register_count=4;

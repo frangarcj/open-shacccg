@@ -1323,6 +1323,24 @@ void main(float4 Nposition, float2 Otexcoord0, float4 Pcolor,
         if (!ok) failures += fail("Cg CLP0 one-element array profile did not compile with validated interface");
         vsc_destroy_result(&request.allocator,&result);
     }
+    {
+        static constexpr const char *source=
+            "uniform sampler2D tex:TEXUNIT0; uniform float4 tint;"
+            "float4 main(float2 uv:TEXCOORD0,float2 c:SPRITECOORD):COLOR{uv=c;return tex2D(tex,uv)*tint;}";
+        VscCompileRequest request{};
+        request.source_name="fp-point-sprite.cg";
+        request.source=source; request.source_size=std::strlen(source);
+        request.entrypoint="main"; request.stage=VSC_STAGE_FRAGMENT;
+        VscCompileResult result{};
+        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            const auto varying=view.varyings();
+            ok=view.valid() && view.flags()==0x00000821 && varying.size>=22 && varying.data[21]==0xfd;
+        }
+        if (!ok) failures += fail("Cg SPRITECOORD texture-tint profile did not compile with point-sprite metadata");
+        vsc_destroy_result(&request.allocator,&result);
+    }
 #endif
     return failures;
 #endif
