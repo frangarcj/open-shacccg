@@ -1,0 +1,7 @@
+
+uniform sampler2D u_tex;
+uniform float u_force_opaque;
+float4 main(float2 v_uv:TEXCOORD0):COLOR0 {
+    float4 c=tex2D(u_tex,v_uv);
+    return float4(c.rgb,u_force_opaque>0.5 ? 1.0 : c.a);
+}

@@ -147,9 +147,9 @@ constexpr uint8_t machine_pack_subop(usse::PackFormat src, usse::PackFormat dst)
 
 constexpr uint16_t machine_move_config(uint8_t mask, uint8_t swizzle = 4,
                                        uint8_t repeat = 0, bool skip_invalid = true,
-                                       bool no_schedule = false) {
+                                       bool no_schedule = false, bool end = false) {
     return (mask & 0x0f) | ((swizzle & 0x0f) << 4) | ((repeat & 0x03) << 8) |
-        (skip_invalid ? 0x0400 : 0) | (no_schedule ? 0x0800 : 0);
+        (skip_invalid ? 0x0400 : 0) | (no_schedule ? 0x0800 : 0) | (end ? 0x1000 : 0);
 }
 
 constexpr uint16_t machine_pack_config(uint8_t mask, bool skip_invalid = true,

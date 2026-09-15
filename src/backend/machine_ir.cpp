@@ -347,6 +347,7 @@ MachineType pack_format_machine_type(usse::PackFormat format) {
 
 bool uses_instruction_config(MachineOpcode opcode) {
     return opcode == MachineOpcode::Move || opcode == MachineOpcode::MoveUpdate || opcode == MachineOpcode::Pack ||
+        opcode == MachineOpcode::PredicatedMove ||
         opcode == MachineOpcode::PackSwizzle || opcode == MachineOpcode::PackValue || opcode == MachineOpcode::Vector ||
         opcode == MachineOpcode::ComplexF32 || opcode == MachineOpcode::Vmad;
 }
@@ -796,7 +797,7 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             const auto data_type = static_cast<usse::DataType>(instruction.subop());
             const MachineType expected = data_type_machine_type(data_type);
             const uint16_t config = instruction.config();
-            if (expected == MachineType::Invalid || (config & ~0x0fffu)) {
+            if (expected == MachineType::Invalid || (config & ~0x1fffu)) {
                 out.error = "machine move is outside the validated F32/F16 subset";
                 return false;
             }
@@ -812,7 +813,31 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             move.repeat_count = static_cast<uint8_t>((config >> 8) & 0x03);
             move.skip_invalid = (config & 0x0400u) != 0;
             move.no_schedule = (config & 0x0800u) != 0;
+            move.end = (config & 0x1000u) != 0;
             if (!builder.instruction(move)) { out.error = "failed to encode machine VMOV"; return false; }
+            break;
+        }
+        case MachineOpcode::PredicatedMove: {
+            const auto data_type=static_cast<usse::DataType>(instruction.subop());
+            const MachineType expected=data_type_machine_type(data_type);
+            const uint16_t config=instruction.config();
+            usse::VmovSemantic move{};
+            if (expected==MachineType::Invalid || (config&~0x1fffu) ||
+                instruction.dst.kind()!=MachineOperandKind::PhysicalValue ||
+                !resolve_register_value(instruction.dst,expected,out.value_registers,&move.dst) ||
+                !resolve_register_value(instruction.src0,expected,out.value_registers,&move.src) ||
+                !resolve_predicate(instruction,instruction.src1,out.predicate_registers,&move.predicate)) {
+                out.error="predicated move is outside the validated physical F32/F16 subset";
+                return false;
+            }
+            move.data_type=data_type;
+            move.dest_mask=static_cast<uint8_t>(config&0x0f);
+            move.swizzle=static_cast<uint8_t>((config>>4)&0x0f);
+            move.repeat_count=static_cast<uint8_t>((config>>8)&0x03);
+            move.skip_invalid=(config&0x0400u)!=0;
+            move.no_schedule=(config&0x0800u)!=0;
+            move.end=(config&0x1000u)!=0;
+            if (!builder.instruction(move)) { out.error="failed to encode predicated VMOV"; return false; }
             break;
         }
         case MachineOpcode::Pack: {
@@ -1403,6 +1428,8 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 compare.predicate = guard;
                 compare.op = static_cast<usse::CompareOp>(instruction.subop());
                 compare.predicate_destination = out.predicate_registers[instruction.dst.id()];
+                compare.skip_invalid = compare.lhs.bank!=usse::RegisterBank::PrimaryAttribute ||
+                                       compare.rhs.bank!=usse::RegisterBank::PrimaryAttribute;
                 if (!builder.instruction(compare)) { out.error = "failed to encode machine F32 compare"; return false; }
             } else if (instruction.src0.type() == MachineType::S32) {
                 usse::VtstS32Semantic compare{};

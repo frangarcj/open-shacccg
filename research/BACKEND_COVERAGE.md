@@ -464,6 +464,15 @@ Open currently emits a deliberately unoptimized 43-word primary program and no
 secondary stream. Code-size/scheduling differences are tracked separately in
 `research/OPTIMIZATION_BACKLOG.md` so they do not obscure correctness coverage.
 
+`CMP_FS` is the first production fragment target and is exact outside GUIDs. Its
+`texture2D + (u_force_opaque > 0.5 ? 1 : sample.a)` shape anchors the F32
+uniform-vs-special-constant VTST word `0x48898a81d003800c`, a semantic `!P0`
+predicated VMOV, and the sampler/control secondary-prefix layout. Open reconstructs
+all 7 primary + 1 secondary words from semantic encoders and emits the same 320-byte
+GXP layout as Sony. The integration oracle feature is therefore 3/3 compilable,
+with CMP byte-identical outside GUIDs and the two vertex shaders intentionally
+remaining optimization baselines.
+
 Backend fallback diagnostics now retain the SPIRV-Cross Typed-path failure when
 the dependency-free parser also rejects a shader, so future oracle sweeps expose
 the actual higher-level coverage gap instead of only the final fallback error.

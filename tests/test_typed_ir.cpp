@@ -270,6 +270,21 @@ int test_typed_ir() {
 
     {
         TypedProgram program;
+        const auto lhs=program.uniform<TypedType::F32>(0);
+        const auto half=program.literal_f32(0x3f000000u);
+        const auto predicate=program.make_predicate();
+        if (!program.emit<TypedOpcode::Compare>(static_cast<uint8_t>(usse::CompareOp::Greater),predicate,lhs,half)) {
+            failures += fail("could not construct typed uniform > 0.5 compare");
+        } else {
+            MachineCompileResult result;
+            if (!compile_typed_program(program,result) || result.words.size()!=1 ||
+                result.words[0]!=0x48898a81d003800cULL)
+                failures += fail("typed uniform > 0.5 compare did not reproduce oracle VTST word");
+        }
+    }
+
+    {
+        TypedProgram program;
         const auto lhs=program.input_component_f32(0,0);
         const auto rhs=program.input_component_f32(0,1);
         const auto dst=program.make_value<TypedType::F32>();

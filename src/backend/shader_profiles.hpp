@@ -92,6 +92,10 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
                                       const std::vector<IrSampler2D> &samplers,
                                       uint32_t binary_guid, uint32_t source_guid,
                                       IrCompileResult &out);
+bool compile_fragment_texture_alpha_select_machine(const IrUniformFloat &uniform,
+                                                   const IrSampler2D &sampler,
+                                                   uint32_t binary_guid, uint32_t source_guid,
+                                                   IrCompileResult &out);
 bool compile_fragment_s32_machine(const MachineProgram &primary, const MachineProgram &secondary,
                                   const std::vector<IrUniformS32> &uniforms,
                                   uint32_t binary_guid, uint32_t source_guid,

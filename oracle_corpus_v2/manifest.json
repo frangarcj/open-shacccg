@@ -848,5 +848,13 @@
     "feature": "integration",
     "project": "geometrizer",
     "shader": "POLY3D_VS"
+  },
+  {
+    "name": "fp-geometrizer-cmp",
+    "file": "fp-geometrizer-cmp.cg",
+    "profile": "sce_fp_psp2",
+    "feature": "integration",
+    "project": "geometrizer",
+    "shader": "CMP_FS"
   }
 ]

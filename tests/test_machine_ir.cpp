@@ -341,6 +341,30 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        const auto predicate=program.make_predicate();
+        if (!program.emit<MachineOpcode::Compare>(static_cast<uint8_t>(usse::CompareOp::Greater),predicate,
+                program.physical(machine_secondary(0),MachineType::F32),
+                program.physical(machine_special(12),MachineType::F32)) ||
+            !program.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                machine_move_config(1,1),program.physical(usse::RegisterBank::Temp,0,MachineType::F32),
+                program.physical(machine_primary(1),MachineType::F32)) ||
+            !program.emit_config<MachineOpcode::PredicatedMove>(static_cast<uint8_t>(usse::DataType::F32),
+                machine_move_config(1,0),program.physical(machine_primary(1),MachineType::F32),
+                program.physical(usse::RegisterBank::Temp,0,MachineType::F32),
+                MachineOperand::virtual_predicate(predicate.id(),true))) {
+            failures += fail("could not construct Geometrizer predicated alpha Machine sequence");
+        } else {
+            MachineCompileResult result;
+            const uint64_t expected[]={0x48898a81d003800cULL,0x3880050881000040ULL,0x3d80050201040000ULL};
+            if (!compile_machine_program(program,result) || result.words.size()!=3)
+                failures += fail("Geometrizer predicated alpha Machine sequence did not compile");
+            else for (size_t i=0;i<3;++i)
+                if (result.words[i]!=expected[i]) failures += fail("Geometrizer predicated alpha Machine word mismatch");
+        }
+    }
+
+    {
+        MachineProgram program;
         const auto narrow = program.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,1);
         const auto packed = program.make_value<MachineType::F16>(MachineRegisterClass::FloatTemp,1);
         if (!program.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),

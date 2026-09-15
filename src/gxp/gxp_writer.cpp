@@ -96,6 +96,10 @@ bool valid_desc(const ProgramImage &image) {
         return false;
     if (image.fragment_interface_extension && image.type != ProgramType::Fragment)
         return false;
+    if (image.fragment_secondary_prefix_word &&
+        (image.type!=ProgramType::Fragment || !image.secondary_instruction_count ||
+         image.fragment_interface_extension || image.fragment_primary_overlaps_interface))
+        return false;
     if (image.fragment_additional_inputs > 2 || image.fragment_input_components < 1 ||
         image.fragment_input_components > 4 ||
         (image.fragment_additional_inputs &&
@@ -168,7 +172,12 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
         // Keep the observed upper bound fail-closed until a larger legal stream
         // is captured.
         if (image.secondary_instruction_count > 9) return false;
-        l.secondary_off = l.interface_off + 20;
+        if (image.fragment_secondary_prefix_word) {
+            l.secondary_off=l.interface_off+kInterfaceSize+sizeof(uint32_t);
+            cursor=l.secondary_off;
+        } else {
+            l.secondary_off = l.interface_off + 20;
+        }
         if (!mul_size(image.secondary_instruction_count,sizeof(uint64_t),bytes)) return false;
         l.secondary_end = l.secondary_off + bytes;
         if (l.secondary_end > cursor) cursor=l.secondary_end;
@@ -281,6 +290,8 @@ bool write_program(const ProgramImage &image, uint8_t *output, size_t capacity,
 
     if (image.interface_block)
         std::memcpy(output + l.interface_off, image.interface_block, kInterfaceSize);
+    if (image.fragment_secondary_prefix_word)
+        binary::store<uint32_t>(output,l.interface_off+kInterfaceSize,image.fragment_secondary_prefix_word);
     if (image.fragment_interface_extension)
         std::memcpy(output + l.interface_off + kInterfaceSize,
                     image.fragment_interface_extension, 8);

@@ -127,6 +127,13 @@ struct TypedResource {
 };
 static_assert(sizeof(TypedResource) == 12, "typed resource descriptors must stay compact");
 
+struct TypedFloatSelectDesc {
+    TypedValue predicate{};
+    TypedValue true_value{};
+    TypedValue false_value{};
+};
+static_assert(sizeof(TypedFloatSelectDesc)==12,"typed select side-table entries must stay compact");
+
 class TypedProgram {
 public:
     TypedValue make_value(TypedType type);
@@ -139,6 +146,7 @@ public:
     TypedValue literal_f32(uint32_t bits);
     TypedValue literal_f32x4(const std::array<uint32_t,4> &bits);
     TypedValue compose_f32x4(const std::array<TypedValue,4> &components);
+    TypedValue select_f32(TypedValue predicate, TypedValue true_value, TypedValue false_value);
     TypedValue sampler(uint16_t binding);
 
     TypedValue input(TypedType type, uint16_t location);
@@ -175,6 +183,7 @@ public:
     const std::vector<uint32_t> &literals() const { return literals_; }
     const std::vector<std::array<uint32_t,4>> &float4_literals() const { return float4_literals_; }
     const std::vector<std::array<TypedValue,4>> &float4_composites() const { return float4_composites_; }
+    const std::vector<TypedFloatSelectDesc> &float_selects() const { return float_selects_; }
     const std::vector<uint32_t> &labels() const { return labels_; }
     uint32_t value_count() const { return next_value_; }
     uint16_t predicate_count() const { return next_predicate_; }
@@ -184,6 +193,7 @@ private:
     std::vector<uint32_t> literals_;
     std::vector<std::array<uint32_t,4>> float4_literals_;
     std::vector<std::array<TypedValue,4>> float4_composites_;
+    std::vector<TypedFloatSelectDesc> float_selects_;
     std::vector<uint32_t> labels_;
     uint32_t next_value_ = 0;
     uint16_t next_predicate_ = 0;

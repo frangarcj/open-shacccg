@@ -225,6 +225,22 @@ TypedValue TypedProgram::compose_f32x4(const std::array<TypedValue,4> &component
     return dst;
 }
 
+TypedValue TypedProgram::select_f32(TypedValue predicate, TypedValue true_value, TypedValue false_value) {
+    if (float_selects_.size()>=std::numeric_limits<uint16_t>::max() ||
+        predicate.kind()!=TypedValueKind::Predicate || true_value.type()!=TypedType::F32 ||
+        false_value.type()!=TypedType::F32 || !is_value(true_value) || !is_value(false_value))
+        return {};
+    const auto dst=make_value(TypedType::F32);
+    if (dst.kind()==TypedValueKind::None) return {};
+    const uint16_t index=static_cast<uint16_t>(float_selects_.size());
+    float_selects_.push_back({predicate,true_value,false_value});
+    if (!emit<TypedOpcode::FloatSelect>(0,dst,{},{},index)) {
+        float_selects_.pop_back();
+        return {};
+    }
+    return dst;
+}
+
 TypedValue TypedProgram::input(TypedType type, uint16_t location) {
     auto dst = make_value(type);
     if (dst.kind() == TypedValueKind::None || !emit<TypedOpcode::Input>(0, dst, {}, {}, location)) return {};
@@ -733,6 +749,24 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
             value_defined[instruction.dst.id()]=true;
             break;
         }
+        case TypedOpcode::FloatSelect: {
+            if (instruction.dst.type()!=TypedType::F32 || instruction.aux>=typed.float_selects().size()) {
+                error="typed scalar float select side-table entry is invalid";
+                return false;
+            }
+            const auto &select=typed.float_selects()[instruction.aux];
+            if (select.predicate.kind()!=TypedValueKind::Predicate || select.predicate.id()>=predicate_defined.size() ||
+                !predicate_defined[select.predicate.id()] ||
+                !valid_value_use(typed,select.true_value,value_types,value_defined) ||
+                !valid_value_use(typed,select.false_value,value_types,value_defined) ||
+                select.true_value.type()!=TypedType::F32 || select.false_value.type()!=TypedType::F32) {
+                error="typed scalar float select operands are unresolved";
+                return false;
+            }
+            value_types[instruction.dst.id()]=TypedType::F32;
+            value_defined[instruction.dst.id()]=true;
+            break;
+        }
         case TypedOpcode::FloatExtract: {
             const auto components=typed_component_count(instruction.src0.type());
             if (instruction.dst.type()!=TypedType::F32 || !typed_is_float(instruction.src0.type()) ||
@@ -838,14 +872,26 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 return false;
             }
             const auto dst = machine.make_predicate();
-            const auto src0 = lower_value(typed, instruction.src0, values, literals, machine);
-            const auto src1 = lower_value(typed, instruction.src1, values, literals, machine);
-            if (src0.kind() == MachineOperandKind::Literal || src1.kind() == MachineOperandKind::Literal) {
-                error = "typed compare literals are not in the validated VTST subset"; return false;
-            }
+            auto lower_compare_value=[&](TypedValue value) -> MachineOperand {
+                if (value.kind()!=TypedValueKind::Literal || value.type()!=TypedType::F32)
+                    return lower_value(typed,value,values,literals,machine);
+                if (value.id()>=typed.literals().size()) return {};
+                switch (typed.literals()[value.id()]) {
+                case 0x3f000000u: return machine.physical(machine_special(12),MachineType::F32); // 0.5
+                case 0x3f800000u: return machine.physical(machine_special(2),MachineType::F32);  // 1.0
+                case 0x40000000u: return machine.physical(machine_special(4),MachineType::F32);  // 2.0
+                default: return {};
+                }
+            };
+            const auto src0 = f32 ? lower_compare_value(instruction.src0) :
+                                    lower_value(typed, instruction.src0, values, literals, machine);
+            const auto src1 = f32 ? lower_compare_value(instruction.src1) :
+                                    lower_value(typed, instruction.src1, values, literals, machine);
             if (dst.kind() == MachineOperandKind::None || src0.kind() == MachineOperandKind::None || src1.kind() == MachineOperandKind::None ||
                 !machine.emit<MachineOpcode::Compare>(instruction.subop(), dst, src0, src1)) {
-                error = "failed to lower typed compare"; return false;
+                error = f32 ? "failed to lower typed F32 compare (literal is outside validated 0.5/1/2 constants)" :
+                              "failed to lower typed compare";
+                return false;
             }
             predicates[instruction.dst.id()] = dst;
             predicate_defined[instruction.dst.id()] = true;
@@ -1192,6 +1238,7 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     }
 
     std::vector<IrUniformVec4> fragment_uniforms;
+    std::vector<IrUniformFloat> fragment_float_uniforms;
     std::vector<IrUniformS32> fragment_s32_uniforms;
     std::vector<IrUniformS32> fragment_i32x2_uniforms;
     std::vector<IrSampler2D> fragment_samplers;
@@ -1213,12 +1260,14 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         }
         if (resource->type==TypedType::F32x4)
             fragment_uniforms.push_back({shader.resource_name(*resource),resource->index});
+        else if (resource->type==TypedType::F32)
+            fragment_float_uniforms.push_back({shader.resource_name(*resource),1,resource->index});
         else if (resource->type==TypedType::S32)
             fragment_s32_uniforms.push_back({shader.resource_name(*resource),resource->index});
         else if (resource->type==TypedType::U32x2)
             fragment_i32x2_uniforms.push_back({shader.resource_name(*resource),resource->index});
         else {
-            out.error="typed fragment uniform type is outside validated float4/S32/int2 profiles";
+            out.error="typed fragment uniform type is outside validated F32/float4/S32/int2 profiles";
             return false;
         }
     }
@@ -1479,6 +1528,52 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
 
     const auto *root_def = definition(root);
     if (!root_def) { out.error = "typed fragment root has no defining operation"; return false; }
+    if (root_def->opcode()==TypedOpcode::FloatCompose && root_def->aux<program.float4_composites().size() &&
+        fragment_float_uniforms.size()==1 && fragment_float_uniforms[0].resource_index==0 &&
+        fragment_samplers.size()==1 && fragment_samplers[0].resource_index==0 && inputs.size()==1 &&
+        inputs[0]->index==0 && inputs[0]->type==TypedType::F32x2 &&
+        store->aux<resources.size() && resources[store->aux].kind==TypedResourceKind::Output &&
+        resources[store->aux].index==0 && resources[store->aux].type==TypedType::F32x4) {
+        const auto &components=program.float4_composites()[root_def->aux];
+        TypedValue sampled{};
+        auto sample_extract=[&](TypedValue value,uint8_t lane) -> bool {
+            const auto *extract=definition(value);
+            if (!extract || extract->opcode()!=TypedOpcode::FloatExtract || extract->subop()!=lane ||
+                extract->src0.type()!=TypedType::F32x4) return false;
+            if (sampled.kind()==TypedValueKind::None) sampled=extract->src0;
+            return sampled.bits==extract->src0.bits;
+        };
+        const auto *select_def=definition(components[3]);
+        bool profile=sample_extract(components[0],0) && sample_extract(components[1],1) &&
+            sample_extract(components[2],2) && select_def && select_def->opcode()==TypedOpcode::FloatSelect &&
+            select_def->aux<program.float_selects().size();
+        if (profile) {
+            const auto &select=program.float_selects()[select_def->aux];
+            const auto *alpha_extract=definition(select.false_value);
+            profile=alpha_extract && alpha_extract->opcode()==TypedOpcode::FloatExtract && alpha_extract->subop()==3 &&
+                alpha_extract->src0.bits==sampled.bits && select.true_value.kind()==TypedValueKind::Literal &&
+                select.true_value.type()==TypedType::F32 && select.true_value.id()<program.literals().size() &&
+                program.literals()[select.true_value.id()]==0x3f800000u;
+            const TypedInstruction *compare=nullptr;
+            for (const auto &candidate:instructions) {
+                if (candidate.opcode()==TypedOpcode::Compare && candidate.dst.kind()==TypedValueKind::Predicate &&
+                    candidate.dst.id()==select.predicate.id()) { compare=&candidate; break; }
+            }
+            const auto *uniform=compare ? resource_for_value(compare->src0) : nullptr;
+            profile=profile && compare && compare->subop()==static_cast<uint8_t>(usse::CompareOp::Greater) &&
+                uniform && uniform->kind==TypedResourceKind::Uniform && uniform->type==TypedType::F32 && uniform->index==0 &&
+                compare->src1.kind()==TypedValueKind::Literal && compare->src1.type()==TypedType::F32 &&
+                compare->src1.id()<program.literals().size() && program.literals()[compare->src1.id()]==0x3f000000u;
+            const auto *sample=definition(sampled);
+            const auto *sampler=sample ? resource_for_value(sample->src0) : nullptr;
+            const auto *coordinate=sample ? resource_for_value(sample->src1) : nullptr;
+            profile=profile && sample && sample->opcode()==TypedOpcode::Sample2D && sampler && coordinate &&
+                sampler->kind==TypedResourceKind::Sampler2D && sampler->index==0 &&
+                coordinate->kind==TypedResourceKind::Input && coordinate->index==0 && coordinate->type==TypedType::F32x2;
+        }
+        if (profile)
+            return compile_fragment_texture_alpha_select_machine(fragment_float_uniforms[0],fragment_samplers[0],0,0,out);
+    }
     if (root_def->opcode()==TypedOpcode::S32ToFloat) {
         const auto *source=resource_for_value(root_def->src0);
         if (root.type()!=TypedType::F32 || !source || source->kind!=TypedResourceKind::Uniform ||

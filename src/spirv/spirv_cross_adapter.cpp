@@ -434,7 +434,6 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         return false;
                     }
                     select_sinks[args[1]]={args[2],args[3],args[4],std::numeric_limits<uint16_t>::max()};
-                    has_control=true;
                 } else if (scan_function && op==spv::OpStore && count>=3) {
                     const auto phi=phi_sinks.find(args[1]);
                     const auto output=outputs.find(args[0]);
@@ -968,6 +967,10 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                             value=it->second;
                             return true;
                         }
+                        if (auto constant=constants.find(id); constant!=constants.end()) {
+                            value=program.literal_f32(constant->second);
+                            return value.kind()!=backend::TypedValueKind::None;
+                        }
                         const auto ext=extracts.find(id);
                         if (ext==extracts.end() || ext->second.component!=0 ||
                             !backend::typed_is_float(ext->second.source.type()) ||
@@ -1172,9 +1175,40 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     // The corresponding stores were sunk into the predecessor blocks.
                 } else if (op == spv::OpSelect) {
                     const auto select=select_sinks.find(args[1]);
-                    if (select==select_sinks.end() || select->second.output_resource==std::numeric_limits<uint16_t>::max()) {
-                        error="OpSelect is not a validated fragment-output selection";
+                    if (select==select_sinks.end()) {
+                        error="OpSelect was not recorded by the structured pre-scan";
                         return false;
+                    }
+                    if (select->second.output_resource==std::numeric_limits<uint16_t>::max()) {
+                        const auto result_type=typed_type(compiler.get_type(args[0]));
+                        const auto predicate=values.find(select->second.condition);
+                        auto resolve_scalar=[&](uint32_t id, backend::TypedValue &value) -> bool {
+                            if (auto it=values.find(id);it!=values.end() && it->second.type()==backend::TypedType::F32) {
+                                value=it->second;
+                                return true;
+                            }
+                            if (auto constant=constants.find(id);constant!=constants.end()) {
+                                value=program.literal_f32(constant->second);
+                                return value.kind()!=backend::TypedValueKind::None;
+                            }
+                            return false;
+                        };
+                        backend::TypedValue true_value{},false_value{};
+                        if (result_type!=backend::TypedType::F32 || predicate==values.end() ||
+                            predicate->second.kind()!=backend::TypedValueKind::Predicate ||
+                            !resolve_scalar(select->second.true_value,true_value) ||
+                            !resolve_scalar(select->second.false_value,false_value)) {
+                            error="non-output OpSelect is outside the validated scalar F32 subset";
+                            return false;
+                        }
+                        const auto selected=program.select_f32(predicate->second,true_value,false_value);
+                        if (selected.kind()==backend::TypedValueKind::None) {
+                            error="failed to emit Typed scalar F32 select";
+                            return false;
+                        }
+                        values[args[1]]=selected;
+                        offset+=count;
+                        continue;
                     }
                     const auto predicate=values.find(select->second.condition);
                     const auto true_value=values.find(select->second.true_value);

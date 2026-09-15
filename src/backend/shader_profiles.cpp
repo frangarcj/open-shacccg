@@ -455,6 +455,105 @@ bool compile_vertex_uniform_matrix(const IrAttribute &position, const IrMatrix4U
 
 namespace vsc::backend {
 
+bool compile_fragment_texture_alpha_select_machine(const IrUniformFloat &uniform,
+                                                   const IrSampler2D &sampler,
+                                                   uint32_t binary_guid, uint32_t source_guid,
+                                                   IrCompileResult &out) {
+    out={};
+    if (uniform.name.empty() || uniform.components!=1 || uniform.resource_index!=0 ||
+        sampler.name.empty() || sampler.resource_index!=0) {
+        out.error="texture alpha-select profile requires scalar uniform and sampler at resource 0";
+        return false;
+    }
+
+    MachineProgram primary,secondary;
+    const auto predicate=primary.make_predicate();
+    const auto zero=primary.literal_u32(0);
+    if (predicate.kind()==MachineOperandKind::None || zero.kind()==MachineOperandKind::None ||
+        !primary.emit<MachineOpcode::Phase>() ||
+        !primary.emit<MachineOpcode::Compare>(static_cast<uint8_t>(usse::CompareOp::Greater),predicate,
+            primary.physical(machine_secondary(0),MachineType::F32),
+            primary.physical(machine_special(12),MachineType::F32)) ||
+        !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+            machine_move_config(1,1),primary.physical(usse::RegisterBank::Temp,0,MachineType::F32),
+            primary.physical(machine_primary(1),MachineType::F32)) ||
+        !primary.emit_config<MachineOpcode::PackSwizzle>(0x24,machine_pack_config(0x7,true,false),
+            primary.physical(machine_fragment_output(0),MachineType::F16),
+            primary.physical(machine_primary(0),MachineType::F32),
+            primary.physical(machine_primary(1),MachineType::F32)) ||
+        !primary.emit<MachineOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),
+            primary.physical(machine_primary(2),MachineType::U32),
+            primary.physical(machine_secondary(2),MachineType::U32),zero) ||
+        !primary.emit_config<MachineOpcode::PredicatedMove>(static_cast<uint8_t>(usse::DataType::F32),
+            machine_move_config(1,0),primary.physical(machine_primary(1),MachineType::F32),
+            primary.physical(usse::RegisterBank::Temp,0,MachineType::F32),
+            MachineOperand::virtual_predicate(predicate.id(),true)) ||
+        !primary.emit_config<MachineOpcode::PackSwizzle>(0,machine_pack_config(0x8,true,false),
+            primary.physical(machine_fragment_output(0),MachineType::F16),
+            primary.physical(machine_primary(1),MachineType::F32),
+            primary.physical(machine_immediate(0),MachineType::F32)) ||
+        !secondary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+            machine_move_config(1,1,0,true,false,true),
+            secondary.physical(machine_primary(1),MachineType::F32),
+            secondary.physical(machine_special(1),MachineType::F32))) {
+        out.error="failed to build oracle texture alpha-select Machine profile";
+        return false;
+    }
+
+    MachineCompileResult primary_compiled,secondary_compiled;
+    if (!compile_words(primary,primary_compiled,out,"texture alpha-select primary lowering failed") ||
+        !compile_words(secondary,secondary_compiled,out,"texture alpha-select secondary lowering failed"))
+        return false;
+    const uint64_t expected_primary[]={
+        0xfa44070000000000ULL,0x48898a81d003800cULL,0x3880050881000040ULL,
+        0x40800d5ea0018002ULL,0x5081000ae0400100ULL,0x3d80050201040000ULL,
+        0x40810d62a0000100ULL,
+    };
+    if (primary_compiled.words.size()!=std::size(expected_primary) ||
+        !std::equal(primary_compiled.words.begin(),primary_compiled.words.end(),std::begin(expected_primary)) ||
+        secondary_compiled.words.size()!=1 || secondary_compiled.words[0]!=0x3886050a41040040ULL) {
+        out.error="texture alpha-select Machine stream no longer matches oracle words";
+        return false;
+    }
+
+    const uint8_t interface_block[32]={
+        0,0,0,0,0,0,0,0,0,0,1,4,1,0,1,0,4,0,0,0,0,0xf9,0,0,0,0,0,0,0xc0,0,0,0,
+    };
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,2}};
+    const gxp::ParameterDesc parameters[]={
+        {uniform.name.c_str(),1,0,1,14,0,0,1,0},
+        {sampler.name.c_str(),2,0,4,0,1,0,1,0},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Fragment;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid; image.source_guid=source_guid;
+    image.program_flags=0x00080801;
+    image.buffer_flags=0x10000000;
+    image.texunit_flags[0]=1;
+    image.primary_register_count=4;
+    image.secondary_register_count=3;
+    image.temp_register_count=1;
+    image.primary_phase_count=1;
+    image.default_uniform_buffer_count=2;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
+    image.fragment_secondary_prefix_word=0x30;
+    image.secondary_instructions=secondary_compiled.words.data();
+    image.secondary_instruction_count=secondary_compiled.words.size();
+    image.primary_instructions=primary_compiled.words.data();
+    image.primary_instruction_count=primary_compiled.words.size();
+    image.containers=containers; image.container_count=1;
+    image.parameters=parameters; image.parameter_count=2;
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected texture alpha-select profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for texture alpha-select profile"; return false;
+    }
+    return true;
+}
+
 bool compile_fragment_machine_profile(FragmentMachineProfile profile,
                                       const std::vector<IrUniformVec4> &uniforms,
                                       const std::vector<IrSampler2D> &samplers,

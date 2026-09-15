@@ -66,6 +66,26 @@ Pending optimizations:
 7. Revisit register allocation after the above fusions; avoid tuning allocator
    heuristics around the current deliberately verbose 43-word program.
 
+### `CMP_FS`
+
+Current integration fixture: `oracle_corpus_v2/fp-geometrizer-cmp.cg`.
+
+- The structural profile `texture2D + (uniform > 0.5 ? 1 : sample.a)` is already
+  byte-identical to Sony outside GUIDs: 7 primary + 1 secondary instructions,
+  320-byte GXP on disk.
+- The stream is reconstructed from semantic VTST/VMOV/VPCK/VBW builders; no raw
+  opaque instruction word is injected by the shader profile.
+- There is therefore no instruction-selection optimization debt for this shape.
+
+Related texture cleanup still pending:
+
+1. Bring the simpler standalone `Texture2D` profile's GXP metadata in line with
+   SDK 1.6.5 (Sony uses flags `0x00080801`, SA=0, no data/container padding for
+   the one-fetch probe; the older public-profile layout currently differs).
+2. Generalize predicated scalar/component selection only when another real
+   shader needs it; do not replace the exact CMP shape with branch-heavy generic
+   select lowering.
+
 ## General USSE optimization work
 
 ### High value

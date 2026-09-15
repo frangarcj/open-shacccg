@@ -392,6 +392,44 @@ bool compile_geometrizer_poly3d_vertex(const std::string &source) {
     return ok;
 }
 
+bool compile_geometrizer_cmp_fragment(const std::string &source) {
+    VscCompileRequest request{};
+    request.source_name="fp-geometrizer-cmp.cg";
+    request.source=source.data(); request.source_size=source.size();
+    request.entrypoint="main"; request.stage=VSC_STAGE_FRAGMENT;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+    if (ok) {
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        const uint64_t primary_words[]={
+            0xfa44070000000000ULL,0x48898a81d003800cULL,0x3880050881000040ULL,
+            0x40800d5ea0018002ULL,0x5081000ae0400100ULL,0x3d80050201040000ULL,
+            0x40810d62a0000100ULL,
+        };
+        const uint64_t secondary_word=0x3886050a41040040ULL;
+        ok=view.valid() && view.logical_size()==317 && view.sdk_version()==0x0165 &&
+            view.flags()==0x00080801 && view.primary_register_count()==4 &&
+            view.secondary_register_count()==3 && view.parameter_count()==2 &&
+            view.primary_instruction_count()==7 && view.secondary_instruction_count()==1 &&
+            view.compiler_version_raw()==0x0002df30 && view.literal_count()==0 && view.container_count()==1;
+        vsc::gxp::ParameterView uniform{},sampler{};
+        ok=ok && view.parameter(0,uniform) && uniform.name=="u_force_opaque" &&
+            uniform.category==1 && uniform.component_count==1 && uniform.container_index==14 && uniform.resource_index==0 &&
+            view.parameter(1,sampler) && sampler.name=="u_tex" && sampler.category==2 &&
+            sampler.component_count==4 && sampler.semantic==1 && sampler.resource_index==0;
+        const auto primary=view.primary_program(); const auto secondary=view.secondary_program();
+        ok=ok && primary.size==sizeof(primary_words) &&
+            std::memcmp(primary.data,primary_words,sizeof(primary_words))==0 &&
+            secondary.size==sizeof(secondary_word) && std::memcmp(secondary.data,&secondary_word,sizeof(secondary_word))==0;
+    }
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: Geometrizer CMP_FS diagnostic=%s\n",
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
+
 bool compile_oracle_s32_profile(const std::string &source, const char *name,
                                 uint32_t expected_size, uint32_t expected_params,
                                 const uint64_t *secondary_words, size_t secondary_count) {
@@ -614,6 +652,11 @@ int test_cg_frontend() {
         const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/vp-geometrizer-poly3d.cg");
         if (source.empty() || !compile_geometrizer_poly3d_vertex(source))
             failures += fail("Geometrizer POLY3D_VS integration profile did not compile through generic vertex Machine IR");
+    }
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-geometrizer-cmp.cg");
+        if (source.empty() || !compile_geometrizer_cmp_fragment(source))
+            failures += fail("Geometrizer CMP_FS integration profile did not reproduce oracle texture/alpha-select stream");
     }
     {
         const char *alu_probes[]={

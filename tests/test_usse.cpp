@@ -251,6 +251,26 @@ int test_usse() {
         failures += fail("predicated semantic VMOV mismatch");
     if (!decode_vmov_semantic(pred_move_word,&sem_dec) || sem_dec.predicate!=Predicate::NotP0)
         failures += fail("predicated semantic VMOV decode mismatch");
+    VmovSemantic cmp_alpha_move{};
+    cmp_alpha_move.dst={RegisterBank::PrimaryAttribute,1};
+    cmp_alpha_move.src={RegisterBank::Temp,0};
+    cmp_alpha_move.predicate=Predicate::NotP0;
+    cmp_alpha_move.data_type=DataType::F32;
+    cmp_alpha_move.dest_mask=1;
+    cmp_alpha_move.swizzle=0;
+    if (!encode_vmov_semantic(cmp_alpha_move,&pred_move_word) || pred_move_word!=0x3d80050201040000ULL)
+        failures += fail("Geometrizer CMP predicated alpha VMOV mismatch");
+    VmovSemantic cmp_secondary{};
+    cmp_secondary.dst={RegisterBank::PrimaryAttribute,1};
+    cmp_secondary.src={RegisterBank::Special,1};
+    cmp_secondary.data_type=DataType::F32;
+    cmp_secondary.dest_mask=1;
+    cmp_secondary.swizzle=1;
+    cmp_secondary.end=true;
+    uint64_t cmp_secondary_word=0;
+    if (!encode_vmov_semantic(cmp_secondary,&cmp_secondary_word) || cmp_secondary_word!=0x3886050a41040040ULL ||
+        !decode_vmov_semantic(cmp_secondary_word,&sem_dec) || !sem_dec.end)
+        failures += fail("Geometrizer CMP secondary END VMOV mismatch");
 
     // Semantic VPCK: rebuild the public F32->F16 identity pack exactly.
     VpckSemantic pack{};
@@ -537,6 +557,20 @@ int test_usse() {
             decoded.lhs.bank!=RegisterBank::PrimaryAttribute || decoded.lhs.num!=0 ||
             decoded.rhs.bank!=RegisterBank::PrimaryAttribute || decoded.rhs.num!=2)
             failures += fail("oracle F32 VTST semantic decode mismatch");
+    }
+    {
+        VtstF32Semantic fcmp{};
+        fcmp.lhs={RegisterBank::SecondaryAttribute,0};
+        fcmp.rhs={RegisterBank::Special,12};
+        fcmp.op=CompareOp::Greater;
+        fcmp.skip_invalid=true;
+        uint64_t word=0;
+        VtstF32Semantic decoded{};
+        if (!encode_vtst_f32_semantic(fcmp,&word) || word!=0x48898a81d003800cULL ||
+            !decode_vtst_f32_semantic(word,&decoded) || decoded.op!=CompareOp::Greater ||
+            decoded.lhs.bank!=RegisterBank::SecondaryAttribute || decoded.lhs.num!=0 ||
+            decoded.rhs.bank!=RegisterBank::Special || decoded.rhs.num!=12)
+            failures += fail("oracle F32 uniform > 0.5 VTST mismatch");
     }
 
     VtstS32Semantic scmp{};

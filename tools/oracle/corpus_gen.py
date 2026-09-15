@@ -166,6 +166,14 @@ O main(float4 a_m0:TEXCOORD0, float4 a_m1:TEXCOORD1, float4 a_m2:TEXCOORD2,
     return o;
 }
 """, "integration", project="geometrizer", shader="POLY3D_VS")
+    emit(root, manifest, "fp-geometrizer-cmp", "sce_fp_psp2", """
+uniform sampler2D u_tex;
+uniform float u_force_opaque;
+float4 main(float2 v_uv:TEXCOORD0):COLOR0 {
+    float4 c=tex2D(u_tex,v_uv);
+    return float4(c.rgb,u_force_opaque>0.5 ? 1.0 : c.a);
+}
+""", "integration", project="geometrizer", shader="CMP_FS")
 
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
     print(f"generated {len(manifest)} shaders in {root}")

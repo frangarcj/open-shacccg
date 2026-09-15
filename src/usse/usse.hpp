@@ -47,6 +47,7 @@ struct VmovSemantic {
     uint8_t repeat_count = 0;
     bool skip_invalid = true;
     bool no_schedule = false;
+    bool end = false;
 };
 
 // VPCK has its own 3-bit format namespace.

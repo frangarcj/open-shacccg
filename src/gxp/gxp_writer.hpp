@@ -75,6 +75,12 @@ struct ProgramImage {
     const uint8_t *fragment_interface_extension = nullptr;
     size_t fragment_interface_extension_size = 0;
 
+    // Oracle-observed sampler/control layout with a secondary stream: one
+    // 32-bit interface word follows the canonical 32-byte block, then secondary
+    // code begins immediately. Zero keeps the older in-interface secondary
+    // placement used by scalar/integer profiles.
+    uint32_t fragment_secondary_prefix_word = 0;
+
     // SDK 1.6.5 no-secondary fragment programs place one 16-byte descriptor
     // after the main 32-byte interface for each additional input beyond
     // Location 0, followed by the usual 8-byte secondary anchor slot. Current

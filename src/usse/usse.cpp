@@ -193,6 +193,7 @@ bool encode_vmov_semantic(const VmovSemantic &i, uint64_t *word) {
         !encode_src1_bank(i.src.bank, &f.src1_bank, &f.src1_bank_ext)) return false;
     f.pred = static_cast<uint8_t>(i.predicate);
     f.skip_invalid = i.skip_invalid;
+    f.end_or_src0_bank_ext = i.end;
     f.move_type = 0; // unconditional
     f.repeat_count = i.repeat_count;
     f.no_schedule = i.no_schedule;
@@ -219,6 +220,7 @@ bool decode_vmov_semantic(uint64_t word, VmovSemantic *i) {
     i->repeat_count = f.repeat_count;
     i->skip_invalid = f.skip_invalid;
     i->no_schedule = f.no_schedule;
+    i->end = f.end_or_src0_bank_ext;
     return true;
 }
 

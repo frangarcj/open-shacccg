@@ -62,6 +62,9 @@ Implemented now:
   attributes, five packed float uniforms, `float4(xyz,1)` materialization and three dot
   products; resource flags/semantics/PA layout match the Sony oracle. Remaining instruction
   selection/scheduling work is tracked in `research/OPTIMIZATION_BACKLOG.md`
+- Geometrizer `CMP_FS` is oracle-exact outside GUIDs: the texture/alpha-select shape lowers
+  through F32 VTST (`uniform > 0.5`), semantic predicated VMOV, VPCK/VBW and the observed
+  one-word secondary setup; no opaque shader-specific qwords are injected
 - oracle-exact fragment profiles for `wzyx` and the constant `float4(1,0,0,1)`,
   including swizzled VPCK, literal-table placement and the primary/interface overlap convention
 - oracle-exact standalone vertex profiles for float4 position passthrough,

@@ -179,6 +179,14 @@ The writer therefore accepts the observed four-word secondary stream; int4 probe
 have additionally demonstrated five- and eight-word layouts, but their instruction
 profiles are not enabled yet. `--feature integer` currently contains eleven exact cases.
 
+The `integration` feature now contains three Geometrizer-derived production shapes:
+`POLY_VS`, `POLY3D_VS` and `CMP_FS`. Both vertex programs compile in Sony/Open with
+known scheduling/code-size differences tracked separately in
+`research/OPTIMIZATION_BACKLOG.md`. `CMP_FS` is exact outside GUIDs: Sony/Open both
+emit the same 7 primary + 1 secondary USSE words and 320-byte GXP. The probe also
+anchors `u_force_opaque > 0.5` as F32 VTST against SPECIAL12 and the `!P0`
+predicated VMOV used to select sampled alpha versus opaque alpha.
+
 `--feature integration` contains a production-shaped vertex probe based on the
 current Geometrizer `POLY_VS` semantics. Sony emits 14 primary + 4 secondary words;
 Open currently emits a semantically equivalent longer primary-only schedule. This
