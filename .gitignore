@@ -38,5 +38,7 @@ libshacccg.*
 # Local oracle work areas / environment files.
 oracle_private/
 .oracle/
+.real-corpus-cache/
+.real-corpus-results/
 .env
 .env.*

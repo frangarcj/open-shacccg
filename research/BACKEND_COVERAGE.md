@@ -490,14 +490,52 @@ Sony often selects V16NMAD/VMAD2 and tighter scheduling, whereas Open currently
 uses its validated V32NMAD path, so compilation coverage is the milestone here,
 not byte identity.
 
+## Real-world compatibility gate
+
+The differential probes above remain the evidence source for individual hardware
+facts, but their 115/115 compile result is not a meaningful estimate of general
+SceShaccCg compatibility. A separate external-corpus runner now pins real shader
+workloads in `research/real_world_corpus.json` and keeps their GPL/LGPL source out
+of the repository and runtime.
+
+The initial production-shaped baseline is:
+
+| Project | Passing | Captured Cg | Known targets | Captured compile rate | Target rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| DSVita | 2 | 36 | 36 | 5.6% | 5.6% |
+| vitaGL | 2 | 24 | 24 | 8.3% | 8.3% |
+| Geometrizer | 4 | 4 | 14 | 100.0% | 28.6% |
+| **Overall** | **8** | **64** | **74** | **12.5%** | **10.8%** |
+
+DSVita compile units model the source concatenation and preprocessor variants
+actually selected by its Vita runtime rather than merely counting `.cg` files.
+vitaGL contributes its four built-in precompiled Cg sources plus a concrete
+branch-oriented matrix of its generated fixed-function vertex/fragment templates.
+Geometrizer has fourteen Vita GLES shader constants; four currently have clean Cg
+fixtures derived from their vitaGL translation and ten remain explicit capture
+gaps instead of disappearing from the denominator.
+
+The first sweep immediately found one high-fanout frontend issue: DSVita's global
+`TYPE in/out name : SEMANTIC` declarations caused all 36 compile units to fail
+before reaching Typed IR. Normalizing that Cg spelling moved the corpus to 2/36
+and exposed the deeper distribution: current captured failures are split between
+frontend compatibility and Typed/backend coverage rather than one monolithic
+parse failure. `tools/real_corpus.py` records the exact diagnostic category for
+each case and `research/real_world_baseline.json` protects every case that has
+already reached green.
+
+This gate changes prioritization: work that turns a repeated real-world failure
+class green is preferred over Sony instruction-count parity unless the codegen
+optimization is required for correctness or hardware acceptance.
+
 ## Next backend order
 
-1. **Finish typed float/conversion coverage.** Derive additional swizzle encodings and F16->F32/other conversion forms from real words, keeping the single Typed -> Machine lowering path fail-closed.
-2. **Complete structured control flow.** BR forward/backward offsets, six F32 VTST compares, direct COLOR0 two-way phi merge, output `OpSelect` and positive-step dynamic loops are validated; the control corpus is 12/12. Next generalize remaining phi consumers and derive decrement/other loop-update profiles from oracle probes.
-3. **Integer data movement/conversion.** Integer oracle coverage is 11/11 exact: scalar S32 uniform pass/AND/OR/XOR/SHL/ASR, scalar attribute F32->S32, scalar uniform S32->F32, plus int2 uniform pass/OR. Next derive int4/bitcast profiles; source-level `uint` is not a Sony Cg spelling, so unsigned coverage should be driven by SPIR-V/HLSL evidence.
-4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
-5. **Common missing ALU families.** The 77-case ALU language corpus is complete. Next prioritize VMAD2/VDUAL/V16 optimization profiles only where they improve real shaders; concrete codegen debt lives in `research/OPTIMIZATION_BACKLOG.md`.
-6. **Resource/reflection generalization.** Generic vertex attributes now derive masks, PA counts, semantics and the `0x4` large-input flag from IR. Continue with uniform buffers, sampler tables and non-COLOR varying layouts instead of sample-shaped metadata.
+1. **Resource/reflection generalization.** Real DSVita/vitaGL failures make uniform blocks, uniform arrays, multiple varyings/samplers and non-COLOR layouts the largest shared production gap. Generic vertex attributes already derive masks, PA counts, semantics and the `0x4` large-input flag from IR; extend the same principle to these resources rather than adding sample-shaped metadata.
+2. **Integer/bitcast and texture expansion.** DSVita immediately exercises Cg `short`/`unsigned`, bitcasts, integer texture results and gather operations. Integer oracle coverage is 11/11 exact for the current scalar/int2 slice, but real coverage needs int4/vector conversions, bit containers and the corresponding texture paths.
+3. **Finish typed float/composite coverage.** Generalize unresolved vector extracts/shuffles/composite construction, min/max operands, uniform members and other forms already emitted by glslang for real shaders while keeping unsupported encodings fail-closed.
+4. **Complete structured control flow.** BR forward/backward offsets, six F32 VTST compares, direct COLOR0 two-way phi merge, output `OpSelect` and positive-step dynamic loops are validated; the control corpus is 12/12. Next generalize remaining phi consumers and derive decrement/other loop-update profiles from oracle probes.
+5. **Capture remaining Geometrizer translations.** Record the ten still-missing vitaGL GLSL-to-Cg outputs so all fourteen real Vita renderer shaders participate as compile inputs, then use their failures to drive the same generic backend.
+6. **Codegen optimization from real demand.** The 77-case ALU language corpus is complete. Prioritize VMAD2/VDUAL/V16/secondary scheduling only where it closes a real shader constraint or materially improves production code; detailed debt remains in `research/OPTIMIZATION_BACKLOG.md`.
 7. **Hardware gate.** Treat a capability as complete only after host regressions plus real-Vita `sceGxmProgramCheck`/render validation where possible.
 
 ## Definition of progress

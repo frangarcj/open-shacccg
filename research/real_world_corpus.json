@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "repositories": [
+    {
+      "name": "dsvita",
+      "url": "https://github.com/Grarak/DSVita.git",
+      "revision": "ae36f93a231751c4b0ef2f6672d50e93a3a91dca",
+      "adapter": "dsvita",
+      "scope": "All main-bearing Vita Cg sources plus the runtime BPP8, BITMAP, BLEND_3D and W_DEPTH_BUFFER variants."
+    },
+    {
+      "name": "vitagl",
+      "url": "https://github.com/Rinnegatamante/vitaGL.git",
+      "revision": "97c5087561ee2e948807f185c1827e8012610df2",
+      "adapter": "vitagl",
+      "scope": "Built-in precompiled Cg sources plus a branch-oriented concrete matrix of the default and high-texture FFP shader templates."
+    },
+    {
+      "name": "geometrizer",
+      "url": "https://github.com/frangarcj/geometrizer.git",
+      "revision": "9440db112fb457d5d35ad33aefb645d13a377f8f",
+      "adapter": "geometrizer",
+      "scope": "All fourteen Vita GLES shader constants. Clean Cg fixtures currently exist for four; uncaptured GLSL-to-Cg translations remain visible as capture gaps."
+    }
+  ]
+}

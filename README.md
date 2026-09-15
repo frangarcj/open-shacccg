@@ -154,8 +154,10 @@ ctest --test-dir build-glslang --output-on-failure
 
 It feeds source to glslang's HLSL/DX9-compatible parser with glslang's internal
 optimizer disabled; SPIRV-Tools remains the explicit optimization stage. The
-current Cg shim only strips a UTF-8 BOM and rewrites the Cg parameter spelling
-`TYPE out name` to HLSL `out TYPE name`.
+current Cg shim strips a UTF-8 BOM, rewrites the Cg parameter spelling
+`TYPE out name` to HLSL `out TYPE name`, and adapts the global `TYPE in/out name
+: SEMANTIC` stage-interface spelling used by real DSVita shaders into explicit
+entry-point parameters while preserving helper-function access to global inputs.
 
 As an end-to-end regression, the seven preserved libvita2d shaders are compiled
 from their original Cg source through glslang, SPIRV-Tools, SPIRV-Cross and Typed
@@ -207,6 +209,42 @@ This lets `SPIR-V -> USSE -> GXP` progress before complete Cg compatibility.
 ## Public regression corpus
 
 `research/public_samples/libvita2d/` contains Cg sources and known-good GXP payloads from the public MIT-licensed `xerpi/libvita2d` repository. Its MIT license and a SHA-256 manifest are retained next to the samples. See `research/PROVENANCE.md` for the clean implementation boundary.
+
+## Real-world coverage gate
+
+The focused oracle corpus is intentionally small enough to isolate individual
+compiler facts, so it is not used as the denominator for general compatibility.
+`tools/real_corpus.py` measures a second, production-shaped gate against pinned
+external DSVita, vitaGL and Geometrizer revisions. External GPL/LGPL source stays
+in the ignored `.real-corpus-cache/` directory and is used only as test input.
+
+The initial baseline is 8/64 captured Cg compile units (12.5%), or 8/74 known
+real shader targets (10.8%) when the ten Geometrizer vitaGL GLSL-to-Cg
+translations that still need to be captured are included in the denominator.
+The low percentage is deliberate: this gate exposes production features such as
+uniform blocks, multiple varyings/samplers, integer texture work, bitcasts and the
+vitaGL fixed-function templates that the 115-case differential probe corpus does
+not attempt to enumerate.
+
+Build the full host pipeline, fetch the exact pinned revisions and reproduce the
+report with:
+
+```sh
+cmake -S . -B build-real -DCMAKE_BUILD_TYPE=Release \
+  -DOPENSHACCG_ENABLE_GLSLANG=ON \
+  -DOPENSHACCG_ENABLE_SPIRV_TOOLS=ON \
+  -DOPENSHACCG_ENABLE_SPIRV_CROSS=ON
+cmake --build build-real --target openshacccg_compile
+python3 tools/real_corpus.py --fetch \
+  --check-baseline research/real_world_baseline.json
+```
+
+The generated `.real-corpus-results/REPORT.md` separates frontend, SPIR-V,
+backend and uncaptured-source gaps. The checked-in baseline is a regression
+floor: a case that has once compiled may not silently fall back to red, while new
+passing cases can be added deliberately as coverage grows. vitaGL's generated
+fixed-function space is large, so its adapter uses a branch-oriented matrix of
+representative concrete states rather than claiming exhaustive GL-state coverage.
 
 ## Oracle research workflow
 

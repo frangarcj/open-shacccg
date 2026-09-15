@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "revisions": {
+    "dsvita": "ae36f93a231751c4b0ef2f6672d50e93a3a91dca",
+    "vitagl": "97c5087561ee2e948807f185c1827e8012610df2",
+    "geometrizer": "9440db112fb457d5d35ad33aefb645d13a377f8f"
+  },
+  "passing_cases": [
+    "dsvita:shaders__cg__capture_frag",
+    "dsvita:shaders__cg__overlay_frag",
+    "geometrizer:CMP_FS",
+    "geometrizer:POLY3D_VS",
+    "geometrizer:POLY_VS",
+    "geometrizer:TM2_FAST_FS",
+    "vitagl:precompiled_blit_f",
+    "vitagl:precompiled_clear_f"
+  ]
+}
