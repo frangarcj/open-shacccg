@@ -88,7 +88,10 @@ Related texture cleanup:
    GXP v1.5, flags `0x00180801`, SA=0, no data/container padding, and the
    16-entry sampler-query table (`0x0302` for a direct read). The older public
    libvita2d GXP remains a historical v1.4 fixture rather than the codegen target.
-2. Generalize predicated scalar/component selection only when another real
+2. `TextureTint2D` and its `SPRITECOORD` variant now also follow SDK 3.0.0
+   byte-for-byte: sampler query `0x0301`, SA=4, one uniform container, and the
+   VPCK/VPCK/V16NMAD multiply-pack stream selected by the newer compiler.
+3. Generalize predicated scalar/component selection only when another real
    shader needs it; do not replace the exact CMP shape with branch-heavy generic
    select lowering.
 

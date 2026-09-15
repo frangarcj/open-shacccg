@@ -144,16 +144,35 @@ int test_gxp() {
     }
 
     {
-        auto expected = load("texture_tint_f.gxp");
         vsc::backend::IrCompileResult generated;
         const std::vector<vsc::backend::IrUniformVec4> uniforms = {{"uTintColor",0}};
         const std::vector<vsc::backend::IrSampler2D> samplers = {{"tex",0}};
         if (!vsc::backend::compile_fragment_machine_profile(vsc::backend::FragmentMachineProfile::TextureTint2D,
-                uniforms,samplers,0x69742226,0x35cc6eed,generated)) failures += fail("texture_tint_f Machine profile compilation failed");
-        else if (generated.gxp.size()!=expected.size() || std::memcmp(generated.gxp.data(),expected.data(),expected.size())!=0) {
-            size_t first=0; while(first<generated.gxp.size() && first<expected.size() && generated.gxp[first]==expected[first]) ++first;
-            std::fprintf(stderr,"test_gxp: texture_tint_f Machine profile differs at 0x%zx (generated=%zu expected=%zu)\n",first,generated.gxp.size(),expected.size());
-            ++failures;
+                uniforms,samplers,0,0,generated)) failures += fail("texture_tint_f Machine profile compilation failed");
+        else {
+            ProgramView view(generated.gxp.data(),generated.gxp.size());
+            ParameterView tint{},tex{};
+            const auto query=view.sampler_query_info();
+            const auto code=view.primary_program();
+            uint16_t query0=0;
+            if (query.size>=sizeof(query0)) std::memcpy(&query0,query.data,sizeof(query0));
+            const uint64_t words[]={
+                0xfa44070000000000ULL,0xf800094000000000ULL,
+                0x40c00dbcff998002ULL,0x40800dbcafb98002ULL,
+                0x10a4478600040f7cULL,
+            };
+            if (!view.valid() || generated.gxp.size()!=324 || view.logical_size()!=323 ||
+                view.major_version()!=1 || view.minor_version()!=5 || view.sdk_version()!=0x0300 ||
+                view.flags()!=0x00180805 || view.primary_register_count()!=4 ||
+                view.secondary_register_count()!=4 || view.compiler_version_raw()!=0x00033a90 ||
+                view.container_count()!=1 || view.parameter_count()!=2 ||
+                !view.parameter(0,tint) || !view.parameter(1,tex) || tint.name!="uTintColor" ||
+                tint.category!=1 || tint.container_index!=14 || tint.resource_index!=0 ||
+                tex.name!="tex" || tex.category!=2 || tex.semantic!=1 || tex.resource_index!=0 ||
+                query.size!=32 || query0!=0x0301 || code.size!=sizeof(words) ||
+                std::memcmp(code.data,words,sizeof(words))!=0) {
+                failures += fail("texture_tint_f Machine profile does not match SDK 3.0.0 oracle");
+            }
         }
     }
 

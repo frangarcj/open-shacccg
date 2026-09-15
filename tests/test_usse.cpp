@@ -436,6 +436,15 @@ int test_usse() {
             !decode_v16nmad_div_f32_semantic(word,&decoded) || decoded.components!=components)
             failures += fail("oracle F32 division V16NMAD combine mismatch");
     }
+    {
+        uint64_t word=0;
+        V16NmadMulPackF32Semantic mul_pack{};
+        V16NmadMulPackF32Semantic decoded{};
+        if (!encode_v16nmad_mul_pack_f32_semantic(mul_pack,&word) ||
+            word!=0x10a4478600040f7cULL ||
+            !decode_v16nmad_mul_pack_f32_semantic(word,&decoded))
+            failures += fail("SDK 3.0 texture-tint V16NMAD multiply-pack mismatch");
+    }
     const uint64_t dot_combine_words[]={0x10c0418a00047f7cULL,0x10c0f38600047f3dULL};
     for (uint8_t components=2;components<=3;++components) {
         V16NmadDotSplatF32Semantic dot{components};

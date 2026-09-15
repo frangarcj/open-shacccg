@@ -1012,7 +1012,6 @@ int test_cg_frontend() {
     const PublicShader public_shaders[] = {
         {"clear_f", VSC_STAGE_FRAGMENT},
         {"color_f", VSC_STAGE_FRAGMENT},
-        {"texture_tint_f", VSC_STAGE_FRAGMENT},
         {"clear_v", VSC_STAGE_VERTEX},
         {"color_v", VSC_STAGE_VERTEX},
         {"texture_v", VSC_STAGE_VERTEX},
@@ -1036,6 +1035,34 @@ int test_cg_frontend() {
                 view.compiler_version_raw()==0x00033a90 && query.size==32 && query0==0x0302;
         }
         if (!ok) failures += fail("texture_f did not reproduce the SDK 3.0.0 standalone texture profile");
+        vsc_destroy_result(&request.allocator,&result);
+    }
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/research/public_samples/libvita2d/texture_tint_f.cg");
+        VscCompileRequest request{};
+        request.source_name="texture_tint_f.cg"; request.source=source.data(); request.source_size=source.size();
+        request.entrypoint="main"; request.stage=VSC_STAGE_FRAGMENT;
+        VscCompileResult result{};
+        bool ok=!source.empty() && vsc_compile(&request,&result)==0 && result.gxp_data && result.diagnostic_count==0;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            const auto query=view.sampler_query_info();
+            const auto code=view.primary_program();
+            uint16_t query0=0;
+            if (query.size>=sizeof(query0)) std::memcpy(&query0,query.data,sizeof(query0));
+            const uint64_t words[]={
+                0xfa44070000000000ULL,0xf800094000000000ULL,
+                0x40c00dbcff998002ULL,0x40800dbcafb98002ULL,
+                0x10a4478600040f7cULL,
+            };
+            ok=view.valid() && result.gxp_size==324 && view.logical_size()==323 &&
+                view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00180805 &&
+                view.primary_register_count()==4 && view.secondary_register_count()==4 &&
+                view.container_count()==1 && view.compiler_version_raw()==0x00033a90 &&
+                query.size==32 && query0==0x0301 && code.size==sizeof(words) &&
+                std::memcmp(code.data,words,sizeof(words))==0;
+        }
+        if (!ok) failures += fail("texture_tint_f did not reproduce the SDK 3.0.0 texture-tint profile");
         vsc_destroy_result(&request.allocator,&result);
     }
     const std::string control_source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-if-big.cg");
@@ -1354,7 +1381,14 @@ void main(float4 Nposition, float2 Otexcoord0, float4 Pcolor,
         if (ok) {
             vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
             const auto varying=view.varyings();
-            ok=view.valid() && view.flags()==0x00000821 && varying.size>=22 && varying.data[21]==0xfd;
+            const auto query=view.sampler_query_info();
+            uint16_t query0=0;
+            if (query.size>=sizeof(query0)) std::memcpy(&query0,query.data,sizeof(query0));
+            ok=view.valid() && result.gxp_size==320 && view.logical_size()==317 &&
+                view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00180825 &&
+                view.secondary_register_count()==4 && view.container_count()==1 &&
+                view.compiler_version_raw()==0x00033a90 && varying.size>=22 && varying.data[21]==0xfd &&
+                query.size==32 && query0==0x0301;
         }
         if (!ok) failures += fail("Cg SPRITECOORD texture-tint profile did not compile with point-sprite metadata");
         vsc_destroy_result(&request.allocator,&result);

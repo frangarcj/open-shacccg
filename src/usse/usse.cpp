@@ -541,6 +541,16 @@ bool decode_v16nmad_div_f32_semantic(uint64_t word, V16NmadDivF32Semantic *i) {
     return true;
 }
 
+bool encode_v16nmad_mul_pack_f32_semantic(const V16NmadMulPackF32Semantic &, uint64_t *word) {
+    if (!word) return false;
+    *word=0x10a4478600040f7cULL;
+    return true;
+}
+
+bool decode_v16nmad_mul_pack_f32_semantic(uint64_t word, V16NmadMulPackF32Semantic *i) {
+    return i && word==0x10a4478600040f7cULL;
+}
+
 bool encode_v16nmad_dot_splat_f32_semantic(const V16NmadDotSplatF32Semantic &i, uint64_t *word) {
     if (!word) return false;
     if (i.components==2) *word=0x10c0418a00047f7cULL;

@@ -87,9 +87,9 @@ Implemented now:
   Typed/Machine loop state, signed-32 `i<n` VTST, I32MAD2 counter update/feed-through and BR back-edges
 - structured fragment `if/else` from glslang: two-way `OpPhi` values that feed COLOR0 are
   sunk into branch-local output packs, so real Cg conditionals reach Machine BR/GXP without a physical phi opcode
-- all seven public libvita2d Cg shaders pass through the Typed Vita IR path; six generated GXPs
+- all seven public libvita2d Cg shaders pass through the Typed Vita IR path; five generated GXPs
   remain byte-identical to the preserved historical samples outside Sony's two GUID fields, while
-  standalone `texture_f` now targets the newer SDK 3.0.0 v1.5 layout byte-for-byte
+  `texture_f` and `texture_tint_f` now target the newer SDK 3.0.0 v1.5 layouts byte-for-byte
 - frontend -> SPIR-V and SPIR-V -> Vita IR -> USSE/GXP boundaries
 - independent structured GXP reader for real Vita program images
 - canonical GXP serializer for interface data, primary/secondary code, parameter containers,
@@ -487,11 +487,12 @@ public vertex GXPs.
 
 The validated fragment profiles are likewise emitted directly from Typed/Machine
 IR: uniform color (`clear_f`), varying color (`color_f`), dependent texture
-(`texture_f`) and texture multiplied by a float4 tint (`texture_tint_f`). The
-dependent texture form intentionally emits no SMP instruction because the
-public shader contains none; texture-unit/interface metadata represents that
-handoff, and the Machine IR `DependentSample` pseudo-op exists only to model the
-value lifetime. The `clear_f` secondary F32->F16 VPCK keeps its observed
+(`texture_f`) and texture multiplied by a float4 tint (`texture_tint_f`). The two
+texture profiles now follow the SDK 3.0.0 v1.5 oracle: direct reads carry sampler
+query `0x0302`, tint/dependent reads carry `0x0301`, and the tint path stages
+SA0/1 and PA0/1 through two semantic VPCKs before the validated four-lane
+V16NMAD multiply-pack. `SPRITECOORD` uses the same stream with its point-sprite
+interface/flag metadata. The `clear_f` secondary F32->F16 VPCK keeps its observed
 overlapping secondary-code layout.
 
 Generic fragment arithmetic also stays in Typed/Machine IR rather than building

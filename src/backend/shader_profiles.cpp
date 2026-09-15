@@ -2301,27 +2301,11 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
             out.error="texture-tint fragment profile requires one float4 uniform and one sampler2D at resource 0";
             return false;
         }
-        const auto sample_gpi=primary.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
-        const auto sample_temp=primary.make_value<MachineType::F32>(
-            MachineRegisterClass::FloatTemp,2,MachineRegisterOrder::High);
-        const auto tinted=primary.make_value<MachineType::F32>(
-            MachineRegisterClass::FloatTemp,2,MachineRegisterOrder::High);
-        if (sample_gpi.kind()==MachineOperandKind::None || sample_temp.kind()==MachineOperandKind::None ||
-            tinted.kind()==MachineOperandKind::None || !primary.emit<MachineOpcode::Nop>() ||
-            !primary.emit_config<MachineOpcode::Pack>(
-                machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F32),
-                machine_pack_config(0xF),sample_gpi,
-                primary.physical(machine_primary(0),MachineType::F32),
-                primary.physical(machine_primary(1),MachineType::F32)) ||
-            !primary.emit<MachineOpcode::DependentSample>(0,sample_temp,sample_gpi) ||
-            !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Mul),
-                machine_vector_config(0xF),tinted,
-                primary.physical(machine_secondary(0),MachineType::F32),sample_temp) ||
-            !primary.emit_config<MachineOpcode::Pack>(
-                machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F16),
-                machine_pack_config(0xF,true,false),
-                primary.physical(machine_fragment_output(0),MachineType::F16),tinted,
-                primary.physical(machine_immediate(0),MachineType::F32))) {
+        if (!primary.emit<MachineOpcode::Nop>() ||
+            !primary.emit<MachineOpcode::MulPackF32>(4,
+                primary.physical(machine_fragment_output(0),MachineType::F16),
+                primary.physical(machine_secondary(0),MachineType::F32),
+                primary.physical(machine_primary(0),MachineType::F32))) {
             out.error="failed to build texture-tint Machine IR";
             return false;
         }
@@ -2330,16 +2314,22 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
         fragment_extension[0]=0x30;
         image.fragment_interface_extension=fragment_extension;
         image.fragment_interface_extension_size=sizeof(fragment_extension);
-        containers={{14,0,0,4},{19,0,4,2}};
+        containers={{14,0,0,4}};
         parameters.push_back({uniforms[0].name.c_str(),1,0,4,14,0,0,1,0});
         parameters.push_back({samplers[0].name.c_str(),2,0,4,0,1,0,1,0});
-        image.program_flags=samplers[0].point_coord ? 0x821 : 0x801;
+        sampler_query_info[0]=0x0301;
+        image.minor_version=5;
+        image.sdk_version=0x0300;
+        image.program_flags=0x00180804 | (samplers[0].point_coord ? 0x20u : 0u);
         image.buffer_flags=0x10000000;
         image.texunit_flags[0]=1;
         image.primary_register_count=4;
-        image.secondary_register_count=6;
+        image.secondary_register_count=4;
+        image.data_buffer_count=0;
         image.default_uniform_buffer_count=4;
-        image.compiler_version_raw=4;
+        image.compiler_version_raw=0x00033a90;
+        image.sampler_query_info=sampler_query_info.data();
+        image.sampler_query_info_count=sampler_query_info.size();
         break;
     }
 

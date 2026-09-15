@@ -139,6 +139,26 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        if (!program.emit<MachineOpcode::MulPackF32>(4,
+                program.physical(machine_fragment_output(0),MachineType::F16),
+                program.physical(machine_secondary(0),MachineType::F32),
+                program.physical(machine_primary(0),MachineType::F32))) {
+            failures += fail("could not construct SDK 3.0 texture-tint multiply-pack Machine IR");
+        } else {
+            MachineCompileResult result;
+            const uint64_t expected[]={
+                0x40c00dbcff998002ULL,
+                0x40800dbcafb98002ULL,
+                0x10a4478600040f7cULL,
+            };
+            if (!compile_machine_program(program,result) || result.words.size()!=std::size(expected) ||
+                !std::equal(result.words.begin(),result.words.end(),std::begin(expected)))
+                failures += fail("SDK 3.0 texture-tint multiply-pack Machine words mismatch oracle");
+        }
+    }
+
+    {
+        MachineProgram program;
         const auto uniform=program.physical(machine_primary(0),MachineType::F32);
         const auto y=program.physical(machine_primary(0),MachineType::F32,1);
         const auto x=program.physical(machine_primary(0),MachineType::F32,0);

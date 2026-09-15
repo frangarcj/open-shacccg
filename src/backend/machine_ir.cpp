@@ -753,7 +753,8 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
         else if (program.instructions()[i].opcode()==MachineOpcode::DivF32) {
             const uint8_t components=program.instructions()[i].subop();
             words=(components>=1 && components<=4) ? static_cast<uint32_t>(components+2) : 1;
-        } else if (program.instructions()[i].opcode()==MachineOpcode::DotSplatF32) words=3;
+        } else if (program.instructions()[i].opcode()==MachineOpcode::MulPackF32) words=3;
+        else if (program.instructions()[i].opcode()==MachineOpcode::DotSplatF32) words=3;
         else if (program.instructions()[i].opcode()==MachineOpcode::F32ToS32Color) words=3;
         else if (program.instructions()[i].opcode()==MachineOpcode::S32ToF32Scalar) words=9;
         else if (program.instructions()[i].opcode()==MachineOpcode::S32x2ColorPack) words=2;
@@ -1098,6 +1099,41 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             usse::V16NmadDivF32Semantic combine{components};
             if (!staged || !builder.instruction(combine)) {
                 out.error="failed to encode F32 division stage/combine";
+                return false;
+            }
+            break;
+        }
+        case MachineOpcode::MulPackF32: {
+            usse::RegisterRef dst{},lhs{},rhs{};
+            if (instruction.subop()!=4 || guard!=usse::Predicate::Always ||
+                !resolve_register_value(instruction.dst,MachineType::F16,out.value_registers,&dst) ||
+                !resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&lhs) ||
+                !resolve_register_value(instruction.src1,MachineType::F32,out.value_registers,&rhs) ||
+                dst.bank!=usse::RegisterBank::PrimaryAttribute || dst.num!=0 ||
+                lhs.bank!=usse::RegisterBank::SecondaryAttribute || lhs.num!=0 ||
+                rhs.bank!=usse::RegisterBank::PrimaryAttribute || rhs.num!=0) {
+                out.error="F32 multiply-pack requires fragment output0, SA0 tint and PA0 sampled color";
+                return false;
+            }
+            usse::VpckSemantic uniform_stage{};
+            uniform_stage.dst={usse::RegisterBank::Temp,124};
+            uniform_stage.src1=lhs;
+            uniform_stage.src2={lhs.bank,static_cast<uint8_t>(lhs.num+1)};
+            uniform_stage.src_format=usse::PackFormat::F32;
+            uniform_stage.dst_format=usse::PackFormat::F32;
+            uniform_stage.dest_mask=0xF;
+            uniform_stage.skip_invalid=true;
+            uniform_stage.no_schedule=true;
+
+            usse::VpckSemantic sample_stage=uniform_stage;
+            sample_stage.dst={usse::RegisterBank::Temp,125};
+            sample_stage.src1=rhs;
+            sample_stage.src2={rhs.bank,static_cast<uint8_t>(rhs.num+1)};
+            sample_stage.no_schedule=false;
+
+            if (!builder.instruction(uniform_stage) || !builder.instruction(sample_stage) ||
+                !builder.instruction(usse::V16NmadMulPackF32Semantic{})) {
+                out.error="failed to encode SDK 3.0 F32 texture-tint multiply-pack";
                 return false;
             }
             break;

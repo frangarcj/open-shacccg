@@ -160,6 +160,12 @@ struct VcompF32Semantic {
 // numerator staging. Kept narrow until the general V16NMAD layout is anchored.
 struct V16NmadDivF32Semantic { uint8_t components = 4; };
 
+// Fixed four-lane multiply/pack form observed in SDK 3.0.0 texture-tint
+// fragments after staging the uniform in TEMP124 and the sampled color in
+// TEMP125. Keep it distinct from division even though the final raw word is
+// shared by the currently validated four-lane forms.
+struct V16NmadMulPackF32Semantic {};
+
 // Fixed final reductions for the oracle dot-splat float2/float3 profiles.
 struct V16NmadDotSplatF32Semantic { uint8_t components = 2; };
 
@@ -609,6 +615,8 @@ bool encode_vcomp_f32_semantic(const VcompF32Semantic &instruction, uint64_t *wo
 bool decode_vcomp_f32_semantic(uint64_t word, VcompF32Semantic *instruction);
 bool encode_v16nmad_div_f32_semantic(const V16NmadDivF32Semantic &, uint64_t *word);
 bool decode_v16nmad_div_f32_semantic(uint64_t word, V16NmadDivF32Semantic *instruction);
+bool encode_v16nmad_mul_pack_f32_semantic(const V16NmadMulPackF32Semantic &, uint64_t *word);
+bool decode_v16nmad_mul_pack_f32_semantic(uint64_t word, V16NmadMulPackF32Semantic *instruction);
 bool encode_v16nmad_dot_splat_f32_semantic(const V16NmadDotSplatF32Semantic &, uint64_t *word);
 bool decode_v16nmad_dot_splat_f32_semantic(uint64_t word, V16NmadDotSplatF32Semantic *instruction);
 bool encode_v16nmad_f32_to_s32_semantic(const V16NmadF32ToS32Semantic &, uint64_t *word);
@@ -647,6 +655,7 @@ inline bool encode_semantic(const VcompRcpF32Semantic &i, uint64_t *word) { retu
 inline bool encode_semantic(const VcompRcpScalarF32Semantic &i, uint64_t *word) { return encode_vcomp_rcp_scalar_f32_semantic(i, word); }
 inline bool encode_semantic(const VcompF32Semantic &i, uint64_t *word) { return encode_vcomp_f32_semantic(i, word); }
 inline bool encode_semantic(const V16NmadDivF32Semantic &i, uint64_t *word) { return encode_v16nmad_div_f32_semantic(i, word); }
+inline bool encode_semantic(const V16NmadMulPackF32Semantic &i, uint64_t *word) { return encode_v16nmad_mul_pack_f32_semantic(i, word); }
 inline bool encode_semantic(const V16NmadDotSplatF32Semantic &i, uint64_t *word) { return encode_v16nmad_dot_splat_f32_semantic(i, word); }
 inline bool encode_semantic(const V16NmadF32ToS32Semantic &i, uint64_t *word) { return encode_v16nmad_f32_to_s32_semantic(i, word); }
 inline bool encode_semantic(const VpckS32x2ColorSemantic &i, uint64_t *word) { return encode_vpck_s32x2_color_semantic(i, word); }
