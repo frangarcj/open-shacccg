@@ -144,6 +144,28 @@ O main(float3 a_pos:TEXCOORD0, float4 a_color:TEXCOORD1) {
     return o;
 }
 """, "integration", project="geometrizer", shader="POLY_VS")
+    emit(root, manifest, "vp-geometrizer-poly3d", "sce_vp_psp2", """
+struct O { float4 position:POSITION; float4 color:COLOR0; };
+O main(float4 a_m0:TEXCOORD0, float4 a_m1:TEXCOORD1, float4 a_m2:TEXCOORD2,
+       float4 a_pos:TEXCOORD3, float4 a_color:COLOR0,
+       uniform float2 u_xc, uniform float2 u_zoom, uniform float2 u_view,
+       uniform float2 u_screen, uniform float u_z_max) {
+    O o;
+    float4 ph=float4(a_pos.xyz,1.0);
+    float vx=dot(a_m0,ph);
+    float vy=dot(a_m1,ph);
+    float vz=dot(a_m2,ph);
+    float ax=(u_xc.x+u_view.x)*2.0/u_screen.x-1.0;
+    float bx=u_zoom.x*2.0/u_screen.x;
+    float ay=1.0-(u_xc.y-u_view.y)*2.0/u_screen.y;
+    float by=u_zoom.y*2.0/u_screen.y;
+    float zn=log2(1.0+clamp(a_pos.w,0.0,u_z_max))*0.0602059935;
+    float clip_z=zn*1.998-1.0;
+    o.position=float4(ax*vz+bx*vx,ay*vz+by*vy,clip_z*vz,vz);
+    o.color=a_color;
+    return o;
+}
+""", "integration", project="geometrizer", shader="POLY3D_VS")
 
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
     print(f"generated {len(manifest)} shaders in {root}")

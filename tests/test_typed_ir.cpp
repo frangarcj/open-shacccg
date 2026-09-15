@@ -562,6 +562,32 @@ int test_typed_ir() {
 
     {
         TypedProgram program;
+        const auto source=program.input<TypedType::F32x4>(0);
+        const auto lhs=program.input<TypedType::F32x4>(1);
+        std::array<TypedValue,4> lanes{};
+        bool built=true;
+        for (uint8_t lane=0;lane<4;++lane) {
+            lanes[lane]=program.make_value<TypedType::F32>();
+            built = built && lanes[lane].kind()!=TypedValueKind::None &&
+                program.emit<TypedOpcode::FloatExtract>(lane,lanes[lane],source);
+        }
+        const auto composite=built ? program.compose_f32x4(lanes) : TypedValue{};
+        const auto dot=program.make_value<TypedType::F32>();
+        built = built && composite.kind()!=TypedValueKind::None && dot.kind()!=TypedValueKind::None &&
+            program.emit<TypedOpcode::FloatBinary>(static_cast<uint8_t>(TypedFloatOp::Dot),dot,lhs,composite);
+        MachineCompileResult result;
+        usse::V32NmadSemantic dot_op{};
+        if (!built || !compile_typed_program(program,result) || result.words.size()!=5 ||
+            usse::classify_major(result.words[0])!=usse::MajorClass::Vmov ||
+            usse::classify_major(result.words[1])!=usse::MajorClass::Vmov ||
+            usse::classify_major(result.words[2])!=usse::MajorClass::Vmov ||
+            usse::classify_major(result.words[3])!=usse::MajorClass::Vmov ||
+            !usse::decode_v32nmad_semantic(result.words[4],&dot_op) || dot_op.op!=usse::VectorOp::Dot)
+            failures += fail("typed intermediate float4 compose did not materialize for dot consumption");
+    }
+
+    {
+        TypedProgram program;
         const auto source = program.input<TypedType::F32x4>(0);
         const auto dst = program.make_value<TypedType::F16x4>();
         program.emit<TypedOpcode::FloatConvert>(

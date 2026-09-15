@@ -58,6 +58,10 @@ Implemented now:
   end to end: packed float uniforms, dynamic clamp, `log2`, projection math, composed POSITION
   and COLOR passthrough all reach generic Machine/GXP lowering. Open intentionally uses a
   longer primary-only schedule than Sony's VMAD2/secondary-optimized program for now
+- Geometrizer `POLY3D_VS` now compiles through that same generic path with five float4
+  attributes, five packed float uniforms, `float4(xyz,1)` materialization and three dot
+  products; resource flags/semantics/PA layout match the Sony oracle. Remaining instruction
+  selection/scheduling work is tracked in `research/OPTIMIZATION_BACKLOG.md`
 - oracle-exact fragment profiles for `wzyx` and the constant `float4(1,0,0,1)`,
   including swizzled VPCK, literal-table placement and the primary/interface overlap convention
 - oracle-exact standalone vertex profiles for float4 position passthrough,

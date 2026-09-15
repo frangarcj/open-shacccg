@@ -454,6 +454,16 @@ component extraction, scalar F32 literals backed by the GXP literal table, dynam
 MAX/MIN clamp lowering and float4 composition via a Typed side table. The hot Typed
 and Machine instruction records remain 16 bytes.
 
+`POLY3D_VS` is the second production-shaped target and now compiles through the
+same generic path. It expands the interface to five float4 attributes and five
+float uniforms, materializes the intermediate `float4(a_pos.xyz,1)` only because
+the value feeds three dot products, and preserves Sony's observable resource
+metadata: program flags `0x00090004`, PA=20, TEXCOORD0..3 + COLOR0 semantics and
+uniform word offsets 0/2/4/6/8. Sony emits 20 primary + 10 secondary instructions;
+Open currently emits a deliberately unoptimized 43-word primary program and no
+secondary stream. Code-size/scheduling differences are tracked separately in
+`research/OPTIMIZATION_BACKLOG.md` so they do not obscure correctness coverage.
+
 Backend fallback diagnostics now retain the SPIRV-Cross Typed-path failure when
 the dependency-free parser also rejects a shader, so future oracle sweeps expose
 the actual higher-level coverage gap instead of only the final fallback error.
@@ -467,8 +477,8 @@ not byte identity.
 2. **Complete structured control flow.** BR forward/backward offsets, six F32 VTST compares, direct COLOR0 two-way phi merge, output `OpSelect` and positive-step dynamic loops are validated; the control corpus is 12/12. Next generalize remaining phi consumers and derive decrement/other loop-update profiles from oracle probes.
 3. **Integer data movement/conversion.** Integer oracle coverage is 11/11 exact: scalar S32 uniform pass/AND/OR/XOR/SHL/ASR, scalar attribute F32->S32, scalar uniform S32->F32, plus int2 uniform pass/OR. Next derive int4/bitcast profiles; source-level `uint` is not a Sony Cg spelling, so unsigned coverage should be driven by SPIR-V/HLSL evidence.
 4. **Texture expansion.** Move beyond the validated dependent-sampler texture shape: SMP, integer texture results, gather and multiple samplers.
-5. **Common missing ALU families.** The 77-case ALU language corpus is complete. Next prioritize VMAD2/VDUAL/V16 optimization profiles only where they improve real shaders, while expanding texture/integer coverage from new oracle probes.
-6. **Resource/reflection generalization.** Derive register counts, parameter types, containers, uniform buffers, literals and dependent samplers from IR instead of current sample-shaped layouts.
+5. **Common missing ALU families.** The 77-case ALU language corpus is complete. Next prioritize VMAD2/VDUAL/V16 optimization profiles only where they improve real shaders; concrete codegen debt lives in `research/OPTIMIZATION_BACKLOG.md`.
+6. **Resource/reflection generalization.** Generic vertex attributes now derive masks, PA counts, semantics and the `0x4` large-input flag from IR. Continue with uniform buffers, sampler tables and non-COLOR varying layouts instead of sample-shaped metadata.
 7. **Hardware gate.** Treat a capability as complete only after host regressions plus real-Vita `sceGxmProgramCheck`/render validation where possible.
 
 ## Definition of progress

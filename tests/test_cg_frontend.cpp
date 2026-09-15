@@ -345,6 +345,53 @@ bool compile_geometrizer_poly_vertex(const std::string &source) {
     return ok;
 }
 
+bool compile_geometrizer_poly3d_vertex(const std::string &source) {
+    VscCompileRequest request{};
+    request.source_name="vp-geometrizer-poly3d.cg";
+    request.source=source.data();
+    request.source_size=source.size();
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_VERTEX;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+    if (ok) {
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        ok=view.valid() && view.sdk_version()==0x0165 && view.flags()==0x00090004 &&
+            view.primary_register_count()==20 && view.secondary_register_count()>=13 &&
+            view.parameter_count()==10 && view.literal_count()>=3 &&
+            view.primary_instruction_count()>=20;
+        const char *names[]={"a_m0","a_m1","a_m2","a_pos","a_color",
+                             "u_xc","u_zoom","u_view","u_screen","u_z_max"};
+        const uint32_t resources[]={0,4,8,12,16,0,2,4,6,8};
+        const uint8_t semantics[]={14,14,14,14,6,0,0,0,0,0};
+        const uint8_t semantic_indices[]={0,1,2,3,0,0,0,0,0,0};
+        for (uint32_t i=0;ok && i<10;++i) {
+            vsc::gxp::ParameterView parameter{};
+            ok=view.parameter(i,parameter) && parameter.name==names[i] &&
+                parameter.resource_index==resources[i] && parameter.semantic==semantics[i] &&
+                parameter.semantic_index==semantic_indices[i];
+        }
+        bool vcomp=false,v32=false,vmov=false,emit=false;
+        const auto code=view.primary_program();
+        for (size_t off=0;ok && off+sizeof(uint64_t)<=code.size;off+=sizeof(uint64_t)) {
+            uint64_t word=0;
+            std::memcpy(&word,code.data+off,sizeof(word));
+            const auto family=vsc::usse::classify_major(word);
+            vcomp |= family==vsc::usse::MajorClass::Vcomp;
+            v32 |= family==vsc::usse::MajorClass::V32Nmad;
+            vmov |= family==vsc::usse::MajorClass::Vmov;
+            emit |= vsc::usse::classify_control(word)==vsc::usse::ControlClass::Emit;
+        }
+        ok=ok && vcomp && v32 && vmov && emit;
+    }
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: Geometrizer POLY3D_VS diagnostic=%s\n",
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
+
 bool compile_oracle_s32_profile(const std::string &source, const char *name,
                                 uint32_t expected_size, uint32_t expected_params,
                                 const uint64_t *secondary_words, size_t secondary_count) {
@@ -562,6 +609,11 @@ int test_cg_frontend() {
         const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/vp-geometrizer-poly.cg");
         if (source.empty() || !compile_geometrizer_poly_vertex(source))
             failures += fail("Geometrizer POLY_VS integration profile did not compile through generic vertex Machine IR");
+    }
+    {
+        const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/vp-geometrizer-poly3d.cg");
+        if (source.empty() || !compile_geometrizer_poly3d_vertex(source))
+            failures += fail("Geometrizer POLY3D_VS integration profile did not compile through generic vertex Machine IR");
     }
     {
         const char *alu_probes[]={

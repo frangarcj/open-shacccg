@@ -687,11 +687,47 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 error="typed float4 compose side-table entry is invalid";
                 return false;
             }
-            for (const auto component:typed.float4_composites()[instruction.aux]) {
+            const auto &components=typed.float4_composites()[instruction.aux];
+            for (const auto component:components) {
                 if (!valid_value_use(typed,component,value_types,value_defined)) {
                     error="typed float4 compose has an unresolved scalar component";
                     return false;
                 }
+            }
+            bool materialize=false;
+            for (uint32_t use_index=instruction_index+1;use_index<typed.instructions().size();++use_index) {
+                const auto &use=typed.instructions()[use_index];
+                if ((use.src0.bits==instruction.dst.bits || use.src1.bits==instruction.dst.bits) &&
+                    use.opcode()!=TypedOpcode::StoreOutput) {
+                    materialize=true;
+                    break;
+                }
+            }
+            if (materialize) {
+                const auto dst=machine.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+                if (dst.kind()==MachineOperandKind::None) {
+                    error="failed to allocate materialized float4 compose";
+                    return false;
+                }
+                for (uint8_t lane=0;lane<4;++lane) {
+                    const auto src=lower_value(typed,components[lane],values,literals,machine);
+                    if (src.kind()==MachineOperandKind::None || src.type()!=MachineType::F32) {
+                        error="failed to lower float4 compose scalar component";
+                        return false;
+                    }
+                    uint8_t swizzle=0;
+                    if (src.kind()==MachineOperandKind::PhysicalValue && src.physical_component()!=0xff)
+                        swizzle=src.physical_component();
+                    const uint16_t config=machine_move_config(static_cast<uint8_t>(1u<<lane),swizzle);
+                    const bool emitted=lane==0 ?
+                        machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),config,dst,src) :
+                        machine.emit_config<MachineOpcode::MoveUpdate>(static_cast<uint8_t>(usse::DataType::F32),config,dst,src);
+                    if (!emitted) {
+                        error="failed to materialize float4 compose component";
+                        return false;
+                    }
+                }
+                values[instruction.dst.id()]=dst;
             }
             value_types[instruction.dst.id()]=TypedType::F32x4;
             value_defined[instruction.dst.id()]=true;
@@ -906,8 +942,15 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             }
             const uint32_t attribute = static_cast<uint32_t>(vertex_attributes.size());
             attribute_for_value[resource->value.id()] = attribute;
+            uint8_t gxp_semantic=14;
+            uint8_t gxp_semantic_index=resource->semantic_index;
+            if (resource->semantic==TypedSemantic::Color) gxp_semantic=6;
+            else if (resource->semantic==TypedSemantic::Position) gxp_semantic=11;
+            else if (resource->semantic==TypedSemantic::None)
+                gxp_semantic_index=static_cast<uint8_t>(resource->index);
             vertex_attributes.push_back({shader.resource_name(*resource), components,
-                                         static_cast<uint32_t>(resource->index) * 4u});
+                                         static_cast<uint32_t>(resource->index) * 4u,
+                                         gxp_semantic,gxp_semantic_index});
         }
 
         std::unordered_map<uint16_t, uint32_t> matrix_for_resource;
@@ -1000,7 +1043,7 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         if (generic_position) {
             if (passthrough_position || constructed_position || transformed_position || !vertex_matrices.empty() ||
                 !varying_written || varying_attribute>=vertex_attributes.size() ||
-                selected_varying_semantic!=IrVaryingSemantic::Color || vertex_attributes.size()!=2 ||
+                selected_varying_semantic!=IrVaryingSemantic::Color || vertex_attributes.size()<2 ||
                 position_compose>=program.float4_composites().size()) {
                 out.error="generic vertex POSITION+COLOR shape is outside the validated Geometrizer subset";
                 return false;
@@ -1016,7 +1059,9 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 uniform_meta.push_back({shader.resource_name(*uniform),components,uniform->index});
                 uniform_words=std::max<uint32_t>(uniform_words,static_cast<uint32_t>(uniform->index)+components);
             }
-            uniform_words=(uniform_words+3u)&~3u;
+            // SA registers contain two F32 words. Sony pads the default uniform
+            // footprint to that register boundary (3 -> 4, 9 -> 10), not vec4.
+            uniform_words=(uniform_words+1u)&~1u;
             if (uniform_words>=254) { out.error="generic vertex uniform footprint exceeds compact SA subset"; return false; }
 
             MachineProgram primary;

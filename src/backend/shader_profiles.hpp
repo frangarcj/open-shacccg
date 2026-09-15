@@ -12,6 +12,8 @@ struct IrAttribute {
     std::string name;
     uint8_t components = 4; // logical source width (GXP reflection remains vec4)
     uint32_t resource_index = 0;
+    uint8_t semantic = 14; // GXP TEXCOORD by default
+    uint8_t semantic_index = 0;
 };
 
 struct IrMatrix4Uniform {

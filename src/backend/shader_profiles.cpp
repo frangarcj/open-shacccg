@@ -300,17 +300,26 @@ bool compile_vertex_generic_machine(const MachineProgram &primary,
                                     uint32_t binary_guid, uint32_t source_guid,
                                     IrCompileResult &out) {
     out={};
-    if (attributes.size()!=2 || varying_semantic!=IrVaryingSemantic::Color ||
-        attributes[0].resource_index!=0 || attributes[1].resource_index!=4 ||
-        attributes[1].components!=4) {
-        out.error="generic vertex profile currently requires position data at attr0 plus float4 COLOR attr1";
+    if (attributes.size()<2 || varying_semantic!=IrVaryingSemantic::Color) {
+        out.error="generic vertex profile requires at least two attributes and a COLOR output";
         return false;
+    }
+    uint32_t primary_words=0;
+    for (size_t i=0;i<attributes.size();++i) {
+        const auto &attribute=attributes[i];
+        if (!valid_attribute(attribute) || attribute.resource_index!=i*4u ||
+            attribute.semantic_index>15) {
+            out.error="generic vertex attributes must be contiguous 4-word resources with encodable semantics";
+            return false;
+        }
+        primary_words=std::max(primary_words,attribute.resource_index+4u);
     }
     uint32_t uniform_words=0;
     std::vector<gxp::ParameterDesc> parameters;
     parameters.reserve(attributes.size()+uniforms.size());
-    parameters.push_back({attributes[0].name.c_str(),0,0,4,0,14,0,1,0});
-    parameters.push_back({attributes[1].name.c_str(),0,0,4,0,14,1,1,4});
+    for (const auto &attribute:attributes)
+        parameters.push_back({attribute.name.c_str(),0,0,4,0,attribute.semantic,
+                              attribute.semantic_index,1,attribute.resource_index});
     for (const auto &uniform:uniforms) {
         if (uniform.name.empty() || uniform.components<1 || uniform.components>4) {
             out.error="generic vertex uniform metadata is invalid";
@@ -320,7 +329,7 @@ bool compile_vertex_generic_machine(const MachineProgram &primary,
         uniform_words=std::max(uniform_words,end);
         parameters.push_back({uniform.name.c_str(),1,0,uniform.components,14,0,0,1,uniform.resource_index});
     }
-    uniform_words=(uniform_words+3u)&~3u;
+    uniform_words=(uniform_words+1u)&~1u;
     if (uniform_words>0xffffu || uniform_words+literal_values.size()>0xffffu) {
         out.error="generic vertex secondary-attribute footprint is too large";
         return false;
@@ -344,7 +353,12 @@ bool compile_vertex_generic_machine(const MachineProgram &primary,
     if (!compile_words(primary,compiled,out,"generic vertex Machine IR lowering failed")) return false;
 
     uint8_t interface_block[32]{};
-    interface_block[0]=0xf7;
+    for (size_t i=0;i<attributes.size();++i) {
+        const uint8_t mask=static_cast<uint8_t>((1u<<attributes[i].components)-1u);
+        const size_t byte=i/2u;
+        if (byte>=16) { out.error="generic vertex interface exceeds validated attribute mask area"; return false; }
+        interface_block[byte]|=static_cast<uint8_t>(mask<<((i&1u)*4u));
+    }
     interface_block[16]=0x00; interface_block[17]=0x18;
     interface_block[18]=0x00; interface_block[19]=0x08;
 
@@ -353,9 +367,9 @@ bool compile_vertex_generic_machine(const MachineProgram &primary,
     image.sdk_version=0x0165;
     image.binary_guid=binary_guid;
     image.source_guid=source_guid;
-    image.program_flags=0x00090000;
+    image.program_flags=0x00090000 | (primary_words>8 ? 0x4u : 0u);
     image.buffer_flags=0x10000000;
-    image.primary_register_count=8;
+    image.primary_register_count=static_cast<uint16_t>(primary_words);
     image.secondary_register_count=static_cast<uint16_t>(uniform_words+literal_values.size());
     image.primary_phase_count=1;
     image.data_buffer_count=4;

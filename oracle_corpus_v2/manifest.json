@@ -840,5 +840,13 @@
     "feature": "integration",
     "project": "geometrizer",
     "shader": "POLY_VS"
+  },
+  {
+    "name": "vp-geometrizer-poly3d",
+    "file": "vp-geometrizer-poly3d.cg",
+    "profile": "sce_vp_psp2",
+    "feature": "integration",
+    "project": "geometrizer",
+    "shader": "POLY3D_VS"
   }
 ]
