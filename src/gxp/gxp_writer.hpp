@@ -92,6 +92,10 @@ struct ProgramImage {
     // oracle coverage anchors homogeneous F32 widths and up to Locations 1/2.
     uint8_t fragment_additional_inputs = 0;
     uint8_t fragment_input_components = 4;
+    // Optional exact 16-byte records for additional fragment iterators. When
+    // null, the writer synthesizes the validated homogeneous Location1/2 form.
+    const uint8_t *fragment_additional_input_records = nullptr;
+    size_t fragment_additional_input_records_size = 0;
 
     // Oracle-observed constant-fragment layout: the first primary qword starts
     // at interface+0x18 and therefore occupies the final 8 bytes of the

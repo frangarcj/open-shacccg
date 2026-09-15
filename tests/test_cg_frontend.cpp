@@ -914,6 +914,20 @@ int test_cg_frontend() {
             "float main(float x:TEXCOORD0):COLOR0{return exp(x);}",
             "scalar-exp.cg"))
         failures += fail("scalar Exp did not lower through LOG2E + Exp2 VCOMP");
+    {
+        vsc::backend::IrCompileResult combined;
+        if (!vsc::backend::compile_fragment_two_texture_combine({"tex1",1},{"tex2",2},0,0,combined)) {
+            failures += fail("TEXUNIT1/2 semantic combine profile did not compile");
+        } else {
+            vsc::gxp::ProgramView view(combined.gxp.data(),combined.gxp.size());
+            vsc::gxp::ParameterView tex1{},tex2{};
+            if (!view.valid() || view.flags()!=0x00080801 || view.primary_register_count()!=8 ||
+                view.secondary_register_count()!=0 || view.primary_instruction_count()!=9 ||
+                view.parameter_count()!=2 || !view.parameter(0,tex1) || !view.parameter(1,tex2) ||
+                tex1.category!=2 || tex1.resource_index!=1 || tex2.category!=2 || tex2.resource_index!=2)
+                failures += fail("TEXUNIT1/2 semantic combine metadata mismatch");
+        }
+    }
     if (!compile_matrix_point_size_profile(false))
         failures += fail("oracle matrix + uniform PSIZE vertex profile did not reproduce the validated stream");
     if (!compile_matrix_point_size_profile(true))

@@ -2431,6 +2431,60 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         }
     }
 
+    if (root_def->opcode()==TypedOpcode::FloatCompose && root_def->aux<program.float4_composites().size() &&
+        samplers.size()==2 && fragment_samplers.size()==2 && uniforms.empty()) {
+        const auto &components=program.float4_composites()[root_def->aux];
+        const TypedInstruction *rgb_source=nullptr;
+        bool rgb_ok=true;
+        for (uint8_t lane=0;lane<3;++lane) {
+            const auto *extract=definition(components[lane]);
+            if (!extract || extract->opcode()!=TypedOpcode::FloatExtract || extract->subop()!=lane) {
+                rgb_ok=false; break;
+            }
+            if (!rgb_source) rgb_source=definition(extract->src0);
+            else if (extract->src0.bits!=rgb_source->dst.bits) { rgb_ok=false; break; }
+        }
+        const auto *alpha_mul=definition(components[3]);
+        if (rgb_ok && rgb_source && rgb_source->opcode()==TypedOpcode::FloatUnary &&
+            rgb_source->subop()==static_cast<uint8_t>(TypedFloatUnaryOp::Saturate) && alpha_mul &&
+            alpha_mul->opcode()==TypedOpcode::FloatBinary &&
+            alpha_mul->subop()==static_cast<uint8_t>(TypedFloatOp::Mul)) {
+            const auto *add=definition(rgb_source->src0);
+            const auto *alpha0=definition(alpha_mul->src0);
+            const auto *alpha1=definition(alpha_mul->src1);
+            const TypedInstruction *sample0=nullptr,*sample1=nullptr;
+            if (add && add->opcode()==TypedOpcode::FloatBinary &&
+                add->subop()==static_cast<uint8_t>(TypedFloatOp::Add) && alpha0 && alpha1 &&
+                alpha0->opcode()==TypedOpcode::FloatExtract && alpha1->opcode()==TypedOpcode::FloatExtract &&
+                alpha0->subop()==3 && alpha1->subop()==3) {
+                const auto *rgb0=definition(add->src0);
+                const auto *rgb1=definition(add->src1);
+                if (rgb0 && rgb1 && rgb0->opcode()==TypedOpcode::FloatSwizzle && rgb1->opcode()==TypedOpcode::FloatSwizzle &&
+                    rgb0->subop()==static_cast<uint8_t>(TypedFloatSwizzleOp::XYZ) &&
+                    rgb1->subop()==static_cast<uint8_t>(TypedFloatSwizzleOp::XYZ)) {
+                    sample0=definition(rgb0->src0);
+                    sample1=definition(rgb1->src0);
+                    const bool alpha_matches=sample0 && sample1 &&
+                        ((alpha0->src0.bits==sample0->dst.bits && alpha1->src0.bits==sample1->dst.bits) ||
+                         (alpha0->src0.bits==sample1->dst.bits && alpha1->src0.bits==sample0->dst.bits));
+                    if (alpha_matches && sample0->opcode()==TypedOpcode::Sample2D && sample1->opcode()==TypedOpcode::Sample2D) {
+                        const auto *sampler0=resource_for_value(sample0->src0);
+                        const auto *sampler1=resource_for_value(sample1->src0);
+                        const auto *coord0=resource_for_value(sample0->src1);
+                        const auto *coord1=resource_for_value(sample1->src1);
+                        if (sampler0 && sampler1 && coord0 && coord1 && sampler0->kind==TypedResourceKind::Sampler2D &&
+                            sampler1->kind==TypedResourceKind::Sampler2D && coord0->kind==TypedResourceKind::Input &&
+                            coord1->kind==TypedResourceKind::Input && sampler0->index!=sampler1->index &&
+                            ((sampler0->index==1 && coord0->index==1 && sampler1->index==2 && coord1->index==2) ||
+                             (sampler1->index==1 && coord1->index==1 && sampler0->index==2 && coord0->index==2))) {
+                            return compile_fragment_two_texture_combine(fragment_samplers[0],fragment_samplers[1],0,0,out);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if (!samplers.empty()) { out.error = "typed generic arithmetic path does not support samplers"; return false; }
     std::vector<uint8_t> reachable(program.value_count(),0);
     std::vector<uint16_t> used_input_locations;

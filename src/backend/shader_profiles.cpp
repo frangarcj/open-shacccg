@@ -1502,6 +1502,93 @@ bool compile_fragment_texture_tint_alpha_discard(const IrUniformFloat &cut,
     return true;
 }
 
+bool compile_fragment_two_texture_combine(const IrSampler2D &sampler0,
+                                          const IrSampler2D &sampler1,
+                                          uint32_t binary_guid, uint32_t source_guid,
+                                          IrCompileResult &out) {
+    out={};
+    if (sampler0.name.empty() || sampler1.name.empty() || sampler0.resource_index!=1 ||
+        sampler1.resource_index!=2) {
+        out.error="two-texture combine profile requires samplers at TEXUNIT1/2";
+        return false;
+    }
+
+    MachineProgram primary;
+    const auto sum=primary.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+    const auto low=primary.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+    const auto rgb=primary.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+    const auto alpha=primary.make_value<MachineType::F32>();
+    const auto composed=primary.make_value<MachineType::F32>(MachineRegisterClass::FloatTemp,2);
+    const auto zero=primary.physical(machine_immediate(0),MachineType::F32);
+    const auto one=primary.physical(machine_special(1),MachineType::F32);
+    if (sum.kind()==MachineOperandKind::None || low.kind()==MachineOperandKind::None ||
+        rgb.kind()==MachineOperandKind::None || alpha.kind()==MachineOperandKind::None ||
+        composed.kind()==MachineOperandKind::None ||
+        !primary.emit<MachineOpcode::Phase>() || !primary.emit<MachineOpcode::Nop>() ||
+        !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Add),
+            machine_vector_config(0x7),sum,
+            primary.physical(machine_primary(2),MachineType::F32),
+            primary.physical(machine_primary(0),MachineType::F32)) ||
+        !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Max),
+            machine_vector_config(0x7),low,sum,zero) ||
+        !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Min),
+            machine_vector_config(0x7,MachineVectorSwizzle::Source2YYYY),rgb,low,one) ||
+        !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Mul),
+            machine_vector_config(1),alpha,
+            primary.physical(machine_primary(3),MachineType::F32,1),
+            primary.physical(machine_primary(1),MachineType::F32,1)) ||
+        !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+            machine_move_config(0x7),composed,rgb) ||
+        !primary.emit_config<MachineOpcode::MoveUpdate>(static_cast<uint8_t>(usse::DataType::F32),
+            machine_move_config(0x8),composed,alpha) ||
+        !primary.emit_config<MachineOpcode::PackValue>(
+            machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F16),
+            machine_pack_config(0xF,true,false),
+            primary.physical(machine_fragment_output(0),MachineType::F16),composed)) {
+        out.error="failed to build two-texture combine Machine program";
+        return false;
+    }
+    MachineCompileResult compiled;
+    if (!compile_words(primary,compiled,out,"two-texture combine Machine lowering failed")) return false;
+
+    const uint8_t interface_block[32]={
+        0,0,0,0,0,0,0,0,0,0,1,4,2,0,2,0,
+        4,0,0,0,1,0xf1,0,0,1,0,0,0,0xc0,0,0,0,
+    };
+    const uint8_t additional_input[16]={
+        0x30,0,0,0,0x02,0xf9,0,0,0x02,0,0,0,0xc0,0,0,0,
+    };
+    const gxp::ParameterDesc parameters[]={
+        {sampler0.name.c_str(),2,0,4,0,1,0,1,1},
+        {sampler1.name.c_str(),2,0,4,0,1,0,1,2},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Fragment;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid; image.source_guid=source_guid;
+    image.program_flags=0x00080801;
+    image.texunit_flags[0]=0x00000110;
+    image.primary_register_count=8;
+    image.secondary_register_count=0;
+    image.primary_phase_count=1;
+    image.data_buffer_count=0;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
+    image.fragment_additional_inputs=1;
+    image.fragment_input_components=4;
+    image.fragment_additional_input_records=additional_input;
+    image.fragment_additional_input_records_size=sizeof(additional_input);
+    image.primary_instructions=compiled.words.data(); image.primary_instruction_count=compiled.words.size();
+    image.parameters=parameters; image.parameter_count=2;
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected two-texture combine profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for two-texture combine profile"; return false;
+    }
+    return true;
+}
+
 bool compile_fragment_texture_control_machine(const MachineProgram &primary,
                                               const std::vector<IrUniformFloat> &uniforms,
                                               const std::vector<IrLiteralF32> &literal_values,

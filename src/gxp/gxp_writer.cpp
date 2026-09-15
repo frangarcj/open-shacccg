@@ -111,6 +111,10 @@ bool valid_desc(const ProgramImage &image) {
          (image.type != ProgramType::Fragment || image.secondary_instruction_count != 0 ||
           image.fragment_interface_extension || image.fragment_primary_overlaps_interface)))
         return false;
+    if ((image.fragment_additional_input_records &&
+         image.fragment_additional_input_records_size!=static_cast<size_t>(image.fragment_additional_inputs)*16u) ||
+        (!image.fragment_additional_input_records && image.fragment_additional_input_records_size!=0))
+        return false;
     if (image.fragment_primary_overlaps_interface &&
         (image.type != ProgramType::Fragment || image.secondary_instruction_count != 0 ||
          image.primary_instruction_count == 0))
@@ -333,6 +337,10 @@ bool write_program(const ProgramImage &image, uint8_t *output, size_t capacity,
         (image.fragment_input_components==2 ? 0x10 : 0x30);
     for (uint8_t i=0;i<image.fragment_additional_inputs;++i) {
         const size_t off=l.interface_off+kInterfaceSize+static_cast<size_t>(i)*16u;
+        if (image.fragment_additional_input_records) {
+            std::memcpy(output+off,image.fragment_additional_input_records+static_cast<size_t>(i)*16u,16u);
+            continue;
+        }
         output[off+4]=0x0f;
         output[off+5]=static_cast<uint8_t>((i+1u)*0x10u);
         output[off+6]=component_code;

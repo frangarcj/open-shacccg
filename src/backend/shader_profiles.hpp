@@ -142,6 +142,10 @@ bool compile_fragment_texture_tint_alpha_discard(const IrUniformFloat &cut,
                                                  const IrSampler2D &sampler,
                                                  uint32_t binary_guid, uint32_t source_guid,
                                                  IrCompileResult &out);
+bool compile_fragment_two_texture_combine(const IrSampler2D &sampler0,
+                                          const IrSampler2D &sampler1,
+                                          uint32_t binary_guid, uint32_t source_guid,
+                                          IrCompileResult &out);
 bool compile_fragment_texture_control_machine(const MachineProgram &primary,
                                               const std::vector<IrUniformFloat> &uniforms,
                                               const std::vector<IrLiteralF32> &literals,
