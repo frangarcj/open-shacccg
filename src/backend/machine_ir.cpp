@@ -349,7 +349,7 @@ bool uses_instruction_config(MachineOpcode opcode) {
     return opcode == MachineOpcode::Nop || opcode == MachineOpcode::Move || opcode == MachineOpcode::MoveUpdate || opcode == MachineOpcode::Pack ||
         opcode == MachineOpcode::PredicatedMove || opcode == MachineOpcode::PredicatedMoveUpdate ||
         opcode == MachineOpcode::PackSwizzle || opcode == MachineOpcode::PackValue || opcode == MachineOpcode::Vector ||
-        opcode == MachineOpcode::ComplexF32 || opcode == MachineOpcode::Vmad;
+        opcode == MachineOpcode::ComplexF32 || opcode == MachineOpcode::Vmad || opcode == MachineOpcode::VmadUniformMat4;
 }
 
 } // namespace
@@ -756,6 +756,7 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
         else if (program.instructions()[i].opcode()==MachineOpcode::F32ToS32Color) words=3;
         else if (program.instructions()[i].opcode()==MachineOpcode::S32ToF32Scalar) words=9;
         else if (program.instructions()[i].opcode()==MachineOpcode::S32x2ColorPack) words=2;
+        else if (program.instructions()[i].opcode()==MachineOpcode::TransformTexcoordMat4XY) words=4;
         word_positions[i + 1] = word_positions[i] + words;
     }
     for (uint32_t position : program.labels()) {
@@ -1290,7 +1291,8 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
         case MachineOpcode::VmadUniformMat4: {
             usse::VmadSemantic mad{};
             usse::RegisterRef gpi{};
-            if (instruction.subop()!=0 || guard!=usse::Predicate::Always ||
+            const uint16_t config=instruction.config();
+            if (instruction.subop()!=0 || guard!=usse::Predicate::Always || (config&~0x0001u) ||
                 !resolve_register_value(instruction.dst,MachineType::F32,out.value_registers,&mad.dst) ||
                 !resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&gpi) ||
                 machine_gpi_index(gpi)!=0) {
@@ -1312,9 +1314,60 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             mad.repeat_mode=usse::RepeatMode::External;
             mad.repeat_count=3;
             mad.skip_invalid=true;
-            mad.no_schedule=false;
+            mad.no_schedule=(config&0x0001u)!=0;
             if (!builder.instruction(mad)) {
                 out.error="failed to encode oracle uniform-mat4 VMAD";
+                return false;
+            }
+            break;
+        }
+        case MachineOpcode::TransformTexcoordMat4XY: {
+            usse::RegisterRef dst{},coord{},matrix{};
+            if (instruction.subop()!=0 || guard!=usse::Predicate::Always ||
+                !resolve_register_value(instruction.dst,MachineType::F32,out.value_registers,&dst) ||
+                !resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&coord) ||
+                !resolve_register_value(instruction.src1,MachineType::F32,out.value_registers,&matrix) ||
+                dst.bank!=usse::RegisterBank::Output || coord.bank!=usse::RegisterBank::PrimaryAttribute ||
+                matrix.bank!=usse::RegisterBank::SecondaryAttribute || matrix.num>60) {
+                out.error="texcoord mat4.xy transform requires output, PA coordinate and four-register SA matrix";
+                return false;
+            }
+            auto pack=[&](uint8_t base) {
+                usse::VpckSemantic p{};
+                p.dst={usse::RegisterBank::Temp,124};
+                p.src1={usse::RegisterBank::SecondaryAttribute,base};
+                p.src2={usse::RegisterBank::SecondaryAttribute,static_cast<uint8_t>(base+1)};
+                p.src_format=usse::PackFormat::F32;
+                p.dst_format=usse::PackFormat::F32;
+                p.dest_mask=0xF;
+                p.skip_invalid=true;
+                p.no_schedule=false;
+                return builder.instruction(p);
+            };
+            auto mad=[&](uint8_t mask,bool no_schedule) {
+                usse::VmadSemantic m{};
+                m.dst=dst;
+                m.src1=coord;
+                m.gpi0=0;
+                m.gpi1=0;
+                m.write_mask=mask;
+                m.gpi0_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                                 usse::SwizzleChannel::Z,usse::SwizzleChannel::W}};
+                m.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                                 usse::SwizzleChannel::X,usse::SwizzleChannel::Y}};
+                m.gpi1_swizzle={{usse::SwizzleChannel::Z,usse::SwizzleChannel::W,
+                                 usse::SwizzleChannel::Z,usse::SwizzleChannel::W}};
+                m.vec4=true;
+                m.control_bit_53=false;
+                m.repeat_mode=usse::RepeatMode::Slmsi;
+                m.repeat_count=0;
+                m.skip_invalid=true;
+                m.no_schedule=no_schedule;
+                return builder.instruction(m);
+            };
+            if (!pack(matrix.num) || !mad(1,true) ||
+                !pack(static_cast<uint8_t>(matrix.num+2)) || !mad(2,false)) {
+                out.error="failed to encode oracle texcoord mat4.xy transform";
                 return false;
             }
             break;

@@ -184,6 +184,10 @@ constexpr uint16_t machine_vmad_config(uint8_t write_mask, bool no_schedule = fa
     return (write_mask & 0x0f) | (no_schedule ? 0x0010 : 0);
 }
 
+constexpr uint16_t machine_vmad_uniform_mat4_config(bool no_schedule = false) {
+    return no_schedule ? 0x0001u : 0u;
+}
+
 class MachineProgram {
 public:
     MachineOperand make_value(MachineType type);

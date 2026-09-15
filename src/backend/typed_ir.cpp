@@ -1126,9 +1126,34 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         uint32_t position_matrix = 0;
         bool varying_written = false;
         uint32_t varying_attribute = 0;
+        bool transformed_varying = false;
+        uint32_t varying_matrix = 0;
         IrVaryingSemantic selected_varying_semantic = IrVaryingSemantic::TexCoord;
         bool point_size_written=false;
         TypedValue point_size_value{};
+        auto literal_is=[&](TypedValue value,uint32_t bits) -> bool {
+            return value.kind()==TypedValueKind::Literal && value.type()==TypedType::F32 &&
+                value.id()<program.literals().size() && program.literals()[value.id()]==bits;
+        };
+        auto xy01_attribute=[&](TypedValue value,uint32_t &attribute) -> bool {
+            const auto *compose=definition(value);
+            if (!compose || compose->opcode()!=TypedOpcode::FloatCompose ||
+                compose->aux>=program.float4_composites().size()) return false;
+            const auto &components=program.float4_composites()[compose->aux];
+            uint32_t found=std::numeric_limits<uint32_t>::max();
+            for (uint8_t lane=0;lane<2;++lane) {
+                const auto *extract=definition(components[lane]);
+                if (!extract || extract->opcode()!=TypedOpcode::FloatExtract || extract->subop()!=lane)
+                    return false;
+                const auto it=attribute_for_value.find(extract->src0.id());
+                if (it==attribute_for_value.end() || (lane && it->second!=found)) return false;
+                found=it->second;
+            }
+            if (found==std::numeric_limits<uint32_t>::max() ||
+                !literal_is(components[2],0u) || !literal_is(components[3],0x3f800000u)) return false;
+            attribute=found;
+            return true;
+        };
         for (const auto &instruction : instructions) {
             if (instruction.opcode() != TypedOpcode::StoreOutput) continue;
             if (instruction.aux >= resources.size()) { out.error = "typed vertex output resource is out of range"; return false; }
@@ -1189,10 +1214,6 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 continue;
             }
 
-            const auto source_it = attribute_for_value.find(instruction.src0.id());
-            if (instruction.src0.kind() != TypedValueKind::Value || source_it == attribute_for_value.end()) {
-                out.error = "typed varying output must currently copy a vertex input"; return false;
-            }
             if (semantic == TypedSemantic::None) {
                 const auto *input_resource = resource_for_value(instruction.src0);
                 if (input_resource) semantic = infer_semantic(shader.resource_name(*input_resource));
@@ -1202,8 +1223,26 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             else if (semantic == TypedSemantic::TexCoord) varying_semantic = IrVaryingSemantic::TexCoord;
             else { out.error = "typed vertex varying semantic is unknown"; return false; }
             if (varying_written) { out.error = "typed vertex shader writes multiple varyings"; return false; }
+            const auto source_it = attribute_for_value.find(instruction.src0.id());
+            if (instruction.src0.kind()==TypedValueKind::Value && source_it!=attribute_for_value.end()) {
+                varying_attribute=source_it->second;
+            } else {
+                const auto *swizzle=definition(instruction.src0);
+                const auto *transform=swizzle && swizzle->opcode()==TypedOpcode::FloatSwizzle &&
+                    swizzle->subop()==static_cast<uint8_t>(TypedFloatSwizzleOp::XY) ? definition(swizzle->src0) : nullptr;
+                const auto matrix_it=transform && transform->opcode()==TypedOpcode::TransformPosition ?
+                    matrix_for_resource.find(transform->aux) : matrix_for_resource.end();
+                uint32_t attribute=0;
+                if (!transform || transform->opcode()!=TypedOpcode::TransformPosition ||
+                    matrix_it==matrix_for_resource.end() || !xy01_attribute(transform->src0,attribute)) {
+                    out.error="typed varying output is outside direct-input or mat4-transformed TEXCOORD subset";
+                    return false;
+                }
+                transformed_varying=true;
+                varying_attribute=attribute;
+                varying_matrix=matrix_it->second;
+            }
             varying_written = true;
-            varying_attribute = source_it->second;
             selected_varying_semantic = varying_semantic;
         }
         if (!position_written) { out.error = "typed vertex shader does not write position"; return false; }
@@ -1221,10 +1260,6 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                     if (found==attribute_for_value.end()) return false;
                     attribute=found->second;
                     return true;
-                };
-                auto literal_is=[&](TypedValue value,uint32_t bits) -> bool {
-                    return value.kind()==TypedValueKind::Literal && value.type()==TypedType::F32 &&
-                        value.id()<program.literals().size() && program.literals()[value.id()]==bits;
                 };
                 uint32_t position0=0,position1=0;
                 if (extracted_attribute(components[0],0,position0) &&
@@ -1457,6 +1492,22 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 return false;
             }
             return compile_vertex_construct_position(vertex_attributes[position_attribute],0,0,out);
+        }
+        if (transformed_position && transformed_varying && point_size_written &&
+            vertex_matrices.size()==2 && vertex_uniforms.size()==1 &&
+            position_attribute<vertex_attributes.size() && varying_attribute<vertex_attributes.size() &&
+            position_attribute!=varying_attribute && position_matrix==0 && varying_matrix==1 &&
+            selected_varying_semantic==IrVaryingSemantic::TexCoord &&
+            vertex_attributes[position_attribute].components==4 && vertex_attributes[varying_attribute].components==2) {
+            const auto *point_resource=resource_for_value(point_size_value);
+            if (!point_resource || point_resource!=vertex_uniforms[0] || point_resource->type!=TypedType::F32 ||
+                point_resource->index!=32) {
+                out.error="typed matrix TEXCOORD point-size profile requires direct scalar uniform resource 32";
+                return false;
+            }
+            return compile_vertex_uniform_matrix_texcoord_point_size(vertex_attributes[position_attribute],
+                vertex_attributes[varying_attribute],vertex_matrices[0],vertex_matrices[1],
+                {shader.resource_name(*point_resource),1,point_resource->index},0,0,out);
         }
         if (transformed_position && point_size_written && vertex_matrices.size()==1 &&
             position_attribute<vertex_attributes.size() && position_matrix==0 &&

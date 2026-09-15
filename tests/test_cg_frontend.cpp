@@ -242,6 +242,23 @@ bool compile_vitagl_blit_vertex_profile() {
     return ok;
 }
 
+bool compile_vertex_gxp(const std::string &source, const char *name) {
+    VscCompileRequest request{};
+    request.source_name=name;
+    request.source=source.data();
+    request.source_size=source.size();
+    request.entrypoint="main";
+    request.stage=VSC_STAGE_VERTEX;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    const bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+    if (!ok && result.diagnostic_count && result.diagnostics)
+        std::fprintf(stderr,"test_cg_frontend: %s vertex backend diagnostic=%s\n",name,
+                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
+
 bool compile_matrix_point_size_profile(bool with_color) {
     const char *source=with_color ?
         "uniform float4x4 Jwvp; uniform float Mpoint_size; "
@@ -727,6 +744,12 @@ int test_cg_frontend() {
         failures += fail("Cg matrix mul did not compile through glslang HLSL");
     if (!compile("void main(float3 aPosition,float4 aColor,uniform float4x4 wvp,float4 out vPosition:POSITION,float4 out vColor:COLOR){vPosition=mul(float4(aPosition,1.f),wvp);vColor=aColor;}", VSC_STAGE_VERTEX))
         failures += fail("Cg post-type out qualifier normalization did not compile");
+    if (!compile_vertex_gxp(
+            "void main(float4 p,float2 uv,uniform float4x4 mvp,uniform float4x4 texmat[1],uniform float point_size,"
+            "float2 out tc:TEXCOORD0,float4 out pos:POSITION,float out ps:PSIZE){"
+            "pos=mul(mvp,p);tc=mul(texmat[0],float4(uv,0.f,1.f)).xy;ps=point_size;}",
+            "vp-mat4-array-texcoord-psize"))
+        failures += fail("Cg mat4[1] TEXCOORD transform + PSIZE did not compile end to end");
     if (!compile("float2 in uv:TEXCOORD0;\nfloat sample_x(){return uv.x;}\nfloat4 main():COLOR0{return float4(sample_x(),0,0,1);}\n", VSC_STAGE_FRAGMENT))
         failures += fail("Cg global input semantic did not normalize into an entry-point parameter");
     if (!compile("float4 out gl_Position:POSITION;\nfloat2 out uv:TEXCOORD0;\nvoid main(float4 p:POSITION){gl_Position=p;uv=p.xy;}\n", VSC_STAGE_VERTEX))

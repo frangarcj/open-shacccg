@@ -63,6 +63,12 @@ bool is_f32_mat4(const spirv_cross::SPIRType &type) {
         type.vecsize == 4 && type.columns == 4 && type.array.empty();
 }
 
+bool is_f32_mat4_array1(const spirv_cross::SPIRType &type) {
+    return type.basetype == spirv_cross::SPIRType::Float && type.width == 32 &&
+        type.vecsize == 4 && type.columns == 4 && type.array.size() == 1 &&
+        type.array[0] == 1;
+}
+
 backend::TypedSemantic semantic_from_text(const std::string &text, uint8_t &index) {
     std::string upper;
     upper.reserve(text.size());
@@ -192,6 +198,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             uint16_t resource = std::numeric_limits<uint16_t>::max();
             backend::TypedValue value{};
             bool matrix = false;
+            bool matrix_array = false;
             bool supported = false;
         };
         struct ExtractInfo {
@@ -294,7 +301,18 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 if (is_f32_mat4(member_type)) {
                     if (!add_resource(backend::TypedResourceKind::Matrix4, {}, backend::TypedType::F32x4,
                                       member_name, index, backend::TypedSemantic::None, 0, resource_id)) return false;
-                    members[member] = {resource_id, {}, true, true};
+                    members[member] = {resource_id, {}, true, false, true};
+                    continue;
+                }
+                // vitaGL's fixed-function generator spells even a single texture
+                // matrix as `float4x4 Ktexmat[1]`. Treat the independently
+                // observed one-element form as one matrix resource while keeping
+                // larger arrays fail-closed until their indexing/layout is
+                // captured from Sony.
+                if (is_f32_mat4_array1(member_type)) {
+                    if (!add_resource(backend::TypedResourceKind::Matrix4, {}, backend::TypedType::F32x4,
+                                      member_name, index, backend::TypedSemantic::None, 0, resource_id)) return false;
+                    members[member] = {resource_id, {}, true, true, true};
                     continue;
                 }
                 const auto type = typed_type(member_type);
@@ -307,7 +325,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 if (value.kind() == backend::TypedValueKind::None) { error = "failed to create Typed IR uniform"; return false; }
                 if (!add_resource(backend::TypedResourceKind::Uniform, value, type, member_name, index,
                                   backend::TypedSemantic::None, 0, resource_id)) return false;
-                members[member] = {resource_id, value, false, true};
+                members[member] = {resource_id, value, false, false, true};
             }
         }
 
@@ -526,6 +544,13 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     }
                     if (count==5) {
                         access_chain_members[args[1]]=uniform;
+                    } else if (count==6 && uniform.matrix && uniform.matrix_array) {
+                        const auto element_it=constants.find(args[4]);
+                        if (element_it==constants.end() || element_it->second!=0) {
+                            error="mat4 array access is outside the validated single-element index-0 subset";
+                            return false;
+                        }
+                        access_chain_members[args[1]]=uniform;
                     } else if (count==6 && !uniform.matrix) {
                         const auto component_it=constants.find(args[4]);
                         const uint8_t components=backend::typed_component_count(uniform.value.type());
@@ -539,8 +564,15 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         return false;
                     }
                 } else if (index_it != constants.end()) {
-                    const auto input=values.find(args[2]);
-                    if (input!=values.end() && typed_is_float(input->second.type())) {
+                    const auto matrix_array=access_chain_members.find(args[2]);
+                    if (matrix_array!=access_chain_members.end() && matrix_array->second.matrix &&
+                        matrix_array->second.matrix_array) {
+                        if (index_it->second!=0) {
+                            error="mat4 array access is outside the validated single-element index-0 subset";
+                            return false;
+                        }
+                        access_chain_members[args[1]]=matrix_array->second;
+                    } else if (const auto input=values.find(args[2]); input!=values.end() && typed_is_float(input->second.type())) {
                         const uint32_t component=index_it->second;
                         if (component>=backend::typed_component_count(input->second.type())) {
                             error="input access-chain component is out of range";
@@ -587,35 +619,48 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     }
                     values[args[1]]=dst;
                 }
-            } else if (op == spv::OpVectorShuffle && count == 9) {
+            } else if (op == spv::OpVectorShuffle) {
                 const auto result_type = typed_type(compiler.get_type(args[0]));
                 const auto source = values.find(args[2]);
-                if (result_type != backend::TypedType::F32x4 || source == values.end() ||
-                    source->second.type() != backend::TypedType::F32x4) {
-                    error = "vector shuffle is outside the validated float4 subset";
+                if (source == values.end() || source->second.type()!=backend::TypedType::F32x4 ||
+                    args[2]!=args[3]) {
+                    error = "vector shuffle is outside the validated single-source F32 subset";
                     return false;
                 }
-                const bool identity = args[4] == 0 && args[5] == 1 && args[6] == 2 && args[7] == 3;
-                const bool splat_x = args[4] == 0 && args[5] == 0 && args[6] == 0 && args[7] == 0;
-                const bool wzyx = args[4] == 3 && args[5] == 2 && args[6] == 1 && args[7] == 0;
-                if (identity) {
-                    values[args[1]] = source->second;
-                } else if (splat_x) {
-                    const auto dst = program.make_value<backend::TypedType::F32x4>();
-                    if (!program.emit<backend::TypedOpcode::FloatSplat>(0, dst, source->second)) {
-                        error = "failed to emit Typed IR float4 X splat"; return false;
-                    }
-                    values[args[1]] = dst;
-                } else if (wzyx) {
-                    const auto dst=program.make_value<backend::TypedType::F32x4>();
+                if (count==7 && result_type==backend::TypedType::F32x2 && args[4]==0 && args[5]==1) {
+                    const auto dst=program.make_value<backend::TypedType::F32x2>();
                     if (!program.emit<backend::TypedOpcode::FloatSwizzle>(
-                            static_cast<uint8_t>(backend::TypedFloatSwizzleOp::Wzyx),dst,source->second)) {
-                        error="failed to emit oracle-validated wzyx Typed swizzle";
+                            static_cast<uint8_t>(backend::TypedFloatSwizzleOp::XY),dst,source->second)) {
+                        error="failed to emit Typed IR float4.xy swizzle";
                         return false;
                     }
                     values[args[1]]=dst;
+                } else if (count==9 && result_type==backend::TypedType::F32x4) {
+                    const bool identity = args[4] == 0 && args[5] == 1 && args[6] == 2 && args[7] == 3;
+                    const bool splat_x = args[4] == 0 && args[5] == 0 && args[6] == 0 && args[7] == 0;
+                    const bool wzyx = args[4] == 3 && args[5] == 2 && args[6] == 1 && args[7] == 0;
+                    if (identity) {
+                        values[args[1]] = source->second;
+                    } else if (splat_x) {
+                        const auto dst = program.make_value<backend::TypedType::F32x4>();
+                        if (!program.emit<backend::TypedOpcode::FloatSplat>(0, dst, source->second)) {
+                            error = "failed to emit Typed IR float4 X splat"; return false;
+                        }
+                        values[args[1]] = dst;
+                    } else if (wzyx) {
+                        const auto dst=program.make_value<backend::TypedType::F32x4>();
+                        if (!program.emit<backend::TypedOpcode::FloatSwizzle>(
+                                static_cast<uint8_t>(backend::TypedFloatSwizzleOp::Wzyx),dst,source->second)) {
+                            error="failed to emit oracle-validated wzyx Typed swizzle";
+                            return false;
+                        }
+                        values[args[1]]=dst;
+                    } else {
+                        error = "vector shuffle pattern is not independently validated";
+                        return false;
+                    }
                 } else {
-                    error = "vector shuffle pattern is not independently validated";
+                    error = "vector shuffle result shape is outside the validated F32 subset";
                     return false;
                 }
             } else if (op == spv::OpCompositeConstruct && count >= 4) {

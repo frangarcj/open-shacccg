@@ -17,6 +17,7 @@ VSC_MACHINE_OP(S32ToF32Scalar, "s32-to-f32-scalar", ValueDef, ValueUse, None, 0x
 VSC_MACHINE_OP(S32x2ColorPack, "s32x2-color-pack", None, None, None,           0x0f)
 VSC_MACHINE_OP(Vmad,    "vmad",    ValueDef,     ValueUse,     ValuePairUse, 0x0f)
 VSC_MACHINE_OP(VmadUniformMat4, "vmad-uniform-mat4", ValueDef, ValueUse, None, 0x0f)
+VSC_MACHINE_OP(TransformTexcoordMat4XY, "transform-texcoord-mat4-xy", ValueDef, ValueUse, ValueUse, 0x0f)
 VSC_MACHINE_OP(DependentSample, "dependent-sample", ValueDef, ValueUse, None, 0x0f)
 VSC_MACHINE_OP(Branch,  "branch",   None,         LabelUse,     None,         0x01)
 VSC_MACHINE_OP(LoopCounterInit, "loop-counter-init", ValueDef, None, None,    0x0f)
