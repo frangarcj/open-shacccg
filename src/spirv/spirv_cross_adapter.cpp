@@ -63,10 +63,12 @@ bool is_f32_mat4(const spirv_cross::SPIRType &type) {
         type.vecsize == 4 && type.columns == 4 && type.array.empty();
 }
 
-bool is_f32_mat4_array1(const spirv_cross::SPIRType &type) {
-    return type.basetype == spirv_cross::SPIRType::Float && type.width == 32 &&
-        type.vecsize == 4 && type.columns == 4 && type.array.size() == 1 &&
-        type.array[0] == 1;
+uint32_t f32_mat4_array_count(const spirv_cross::SPIRType &type) {
+    if (type.basetype != spirv_cross::SPIRType::Float || type.width != 32 ||
+        type.vecsize != 4 || type.columns != 4 || type.array.size() != 1)
+        return 0;
+    const uint32_t count=type.array[0];
+    return count>=1 && count<=2 ? count : 0;
 }
 
 backend::TypedSemantic semantic_from_text(const std::string &text, uint8_t &index) {
@@ -197,6 +199,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
         struct UniformMember {
             uint16_t resource = std::numeric_limits<uint16_t>::max();
             backend::TypedValue value{};
+            std::vector<uint16_t> matrix_resources;
             bool matrix = false;
             bool matrix_array = false;
             bool supported = false;
@@ -301,18 +304,33 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 if (is_f32_mat4(member_type)) {
                     if (!add_resource(backend::TypedResourceKind::Matrix4, {}, backend::TypedType::F32x4,
                                       member_name, index, backend::TypedSemantic::None, 0, resource_id)) return false;
-                    members[member] = {resource_id, {}, true, false, true};
+                    members[member] = {resource_id, {}, {resource_id}, true, false, true};
                     continue;
                 }
-                // vitaGL's fixed-function generator spells even a single texture
-                // matrix as `float4x4 Ktexmat[1]`. Treat the independently
-                // observed one-element form as one matrix resource while keeping
-                // larger arrays fail-closed until their indexing/layout is
-                // captured from Sony.
-                if (is_f32_mat4_array1(member_type)) {
-                    if (!add_resource(backend::TypedResourceKind::Matrix4, {}, backend::TypedType::F32x4,
-                                      member_name, index, backend::TypedSemantic::None, 0, resource_id)) return false;
-                    members[member] = {resource_id, {}, true, true, true};
+                // vitaGL's fixed-function generator emits Ktexmat as mat4[1]
+                // or mat4[2]. Sony lays consecutive elements 16 F32 words apart;
+                // represent each element as a Matrix4 resource while retaining
+                // the aggregate member for constant-index access chains.
+                const uint32_t matrix_count=f32_mat4_array_count(member_type);
+                if (matrix_count) {
+                    UniformMember info{};
+                    info.matrix=true;
+                    info.matrix_array=true;
+                    info.supported=true;
+                    for (uint32_t element=0;element<matrix_count;++element) {
+                        const uint32_t word_index=static_cast<uint32_t>(index)+element*16u;
+                        if (word_index>std::numeric_limits<uint16_t>::max()) {
+                            error="mat4 array element offset exceeds Typed IR resource range";
+                            return false;
+                        }
+                        uint16_t element_resource=0;
+                        if (!add_resource(backend::TypedResourceKind::Matrix4, {}, backend::TypedType::F32x4,
+                                          member_name, static_cast<uint16_t>(word_index),
+                                          backend::TypedSemantic::None, 0, element_resource)) return false;
+                        info.matrix_resources.push_back(element_resource);
+                    }
+                    info.resource=info.matrix_resources.front();
+                    members[member]=std::move(info);
                     continue;
                 }
                 const auto type = typed_type(member_type);
@@ -325,7 +343,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 if (value.kind() == backend::TypedValueKind::None) { error = "failed to create Typed IR uniform"; return false; }
                 if (!add_resource(backend::TypedResourceKind::Uniform, value, type, member_name, index,
                                   backend::TypedSemantic::None, 0, resource_id)) return false;
-                members[member] = {resource_id, value, false, false, true};
+                members[member] = {resource_id, value, {}, false, false, true};
             }
         }
 
@@ -546,11 +564,14 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                         access_chain_members[args[1]]=uniform;
                     } else if (count==6 && uniform.matrix && uniform.matrix_array) {
                         const auto element_it=constants.find(args[4]);
-                        if (element_it==constants.end() || element_it->second!=0) {
-                            error="mat4 array access is outside the validated single-element index-0 subset";
+                        if (element_it==constants.end() || element_it->second>=uniform.matrix_resources.size()) {
+                            error="mat4 array access is unresolved or outside the validated 1-2 element subset";
                             return false;
                         }
-                        access_chain_members[args[1]]=uniform;
+                        auto element=uniform;
+                        element.resource=uniform.matrix_resources[element_it->second];
+                        element.matrix_array=false;
+                        access_chain_members[args[1]]=std::move(element);
                     } else if (count==6 && !uniform.matrix) {
                         const auto component_it=constants.find(args[4]);
                         const uint8_t components=backend::typed_component_count(uniform.value.type());
@@ -567,11 +588,14 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     const auto matrix_array=access_chain_members.find(args[2]);
                     if (matrix_array!=access_chain_members.end() && matrix_array->second.matrix &&
                         matrix_array->second.matrix_array) {
-                        if (index_it->second!=0) {
-                            error="mat4 array access is outside the validated single-element index-0 subset";
+                        if (index_it->second>=matrix_array->second.matrix_resources.size()) {
+                            error="mat4 array access is unresolved or outside the validated 1-2 element subset";
                             return false;
                         }
-                        access_chain_members[args[1]]=matrix_array->second;
+                        auto element=matrix_array->second;
+                        element.resource=element.matrix_resources[index_it->second];
+                        element.matrix_array=false;
+                        access_chain_members[args[1]]=std::move(element);
                     } else if (const auto input=values.find(args[2]); input!=values.end() && typed_is_float(input->second.type())) {
                         const uint32_t component=index_it->second;
                         if (component>=backend::typed_component_count(input->second.type())) {

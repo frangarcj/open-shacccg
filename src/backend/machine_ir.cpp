@@ -349,7 +349,8 @@ bool uses_instruction_config(MachineOpcode opcode) {
     return opcode == MachineOpcode::Nop || opcode == MachineOpcode::Move || opcode == MachineOpcode::MoveUpdate || opcode == MachineOpcode::Pack ||
         opcode == MachineOpcode::PredicatedMove || opcode == MachineOpcode::PredicatedMoveUpdate ||
         opcode == MachineOpcode::PackSwizzle || opcode == MachineOpcode::PackValue || opcode == MachineOpcode::Vector ||
-        opcode == MachineOpcode::ComplexF32 || opcode == MachineOpcode::Vmad || opcode == MachineOpcode::VmadUniformMat4;
+        opcode == MachineOpcode::ComplexF32 || opcode == MachineOpcode::Vmad || opcode == MachineOpcode::VmadUniformMat4 ||
+        opcode == MachineOpcode::TransformTexcoordMat4XY;
 }
 
 } // namespace
@@ -1323,7 +1324,8 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
         }
         case MachineOpcode::TransformTexcoordMat4XY: {
             usse::RegisterRef dst{},coord{},matrix{};
-            if (instruction.subop()!=0 || guard!=usse::Predicate::Always ||
+            const uint16_t config=instruction.config();
+            if (instruction.subop()!=0 || guard!=usse::Predicate::Always || (config&~0x0001u) ||
                 !resolve_register_value(instruction.dst,MachineType::F32,out.value_registers,&dst) ||
                 !resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&coord) ||
                 !resolve_register_value(instruction.src1,MachineType::F32,out.value_registers,&matrix) ||
@@ -1366,7 +1368,7 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 return builder.instruction(m);
             };
             if (!pack(matrix.num) || !mad(1,true) ||
-                !pack(static_cast<uint8_t>(matrix.num+2)) || !mad(2,false)) {
+                !pack(static_cast<uint8_t>(matrix.num+2)) || !mad(2,(config&0x0001u)!=0)) {
                 out.error="failed to encode oracle texcoord mat4.xy transform";
                 return false;
             }

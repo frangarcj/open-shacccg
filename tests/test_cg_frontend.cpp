@@ -750,6 +750,14 @@ int test_cg_frontend() {
             "pos=mul(mvp,p);tc=mul(texmat[0],float4(uv,0.f,1.f)).xy;ps=point_size;}",
             "vp-mat4-array-texcoord-psize"))
         failures += fail("Cg mat4[1] TEXCOORD transform + PSIZE did not compile end to end");
+    if (!compile_vertex_gxp(
+            "void main(float4 p,float2 uv0,float2 uv1,float4 c,uniform float4x4 mvp,"
+            "uniform float4x4 texmat[2],uniform float point_size,float2 out tc0:TEXCOORD0,"
+            "float2 out tc1:TEXCOORD1,float4 out pos:POSITION,float4 out col:COLOR,float out ps:PSIZE){"
+            "pos=mul(mvp,p);tc0=mul(texmat[0],float4(uv0,0.f,1.f)).xy;"
+            "tc1=mul(texmat[1],float4(uv1,0.f,1.f)).xy;col=c;ps=point_size;}",
+            "vp-mat4-array2-texcoords-color-psize"))
+        failures += fail("Cg mat4[2] dual TEXCOORD + COLOR + PSIZE did not compile end to end");
     if (!compile("float2 in uv:TEXCOORD0;\nfloat sample_x(){return uv.x;}\nfloat4 main():COLOR0{return float4(sample_x(),0,0,1);}\n", VSC_STAGE_FRAGMENT))
         failures += fail("Cg global input semantic did not normalize into an entry-point parameter");
     if (!compile("float4 out gl_Position:POSITION;\nfloat2 out uv:TEXCOORD0;\nvoid main(float4 p:POSITION){gl_Position=p;uv=p.xy;}\n", VSC_STAGE_VERTEX))

@@ -188,6 +188,10 @@ constexpr uint16_t machine_vmad_uniform_mat4_config(bool no_schedule = false) {
     return no_schedule ? 0x0001u : 0u;
 }
 
+constexpr uint16_t machine_texcoord_mat4_xy_config(bool no_schedule_last = false) {
+    return no_schedule_last ? 0x0001u : 0u;
+}
+
 class MachineProgram {
 public:
     MachineOperand make_value(MachineType type);

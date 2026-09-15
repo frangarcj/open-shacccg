@@ -15,6 +15,7 @@
     "vitagl:ffp_v_baseline",
     "vitagl:ffp_v_color",
     "vitagl:ffp_v_texture1",
+    "vitagl:ffp_v_texture2_color",
     "vitagl:precompiled_blit_f",
     "vitagl:precompiled_blit_v",
     "vitagl:precompiled_clear_f"
