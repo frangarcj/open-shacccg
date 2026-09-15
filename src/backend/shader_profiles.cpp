@@ -2288,11 +2288,13 @@ bool compile_fragment_machine_profile(FragmentMachineProfile profile,
         interface_block[10]=1; interface_block[11]=4; interface_block[12]=1; interface_block[16]=4;
         interface_block[20]=0x0f; interface_block[21]=0xa0; interface_block[22]=0xd0; interface_block[23]=0x0e;
         interface_block[28]=0x30;
-        containers={{19,0,0,2}};
-        image.program_flags=0x1000;
+        image.minor_version=5;
+        image.sdk_version=0x0300;
+        image.program_flags=0x00181000;
         image.primary_register_count=4;
-        image.secondary_register_count=2;
-        image.compiler_version_raw=0;
+        image.secondary_register_count=0;
+        image.data_buffer_count=0;
+        image.compiler_version_raw=0x00033a90;
         break;
 
     case FragmentMachineProfile::TextureTint2D: {

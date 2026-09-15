@@ -87,9 +87,9 @@ Implemented now:
   Typed/Machine loop state, signed-32 `i<n` VTST, I32MAD2 counter update/feed-through and BR back-edges
 - structured fragment `if/else` from glslang: two-way `OpPhi` values that feed COLOR0 are
   sunk into branch-local output packs, so real Cg conditionals reach Machine BR/GXP without a physical phi opcode
-- all seven public libvita2d Cg shaders pass through the Typed Vita IR path; five generated GXPs
+- all seven public libvita2d Cg shaders pass through the Typed Vita IR path; four generated GXPs
   remain byte-identical to the preserved historical samples outside Sony's two GUID fields, while
-  `texture_f` and `texture_tint_f` now target the newer SDK 3.0.0 v1.5 layouts byte-for-byte
+  `color_f`, `texture_f` and `texture_tint_f` now target the newer SDK 3.0.0 v1.5 layouts byte-for-byte
 - frontend -> SPIR-V and SPIR-V -> Vita IR -> USSE/GXP boundaries
 - independent structured GXP reader for real Vita program images
 - canonical GXP serializer for interface data, primary/secondary code, parameter containers,
@@ -492,7 +492,8 @@ texture profiles now follow the SDK 3.0.0 v1.5 oracle: direct reads carry sample
 query `0x0302`, tint/dependent reads carry `0x0301`, and the tint path stages
 SA0/1 and PA0/1 through two semantic VPCKs before the validated four-lane
 V16NMAD multiply-pack. `SPRITECOORD` uses the same stream with its point-sprite
-interface/flag metadata. The `clear_f` secondary F32->F16 VPCK keeps its observed
+interface/flag metadata. `color_f` also follows the SDK 3.0.0 v1.5 no-secondary
+layout exactly. The `clear_f` secondary F32->F16 VPCK keeps its observed
 overlapping secondary-code layout.
 
 Generic fragment arithmetic also stays in Typed/Machine IR rather than building

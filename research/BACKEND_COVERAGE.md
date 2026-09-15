@@ -110,12 +110,12 @@ Observed source acceptance during the initial probe:
 
 With glslang + SPIRV-Tools + SPIRV-Cross enabled together, all seven public
 libvita2d shaders now compile end-to-end from original Cg source through the
-compact Typed Vita IR. Five resulting GXPs still match the preserved public
+compact Typed Vita IR. Four resulting GXPs still match the preserved public
 samples byte-for-byte outside the two Sony GUID fields. The two fragment texture
-profiles deliberately target the newer SDK 3.0.0 oracle instead: `texture_f`
-and `texture_tint_f` are byte-identical to ShaccCg 3.0.0 output, including v1.5
-sampler-query metadata and USSE. Sony GUID generation remains unknown and
-open-shacccg currently emits zero there.
+profiles and `color_f` deliberately target the newer SDK 3.0.0 oracle instead:
+`color_f`, `texture_f` and `texture_tint_f` are byte-identical to ShaccCg 3.0.0
+output, including v1.5 metadata and USSE. Sony GUID generation remains unknown
+and open-shacccg currently emits zero there.
 
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
@@ -158,10 +158,10 @@ inventing an SMP instruction that is absent from the public sample.
 
 The vertex, texture-tint and generic fragment arithmetic paths no longer carry
 their own TEMP/GPI free lists, direct register-bank selections or semantic USSE
-instruction construction in `shader_profiles.cpp`. Five preserved libvita2d GXPs
-remain byte-identical after the migration; `texture_f` and `texture_tint_f` now
-deliberately track the newer SDK 3.0.0 v1.5 oracle layouts instead of their
-historical v1.4 samples.
+instruction construction in `shader_profiles.cpp`. Four preserved libvita2d GXPs
+remain byte-identical after the migration; `color_f`, `texture_f` and
+`texture_tint_f` now deliberately track the newer SDK 3.0.0 v1.5 oracle layouts
+instead of their historical v1.4 samples.
 
 Typed IR now lowers F32x4 mul/add/sub/min/max, scalar dot, negate and absolute
 through the same Machine IR. SPIRV-Cross also recognizes `OpFNegate` without

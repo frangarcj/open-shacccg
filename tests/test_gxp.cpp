@@ -109,14 +109,21 @@ int test_gxp() {
     }
 
     {
-        auto expected = load("color_f.gxp");
         vsc::backend::IrCompileResult generated;
         if (!vsc::backend::compile_fragment_machine_profile(vsc::backend::FragmentMachineProfile::VaryingColor,
-                {},{},0x989d839a,0x0027145a,generated)) failures += fail("color_f Machine profile compilation failed");
-        else if (generated.gxp.size()!=expected.size() || std::memcmp(generated.gxp.data(),expected.data(),expected.size())!=0) {
-            size_t first=0; while(first<generated.gxp.size() && first<expected.size() && generated.gxp[first]==expected[first]) ++first;
-            std::fprintf(stderr,"test_gxp: color_f Machine profile differs at 0x%zx (generated=%zu expected=%zu)\n",first,generated.gxp.size(),expected.size());
-            ++failures;
+                {},{},0,0,generated)) failures += fail("color_f Machine profile compilation failed");
+        else {
+            ProgramView view(generated.gxp.data(),generated.gxp.size());
+            const uint64_t words[]={0xfa44070000000000ULL,0x40800d7ea0198002ULL};
+            const auto code=view.primary_program();
+            if (!view.valid() || generated.gxp.size()!=212 || view.logical_size()!=212 ||
+                view.major_version()!=1 || view.minor_version()!=5 || view.sdk_version()!=0x0300 ||
+                view.flags()!=0x00181001 || view.primary_register_count()!=4 ||
+                view.secondary_register_count()!=0 || view.compiler_version_raw()!=0x00033a90 ||
+                view.container_count()!=0 || view.parameter_count()!=0 || code.size!=sizeof(words) ||
+                std::memcmp(code.data,words,sizeof(words))!=0) {
+                failures += fail("color_f Machine profile does not match SDK 3.0.0 oracle");
+            }
         }
     }
 
