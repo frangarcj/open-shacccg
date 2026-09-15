@@ -176,13 +176,13 @@ bool compile_control_flow_gxp(const std::string &source) {
     return ok;
 }
 
-bool compile_fragment_gxp(const std::string &source, const char *name) {
+bool compile_shader_gxp(const std::string &source, const char *name, VscStage stage) {
     VscCompileRequest request{};
     request.source_name=name;
     request.source=source.data();
     request.source_size=source.size();
     request.entrypoint="main";
-    request.stage=VSC_STAGE_FRAGMENT;
+    request.stage=stage;
     VscCompileResult result{};
     const int rc=vsc_compile(&request,&result);
     const bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
@@ -191,6 +191,10 @@ bool compile_fragment_gxp(const std::string &source, const char *name) {
                      result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
     vsc_destroy_result(&request.allocator,&result);
     return ok;
+}
+
+bool compile_fragment_gxp(const std::string &source, const char *name) {
+    return compile_shader_gxp(source,name,VSC_STAGE_FRAGMENT);
 }
 
 bool compile_loop_gxp(const std::string &source, const char *name, uint8_t step) {
@@ -623,6 +627,9 @@ int test_cg_frontend() {
     if (!compile("float4 out gl_Position:POSITION;\nfloat2 out uv:TEXCOORD0;\nvoid main(float4 p:POSITION){gl_Position=p;uv=p.xy;}\n", VSC_STAGE_VERTEX))
         failures += fail("Cg global output semantics did not normalize into entry-point parameters");
 #if defined(OPENSHACCG_ENABLE_SPIRV_CROSS)
+    if (!compile_shader_gxp("uniform float3x3 unused_matrix; float4 main(float4 p:POSITION):POSITION{return p;}",
+                            "unused-matrix-uniform.cg",VSC_STAGE_VERTEX))
+        failures += fail("unused unsupported uniform member type blocked an otherwise valid shader");
     struct PublicShader { const char *name; VscStage stage; };
     const PublicShader public_shaders[] = {
         {"clear_f", VSC_STAGE_FRAGMENT},

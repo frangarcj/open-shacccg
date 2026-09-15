@@ -190,6 +190,7 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
             uint16_t resource = std::numeric_limits<uint16_t>::max();
             backend::TypedValue value{};
             bool matrix = false;
+            bool supported = false;
         };
         struct ExtractInfo {
             backend::TypedValue source{};
@@ -291,16 +292,20 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                 if (is_f32_mat4(member_type)) {
                     if (!add_resource(backend::TypedResourceKind::Matrix4, {}, backend::TypedType::F32x4,
                                       member_name, index, backend::TypedSemantic::None, 0, resource_id)) return false;
-                    members[member] = {resource_id, {}, true};
+                    members[member] = {resource_id, {}, true, true};
                     continue;
                 }
                 const auto type = typed_type(member_type);
-                if (type == backend::TypedType::Invalid) { error = "uniform member type is unsupported by Typed IR"; return false; }
+                // Glslang can retain unused globals in its aggregate HLSL
+                // uniform block. Do not reject a shader merely because one of
+                // those dead members has a type outside Typed IR; fail closed
+                // if an access chain actually reaches it below.
+                if (type == backend::TypedType::Invalid) continue;
                 const auto value = program.uniform(type, index);
                 if (value.kind() == backend::TypedValueKind::None) { error = "failed to create Typed IR uniform"; return false; }
                 if (!add_resource(backend::TypedResourceKind::Uniform, value, type, member_name, index,
                                   backend::TypedSemantic::None, 0, resource_id)) return false;
-                members[member] = {resource_id, value, false};
+                members[member] = {resource_id, value, false, true};
             }
         }
 
@@ -502,6 +507,10 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     const uint32_t member = index_it->second;
                     if (member >= block->second.size()) { error = "uniform access-chain member is out of range"; return false; }
                     const auto &uniform=block->second[member];
+                    if (!uniform.supported) {
+                        error="used uniform member type is unsupported by Typed IR";
+                        return false;
+                    }
                     if (count==5) {
                         access_chain_members[args[1]]=uniform;
                     } else if (count==6 && !uniform.matrix) {
