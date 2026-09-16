@@ -283,6 +283,45 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        if (!program.emit<MachineOpcode::TransformMat4>(0,
+                program.physical(machine_vertex_output(0),MachineType::F32),
+                program.physical(machine_primary(0),MachineType::F32),
+                program.physical(machine_secondary(0),MachineType::F32)) ||
+            !program.emit<MachineOpcode::TransformMat4>(0,
+                program.physical(machine_vertex_output(2),MachineType::F32),
+                program.physical(machine_primary(0),MachineType::F32),
+                program.physical(machine_secondary(8),MachineType::F32))) {
+            failures += fail("could not construct shared-stage two-mat4 fixture");
+        } else {
+            MachineCompileResult result;
+            const uint64_t expected[]={
+                0x40800dbcaf998002ULL,0x18903081c011a200ULL,0x18903081c091a208ULL,
+            };
+            if (!compile_machine_program(program,result) || result.words.size()!=std::size(expected) ||
+                !std::equal(result.words.begin(),result.words.end(),std::begin(expected)))
+                failures += fail("consecutive same-source mat4 transforms did not share oracle VPCK staging");
+        }
+
+        MachineProgram barrier;
+        if (!barrier.emit<MachineOpcode::TransformMat4>(0,
+                barrier.physical(machine_vertex_output(0),MachineType::F32),
+                barrier.physical(machine_primary(0),MachineType::F32),
+                barrier.physical(machine_secondary(0),MachineType::F32)) ||
+            !barrier.emit<MachineOpcode::Nop>() ||
+            !barrier.emit<MachineOpcode::TransformMat4>(0,
+                barrier.physical(machine_vertex_output(2),MachineType::F32),
+                barrier.physical(machine_primary(0),MachineType::F32),
+                barrier.physical(machine_secondary(8),MachineType::F32))) {
+            failures += fail("could not construct mat4 staging barrier fixture");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(barrier,result) || result.words.size()!=5)
+                failures += fail("non-transform barrier failed to invalidate mat4 staging cache");
+        }
+    }
+
+    {
+        MachineProgram program;
         if (!program.emit<MachineOpcode::TransformMat3>(0,
                 program.physical(usse::RegisterBank::Temp,40,MachineType::F32),
                 program.physical(machine_primary(0),MachineType::F32),

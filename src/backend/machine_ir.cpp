@@ -782,8 +782,11 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
     }
 
     ProgramBuilder builder;
+    bool mat4_stage_valid=false;
+    usse::RegisterRef mat4_stage_source{};
     for (uint32_t instruction_index = 0; instruction_index < program.instructions().size(); ++instruction_index) {
         const auto &instruction = program.instructions()[instruction_index];
+        if (instruction.opcode()!=MachineOpcode::TransformMat4) mat4_stage_valid=false;
         usse::Predicate guard = usse::Predicate::Always;
         if (!resolve_guard(instruction, out.predicate_registers, &guard)) {
             out.error = "failed to resolve guard predicate";
@@ -1391,15 +1394,19 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                     out.error="SA0 mat4 VMAD source pair exceeds register bank";
                     return false;
                 }
+                const bool reuse_stage=program.labels().empty() && mat4_stage_valid &&
+                    mat4_stage_source.bank==src.bank && mat4_stage_source.num==src.num;
                 usse::VpckSemantic stage{};
-                stage.dst={usse::RegisterBank::Temp,124};
-                stage.src1=src;
-                stage.src2={src.bank,static_cast<uint8_t>(src.num+1u)};
-                stage.src_format=usse::PackFormat::F32;
-                stage.dst_format=usse::PackFormat::F32;
-                stage.dest_mask=0xF;
-                stage.skip_invalid=true;
-                stage.no_schedule=false;
+                if (!reuse_stage) {
+                    stage.dst={usse::RegisterBank::Temp,124};
+                    stage.src1=src;
+                    stage.src2={src.bank,static_cast<uint8_t>(src.num+1u)};
+                    stage.src_format=usse::PackFormat::F32;
+                    stage.dst_format=usse::PackFormat::F32;
+                    stage.dest_mask=0xF;
+                    stage.skip_invalid=true;
+                    stage.no_schedule=false;
+                }
                 usse::VmadSemantic mad{};
                 mad.dst=dst;
                 mad.src1=matrix;
@@ -1418,12 +1425,15 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 mad.repeat_count=3;
                 mad.skip_invalid=true;
                 mad.no_schedule=false;
-                if (!builder.instruction(stage) || !builder.instruction(mad)) {
+                if ((!reuse_stage && !builder.instruction(stage)) || !builder.instruction(mad)) {
                     out.error="failed to encode aligned mat4 VPCK/VMAD selection";
                     return false;
                 }
+                mat4_stage_valid=program.labels().empty();
+                mat4_stage_source=src;
                 break;
             }
+            mat4_stage_valid=false;
             for (uint8_t lane=0;lane<4;++lane) {
                 usse::V32NmadSemantic dot{};
                 dot.op=usse::VectorOp::Dot;
