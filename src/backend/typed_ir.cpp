@@ -41,6 +41,125 @@ const TypedOpcodeDesc *descriptor(TypedOpcode opcode) {
     return index < std::size(kTypedOpcodeDesc) ? &kTypedOpcodeDesc[index] : nullptr;
 }
 
+struct Fixed16LocalPlan {
+    std::vector<bool> skip_instruction;
+    std::vector<TypedValue> source_for_root;
+    std::vector<bool> absorbed_literals;
+};
+
+Fixed16LocalPlan analyze_fixed16_local(const TypedProgram &typed) {
+    Fixed16LocalPlan plan{};
+    const auto &instructions=typed.instructions();
+    plan.skip_instruction.assign(instructions.size(),false);
+    plan.source_for_root.resize(instructions.size());
+    plan.absorbed_literals.assign(typed.literals().size(),false);
+    if (!typed.labels().empty()) return plan;
+
+    const uint32_t none=std::numeric_limits<uint32_t>::max();
+    std::vector<uint32_t> definition_index(typed.value_count(),none);
+    std::vector<uint32_t> value_uses(typed.value_count(),0);
+    std::vector<uint32_t> literal_uses(typed.literals().size(),0),matched_scale_uses(typed.literals().size(),0);
+    auto count_use=[&](TypedValue value) {
+        if (value.kind()==TypedValueKind::Value && value.id()<value_uses.size()) ++value_uses[value.id()];
+        else if (value.kind()==TypedValueKind::Literal && value.id()<literal_uses.size()) ++literal_uses[value.id()];
+    };
+    for (uint32_t index=0;index<instructions.size();++index) {
+        const auto &candidate=instructions[index];
+        const auto *desc=descriptor(candidate.opcode());
+        if (desc && desc->roles[0]==TypedRole::ValueDef && candidate.dst.kind()==TypedValueKind::Value &&
+            candidate.dst.id()<definition_index.size())
+            definition_index[candidate.dst.id()]=index;
+        count_use(candidate.src0); count_use(candidate.src1);
+    }
+    for (const auto &composite:typed.float3_composites()) for (const auto value:composite) count_use(value);
+    for (const auto &composite:typed.float4_composites()) for (const auto value:composite) count_use(value);
+    for (const auto &select:typed.float_selects()) { count_use(select.true_value); count_use(select.false_value); }
+
+    auto definition_of=[&](TypedValue value) -> const TypedInstruction * {
+        if (value.kind()!=TypedValueKind::Value || value.id()>=definition_index.size()) return nullptr;
+        const uint32_t index=definition_index[value.id()];
+        return index<instructions.size()?&instructions[index]:nullptr;
+    };
+    auto definition_position=[&](TypedValue value) -> uint32_t {
+        return value.kind()==TypedValueKind::Value && value.id()<definition_index.size()?definition_index[value.id()]:none;
+    };
+    auto single_use=[&](TypedValue value) {
+        return value.kind()==TypedValueKind::Value && value.id()<value_uses.size() && value_uses[value.id()]==1;
+    };
+    auto literal_is=[&](TypedValue value,TypedType type,uint32_t bits) {
+        return value.kind()==TypedValueKind::Literal && value.type()==type && value.id()<typed.literals().size() &&
+            typed.literals()[value.id()]==bits;
+    };
+
+    for (uint32_t root_index=0;root_index<instructions.size();++root_index) {
+        const auto &root=instructions[root_index];
+        if (root.opcode()!=TypedOpcode::FloatBinary ||
+            root.subop()!=static_cast<uint8_t>(TypedFloatOp::Add) || root.dst.type()!=TypedType::F32) continue;
+
+        TypedValue signed_value{},scaled_value{};
+        auto split_add=[&](TypedValue a,TypedValue b) {
+            const auto *signed_def=definition_of(a),*scaled_def=definition_of(b);
+            if (signed_def && signed_def->opcode()==TypedOpcode::Narrow16ToFloat && signed_def->subop()==1 &&
+                scaled_def && scaled_def->opcode()==TypedOpcode::FloatBinary &&
+                scaled_def->subop()==static_cast<uint8_t>(TypedFloatOp::Mul)) {
+                signed_value=a; scaled_value=b; return true;
+            }
+            return false;
+        };
+        if (!split_add(root.src0,root.src1) && !split_add(root.src1,root.src0)) continue;
+
+        const auto *signed_narrow=definition_of(signed_value);
+        const auto *scaled=definition_of(scaled_value);
+        TypedValue unsigned_value{},scale{};
+        const auto *scaled0=definition_of(scaled->src0),*scaled1=definition_of(scaled->src1);
+        if (scaled0 && scaled0->opcode()==TypedOpcode::Narrow16ToFloat && scaled0->subop()==0 &&
+            literal_is(scaled->src1,TypedType::F32,0x37800000u)) {
+            unsigned_value=scaled->src0; scale=scaled->src1;
+        } else if (scaled1 && scaled1->opcode()==TypedOpcode::Narrow16ToFloat && scaled1->subop()==0 &&
+                   literal_is(scaled->src0,TypedType::F32,0x37800000u)) {
+            unsigned_value=scaled->src1; scale=scaled->src0;
+        } else continue;
+
+        const auto *unsigned_narrow=definition_of(unsigned_value);
+        const auto *signed_bits=definition_of(signed_narrow->src0),*unsigned_bits=definition_of(unsigned_narrow->src0);
+        if (!signed_bits || signed_bits->opcode()!=TypedOpcode::Bitwise ||
+            signed_bits->subop()!=static_cast<uint8_t>(usse::BitwiseOp::ArithmeticShiftRight) ||
+            !literal_is(signed_bits->src1,TypedType::S32,16u) || !unsigned_bits ||
+            unsigned_bits->opcode()!=TypedOpcode::Bitwise ||
+            unsigned_bits->subop()!=static_cast<uint8_t>(usse::BitwiseOp::And)) continue;
+
+        TypedValue unsigned_bitcast_value{};
+        if (literal_is(unsigned_bits->src0,TypedType::U32,0xffffu)) unsigned_bitcast_value=unsigned_bits->src1;
+        else if (literal_is(unsigned_bits->src1,TypedType::U32,0xffffu)) unsigned_bitcast_value=unsigned_bits->src0;
+        else continue;
+        const auto *signed_bitcast=definition_of(signed_bits->src0),*unsigned_bitcast=definition_of(unsigned_bitcast_value);
+        if (!signed_bitcast || signed_bitcast->opcode()!=TypedOpcode::Bitcast || signed_bitcast->dst.type()!=TypedType::S32 ||
+            signed_bitcast->src0.type()!=TypedType::F32 || !unsigned_bitcast ||
+            unsigned_bitcast->opcode()!=TypedOpcode::Bitcast || unsigned_bitcast->dst.type()!=TypedType::U32 ||
+            unsigned_bitcast->src0.type()!=TypedType::F32 || signed_bitcast->src0.bits!=unsigned_bitcast->src0.bits) continue;
+
+        const TypedValue feeders[]={signed_value,scaled_value,unsigned_value,signed_narrow->src0,
+                                    unsigned_narrow->src0,signed_bits->src0,unsigned_bitcast_value};
+        bool isolated=true;
+        for (const auto value:feeders) isolated=isolated&&single_use(value);
+        if (!isolated) continue;
+        const uint32_t indices[]={definition_position(signed_value),definition_position(scaled_value),
+            definition_position(unsigned_value),definition_position(signed_narrow->src0),
+            definition_position(unsigned_narrow->src0),definition_position(signed_bits->src0),
+            definition_position(unsigned_bitcast_value)};
+        bool valid=true;
+        for (uint32_t index:indices)
+            valid=valid && index<root_index && index<plan.skip_instruction.size() && !plan.skip_instruction[index];
+        if (!valid) continue;
+        for (uint32_t index:indices) plan.skip_instruction[index]=true;
+        plan.source_for_root[root_index]=signed_bitcast->src0;
+        if (scale.id()<matched_scale_uses.size()) ++matched_scale_uses[scale.id()];
+    }
+    for (uint32_t id=0;id<plan.absorbed_literals.size();++id)
+        plan.absorbed_literals[id]=matched_scale_uses[id]!=0 && matched_scale_uses[id]==literal_uses[id];
+    return plan;
+}
+
 MachineType machine_type(TypedType type) {
     switch (type) {
     case TypedType::F32: return MachineType::F32;
@@ -370,127 +489,9 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
     std::vector<bool> value_defined(typed.value_count(), false);
     std::vector<bool> predicate_defined(typed.predicate_count(), false);
 
-    const auto &typed_instructions=typed.instructions();
-    const uint32_t no_definition=std::numeric_limits<uint32_t>::max();
-    std::vector<uint32_t> definition_index(typed.value_count(),no_definition);
-    std::vector<uint32_t> use_count(typed.value_count(),0);
-    for (uint32_t index=0;index<typed_instructions.size();++index) {
-        const auto &candidate=typed_instructions[index];
-        const auto *candidate_desc=descriptor(candidate.opcode());
-        if (candidate_desc && candidate_desc->roles[0]==TypedRole::ValueDef &&
-            candidate.dst.kind()==TypedValueKind::Value && candidate.dst.id()<definition_index.size())
-            definition_index[candidate.dst.id()]=index;
-        if (candidate.src0.kind()==TypedValueKind::Value && candidate.src0.id()<use_count.size())
-            ++use_count[candidate.src0.id()];
-        if (candidate.src1.kind()==TypedValueKind::Value && candidate.src1.id()<use_count.size())
-            ++use_count[candidate.src1.id()];
-    }
-    for (const auto &composite:typed.float3_composites())
-        for (const auto value:composite)
-            if (value.kind()==TypedValueKind::Value && value.id()<use_count.size()) ++use_count[value.id()];
-    for (const auto &composite:typed.float4_composites())
-        for (const auto value:composite)
-            if (value.kind()==TypedValueKind::Value && value.id()<use_count.size()) ++use_count[value.id()];
-    for (const auto &select:typed.float_selects()) {
-        for (const auto value:{select.true_value,select.false_value})
-            if (value.kind()==TypedValueKind::Value && value.id()<use_count.size()) ++use_count[value.id()];
-    }
-
-    std::vector<bool> skip_instruction(typed_instructions.size(),false);
-    std::vector<TypedValue> fixed16_source(typed_instructions.size());
-    if (typed.labels().empty()) {
-        auto definition_of=[&](TypedValue value) -> const TypedInstruction * {
-            if (value.kind()!=TypedValueKind::Value || value.id()>=definition_index.size()) return nullptr;
-            const uint32_t index=definition_index[value.id()];
-            return index<typed_instructions.size()?&typed_instructions[index]:nullptr;
-        };
-        auto definition_position=[&](TypedValue value) -> uint32_t {
-            return value.kind()==TypedValueKind::Value && value.id()<definition_index.size() ?
-                definition_index[value.id()] : no_definition;
-        };
-        auto single_use=[&](TypedValue value) {
-            return value.kind()==TypedValueKind::Value && value.id()<use_count.size() && use_count[value.id()]==1;
-        };
-        auto literal_is=[&](TypedValue value,TypedType type,uint32_t bits) {
-            return value.kind()==TypedValueKind::Literal && value.type()==type &&
-                value.id()<typed.literals().size() && typed.literals()[value.id()]==bits;
-        };
-        for (uint32_t root_index=0;root_index<typed_instructions.size();++root_index) {
-            const auto &root=typed_instructions[root_index];
-            if (root.opcode()!=TypedOpcode::FloatBinary ||
-                root.subop()!=static_cast<uint8_t>(TypedFloatOp::Add) || root.dst.type()!=TypedType::F32)
-                continue;
-
-            TypedValue signed_value{},scaled_value{};
-            auto split_add=[&](TypedValue a,TypedValue b) {
-                const auto *signed_def=definition_of(a);
-                const auto *scaled_def=definition_of(b);
-                if (signed_def && signed_def->opcode()==TypedOpcode::Narrow16ToFloat && signed_def->subop()==1 &&
-                    scaled_def && scaled_def->opcode()==TypedOpcode::FloatBinary &&
-                    scaled_def->subop()==static_cast<uint8_t>(TypedFloatOp::Mul)) {
-                    signed_value=a;
-                    scaled_value=b;
-                    return true;
-                }
-                return false;
-            };
-            if (!split_add(root.src0,root.src1) && !split_add(root.src1,root.src0)) continue;
-
-            const auto *signed_narrow=definition_of(signed_value);
-            const auto *scaled=definition_of(scaled_value);
-            TypedValue unsigned_value{},scale{};
-            const auto *scaled0=definition_of(scaled->src0);
-            const auto *scaled1=definition_of(scaled->src1);
-            if (scaled0 && scaled0->opcode()==TypedOpcode::Narrow16ToFloat && scaled0->subop()==0 &&
-                literal_is(scaled->src1,TypedType::F32,0x37800000u)) {
-                unsigned_value=scaled->src0; scale=scaled->src1;
-            } else if (scaled1 && scaled1->opcode()==TypedOpcode::Narrow16ToFloat && scaled1->subop()==0 &&
-                       literal_is(scaled->src0,TypedType::F32,0x37800000u)) {
-                unsigned_value=scaled->src1; scale=scaled->src0;
-            } else continue;
-            (void)scale;
-
-            const auto *unsigned_narrow=definition_of(unsigned_value);
-            const auto *signed_bits=definition_of(signed_narrow->src0);
-            const auto *unsigned_bits=definition_of(unsigned_narrow->src0);
-            if (!signed_bits || signed_bits->opcode()!=TypedOpcode::Bitwise ||
-                signed_bits->subop()!=static_cast<uint8_t>(usse::BitwiseOp::ArithmeticShiftRight) ||
-                !literal_is(signed_bits->src1,TypedType::S32,16u) ||
-                !unsigned_bits || unsigned_bits->opcode()!=TypedOpcode::Bitwise ||
-                unsigned_bits->subop()!=static_cast<uint8_t>(usse::BitwiseOp::And))
-                continue;
-
-            TypedValue unsigned_bitcast_value{};
-            if (literal_is(unsigned_bits->src0,TypedType::U32,0xffffu)) unsigned_bitcast_value=unsigned_bits->src1;
-            else if (literal_is(unsigned_bits->src1,TypedType::U32,0xffffu)) unsigned_bitcast_value=unsigned_bits->src0;
-            else continue;
-            const auto *signed_bitcast=definition_of(signed_bits->src0);
-            const auto *unsigned_bitcast=definition_of(unsigned_bitcast_value);
-            if (!signed_bitcast || signed_bitcast->opcode()!=TypedOpcode::Bitcast ||
-                signed_bitcast->dst.type()!=TypedType::S32 || signed_bitcast->src0.type()!=TypedType::F32 ||
-                !unsigned_bitcast || unsigned_bitcast->opcode()!=TypedOpcode::Bitcast ||
-                unsigned_bitcast->dst.type()!=TypedType::U32 || unsigned_bitcast->src0.type()!=TypedType::F32 ||
-                signed_bitcast->src0.bits!=unsigned_bitcast->src0.bits)
-                continue;
-
-            const TypedValue feeder_values[]={signed_value,scaled_value,unsigned_value,signed_narrow->src0,
-                                              unsigned_narrow->src0,signed_bits->src0,unsigned_bitcast_value};
-            bool isolated=true;
-            for (const auto value:feeder_values) isolated = isolated && single_use(value);
-            if (!isolated) continue;
-
-            const uint32_t feeder_indices[]={definition_position(signed_value),definition_position(scaled_value),
-                definition_position(unsigned_value),definition_position(signed_narrow->src0),
-                definition_position(unsigned_narrow->src0),definition_position(signed_bits->src0),
-                definition_position(unsigned_bitcast_value)};
-            bool valid=true;
-            for (uint32_t index:feeder_indices)
-                valid=valid && index<root_index && index<skip_instruction.size() && !skip_instruction[index];
-            if (!valid) continue;
-            for (uint32_t index:feeder_indices) skip_instruction[index]=true;
-            fixed16_source[root_index]=signed_bitcast->src0;
-        }
-    }
+    const auto fixed16_plan=analyze_fixed16_local(typed);
+    const auto &skip_instruction=fixed16_plan.skip_instruction;
+    const auto &fixed16_source=fixed16_plan.source_for_root;
 
     std::vector<MachineOperand> machine_labels;
     machine_labels.reserve(typed.labels().size());
@@ -2008,9 +2009,12 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 std::vector<MachineOperand> literal_bindings(program.literals().size());
                 std::vector<IrLiteralF32> literal_meta;
                 std::unordered_map<uint32_t,uint32_t> literal_index_by_bits;
+                const auto local_plan=analyze_fixed16_local(program);
                 auto bind_literal=[&](TypedValue value) -> bool {
                     if (value.kind()!=TypedValueKind::Literal || value.id()>=program.literals().size()) return true;
                     if (value.type()!=TypedType::F32) return true;
+                    if (value.id()<local_plan.absorbed_literals.size() && local_plan.absorbed_literals[value.id()])
+                        return true;
                     if (literal_bindings[value.id()].kind()!=MachineOperandKind::None) return true;
                     const uint32_t bits=program.literals()[value.id()];
                     if (value.type()==TypedType::F32 && bits==0) {

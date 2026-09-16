@@ -1092,7 +1092,7 @@ int test_cg_frontend() {
                 view.primary_register_count()==12 && view.parameter_count()==6 &&
                 view.primary_instruction_count()==46 && view.secondary_instruction_count()==0 &&
                 scaled_low_unpack_count==6 && high_unpack_count==6 && point_write &&
-                interface.size==32 && interface.data[19]==11 && has_literal(original,0x37800000u);
+                interface.size==32 && interface.data[19]==11 && !has_literal(original,0x37800000u);
             const uint32_t offsets[]={0,4,8,0,16,32};
             for (uint32_t i=0;ok && i<6;++i) {
                 vsc::gxp::ParameterView parameter{};
@@ -1105,6 +1105,7 @@ int test_cg_frontend() {
             {"fx(p.x)","fx(p.y)"},
             {"col=c;","col=c*0.75f;"},
             {"ps=point_size;","ps=point_size*0.5f;"},
+            {"ps=point_size;","ps=point_size+1.0f/65536.0f;"},
             {"col=c;","col=float4(c.x,0.25f,c.z,1.f);"},
             {"pos=mul(mvp,p);","pos=p;"},
             {"uniform float point_size){","uniform float point_size,uniform float shift){p.x+=shift;"},
@@ -1120,6 +1121,8 @@ int test_cg_frontend() {
             }
             if (std::strcmp(mutation.from,"65536.0f")==0)
                 ok=ok && has_literal(changed,0x38000000u) && !has_literal(changed,0x37800000u);
+            if (std::strcmp(mutation.to,"ps=point_size+1.0f/65536.0f;")==0)
+                ok=ok && has_literal(changed,0x37800000u);
         }
         std::string renamed;
         for (size_t i=0;i<source.size();) {

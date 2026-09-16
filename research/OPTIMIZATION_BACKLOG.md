@@ -48,9 +48,13 @@ correctness for nearby source variants.
   not a fixed16 rule; non-SA0 matrices still use the four-DOT fallback. On the
   fixed16 corpus case this removes two more primary words: 48 -> 46 and
   764 -> 748 bytes.
+- Literal binding now consumes the same fixed16 local plan. The `1/65536`
+  constant is omitted only when every use is absorbed by canonical unpack folds;
+  a live extra use keeps it. This trims the current image to 740 bytes and
+  SA=36 without changing USSE, matching Sony's observed secondary-register count.
 - Sony SDK 3.0 remains 21 primary + 3 secondary instructions, 568 bytes,
   PA=12/SA=36. Next optimizations are validating non-SA0 matrix VMAD selection,
-  cross-component unpack batching/VDUAL, literal DCE and point-size hoisting,
+  cross-component unpack batching/VDUAL and point-size hoisting,
   retaining actual operands and constants.
   Do not restore the complete schedule to recover byte equality.
 - Continue numeric validation of mixed integer/F32 register addressing, register

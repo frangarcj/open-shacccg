@@ -179,6 +179,10 @@ VPCK + repeated-VMAD form for matrices rooted at SA0; other matrix bases remain
 on the generic four-DOT path. The fixed16 case therefore currently emits 46
 primary instructions / 748 bytes. This selection is keyed only by the resolved
 matrix register base and operands, not by shader/interface identity.
+The same local-plan analysis drives literal binding: fully absorbed `1/65536`
+uses are dead and no longer reserve a literal/SA slot, while any independent
+live use retains the constant. The current fixed16 image is therefore 740 bytes,
+46 primary instructions and PA=12/SA=36.
 The validated U16/S16 VPCK and VDUAL encoders remain available for further local
 selection; no full fixed16 shader schedule has been restored.
 
