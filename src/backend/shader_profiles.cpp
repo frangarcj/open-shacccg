@@ -1139,12 +1139,11 @@ bool compile_vertex_uniform_matrix_three_texcoords_color_point_size(
     return true;
 }
 
-bool compile_vertex_fixed16_matrix_machine(const MachineProgram &primary,
-                                           const std::vector<IrAttribute> &attributes,
-                                           const std::vector<IrMatrix4Uniform> &matrices,
-                                           const IrUniformFloat &point_size,
-                                           uint32_t binary_guid, uint32_t source_guid,
-                                           IrCompileResult &out) {
+bool compile_vertex_fixed16_matrix(const std::vector<IrAttribute> &attributes,
+                                   const std::vector<IrMatrix4Uniform> &matrices,
+                                   const IrUniformFloat &point_size,
+                                   uint32_t binary_guid, uint32_t source_guid,
+                                   IrCompileResult &out) {
     out={};
     if (attributes.size()!=3 || matrices.size()!=2 || point_size.components!=1 ||
         attributes[0].components!=4 || attributes[0].resource_index!=0 ||
@@ -1155,8 +1154,6 @@ bool compile_vertex_fixed16_matrix_machine(const MachineProgram &primary,
         out.error="fixed16 matrix profile requires position/uv/color, mat4@0/16 and point-size@32";
         return false;
     }
-    (void)primary;
-
     ProgramBuilder sdk3_primary,secondary;
     auto pack16=[&](usse::RegisterRef dst, usse::RegisterRef src, usse::PackFormat format,
                     uint8_t component, uint8_t repeat, bool scale, bool no_schedule) {
