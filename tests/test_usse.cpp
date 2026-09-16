@@ -815,6 +815,19 @@ int test_usse() {
             failures += fail("SDK 3.0 Phong fragment FRCP/VMUL VDUAL mismatch");
     }
     {
+        const uint64_t words[]={0x2894183ea1140484ULL,0x2894143e90940882ULL};
+        for (uint8_t phase=0;phase<2;++phase) {
+            VdualPoly3dF32DotMoveSemantic op{phase},decoded{};
+            uint64_t word=0;
+            if (!encode_vdual_poly3d_f32_dot_move_semantic(op,&word) || word!=words[phase] ||
+                !decode_vdual_poly3d_f32_dot_move_semantic(word,&decoded) || decoded.phase!=phase)
+                failures += fail("SDK 3.0 POLY3D VDP/VMOV VDUAL mismatch");
+        }
+        uint64_t word=0;
+        if (encode_vdual_poly3d_f32_dot_move_semantic({2},&word))
+            failures += fail("unvalidated POLY3D VDUAL phase was accepted");
+    }
+    {
         SmlsiSemantic swizzled{};
         swizzled.src1_inc_mode=true; swizzled.src2_inc_mode=true;
         swizzled.src1_inc=2; swizzled.src2_inc=2;

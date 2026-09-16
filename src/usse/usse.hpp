@@ -286,6 +286,9 @@ struct VdualSmoothF32ReciprocalMulSemantic {};
 // identifies these as VDP+VMOV and FRCP+VMUL. Keep the captured layouts narrow.
 struct VdualPhongFragmentF32DotMoveSemantic {};
 struct VdualPhongFragmentF32ReciprocalMulSemantic {};
+// SDK 3.0 Geometrizer POLY3D vertex uses two vec3 VDP+VMOV dual-issue layouts
+// with extended source swizzles. Keep the two captured forms phase-indexed.
+struct VdualPoly3dF32DotMoveSemantic { uint8_t phase = 0; };
 
 // SMLSI controls repeat-register increments for later vector instructions.
 // These fields follow the public USSE bit layout directly while keeping raw
@@ -832,6 +835,8 @@ bool encode_vdual_phong_fragment_f32_dot_move_semantic(const VdualPhongFragmentF
 bool decode_vdual_phong_fragment_f32_dot_move_semantic(uint64_t word, VdualPhongFragmentF32DotMoveSemantic *instruction);
 bool encode_vdual_phong_fragment_f32_reciprocal_mul_semantic(const VdualPhongFragmentF32ReciprocalMulSemantic &, uint64_t *word);
 bool decode_vdual_phong_fragment_f32_reciprocal_mul_semantic(uint64_t word, VdualPhongFragmentF32ReciprocalMulSemantic *instruction);
+bool encode_vdual_poly3d_f32_dot_move_semantic(const VdualPoly3dF32DotMoveSemantic &, uint64_t *word);
+bool decode_vdual_poly3d_f32_dot_move_semantic(uint64_t word, VdualPoly3dF32DotMoveSemantic *instruction);
 bool encode_smlsi_semantic(const SmlsiSemantic &, uint64_t *word);
 bool decode_smlsi_semantic(uint64_t word, SmlsiSemantic *instruction);
 bool encode_vmad_semantic(const VmadSemantic &instruction, uint64_t *word);
@@ -884,6 +889,7 @@ inline bool encode_semantic(const VdualSmoothF32DotMoveSemantic &i, uint64_t *wo
 inline bool encode_semantic(const VdualSmoothF32ReciprocalMulSemantic &i, uint64_t *word) { return encode_vdual_smooth_f32_reciprocal_mul_semantic(i, word); }
 inline bool encode_semantic(const VdualPhongFragmentF32DotMoveSemantic &i, uint64_t *word) { return encode_vdual_phong_fragment_f32_dot_move_semantic(i, word); }
 inline bool encode_semantic(const VdualPhongFragmentF32ReciprocalMulSemantic &i, uint64_t *word) { return encode_vdual_phong_fragment_f32_reciprocal_mul_semantic(i, word); }
+inline bool encode_semantic(const VdualPoly3dF32DotMoveSemantic &i, uint64_t *word) { return encode_vdual_poly3d_f32_dot_move_semantic(i, word); }
 inline bool encode_semantic(const SmlsiSemantic &i, uint64_t *word) { return encode_smlsi_semantic(i, word); }
 inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return encode_vmad_semantic(i, word); }
 inline bool encode_semantic(const VtstSemantic &i, uint64_t *word) { return encode_vtst_semantic(i, word); }

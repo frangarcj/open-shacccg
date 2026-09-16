@@ -992,6 +992,20 @@ bool decode_vdual_phong_fragment_f32_reciprocal_mul_semantic(uint64_t word, Vdua
     return i && word==0x200071002f8c10fdULL;
 }
 
+bool encode_vdual_poly3d_f32_dot_move_semantic(const VdualPoly3dF32DotMoveSemantic &i, uint64_t *word) {
+    if (!word || i.phase>1) return false;
+    *word=i.phase==0 ? 0x2894183ea1140484ULL : 0x2894143e90940882ULL;
+    return true;
+}
+
+bool decode_vdual_poly3d_f32_dot_move_semantic(uint64_t word, VdualPoly3dF32DotMoveSemantic *i) {
+    if (!i) return false;
+    if (word==0x2894183ea1140484ULL) i->phase=0;
+    else if (word==0x2894143e90940882ULL) i->phase=1;
+    else return false;
+    return true;
+}
+
 bool encode_smlsi_semantic(const SmlsiSemantic &i, uint64_t *word) {
     if (!word || i.temp_limit>=16 || i.primary_limit>=16 || i.secondary_limit>=16)
         return false;
