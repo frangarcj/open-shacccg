@@ -634,6 +634,24 @@ int test_usse() {
             failures += fail("SDK 3.0 smooth-lighting vector/scalar != VTST mismatch");
     }
     {
+        const uint64_t words[]={0x48c182801f92be80ULL,0x48c182801fb2be80ULL};
+        const uint8_t dsts[]={124,125};
+        for (size_t i=0;i<2;++i) {
+            VtstF32MaxNonzeroValueSemantic test{};
+            test.dst={RegisterBank::Temp,dsts[i]};
+            test.src={RegisterBank::Temp,125};
+            test.rhs={RegisterBank::Special,0};
+            uint64_t word=0;
+            VtstF32MaxNonzeroValueSemantic decoded{};
+            if (!encode_vtst_f32_max_nonzero_value_semantic(test,&word) || word!=words[i] ||
+                !decode_vtst_f32_max_nonzero_value_semantic(word,&decoded) ||
+                decoded.dst.bank!=RegisterBank::Temp || decoded.dst.num!=dsts[i] ||
+                decoded.src.bank!=RegisterBank::Temp || decoded.src.num!=125 ||
+                decoded.rhs.bank!=RegisterBank::Special || decoded.rhs.num!=0)
+                failures += fail("SDK 3.0 smooth-lighting VMAX nonzero value-VTST mismatch");
+        }
+    }
+    {
         struct Probe {
             uint64_t word;
             RegisterBank dst_bank;

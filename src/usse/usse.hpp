@@ -377,6 +377,16 @@ struct VtstF32LaneLessScalarSemantic {
     bool control_bit_54 = false;
 };
 
+// SDK 3.0 smooth-lighting VTST value-write form. The raw ALU is F32 VMAX,
+// tested for non-zero, with test-write enabled into a TEMP. Vita3K identifies
+// the VMAX/test fields but does not currently expose the writeback semantics;
+// keep this shape intentionally narrow to the observed operands.
+struct VtstF32MaxNonzeroValueSemantic {
+    RegisterRef dst{};
+    RegisterRef src{};
+    RegisterRef rhs{};
+};
+
 // Oracle-validated signed-32 loop compare. The first supported form is the
 // glslang/SceShaccCg `i < n` profile used by a dynamic for-loop.
 struct VtstS32Semantic {
@@ -805,6 +815,8 @@ bool encode_vtst_f32_semantic(const VtstF32Semantic &instruction, uint64_t *word
 bool decode_vtst_f32_semantic(uint64_t word, VtstF32Semantic *instruction);
 bool encode_vtst_f32_lane_less_scalar_semantic(const VtstF32LaneLessScalarSemantic &instruction, uint64_t *word);
 bool decode_vtst_f32_lane_less_scalar_semantic(uint64_t word, VtstF32LaneLessScalarSemantic *instruction);
+bool encode_vtst_f32_max_nonzero_value_semantic(const VtstF32MaxNonzeroValueSemantic &instruction, uint64_t *word);
+bool decode_vtst_f32_max_nonzero_value_semantic(uint64_t word, VtstF32MaxNonzeroValueSemantic *instruction);
 bool encode_vtst_s32_semantic(const VtstS32Semantic &instruction, uint64_t *word);
 bool decode_vtst_s32_semantic(uint64_t word, VtstS32Semantic *instruction);
 bool encode_i32mad2_semantic(const I32Mad2Semantic &instruction, uint64_t *word);
@@ -845,6 +857,7 @@ inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return enco
 inline bool encode_semantic(const VtstSemantic &i, uint64_t *word) { return encode_vtst_semantic(i, word); }
 inline bool encode_semantic(const VtstF32Semantic &i, uint64_t *word) { return encode_vtst_f32_semantic(i, word); }
 inline bool encode_semantic(const VtstF32LaneLessScalarSemantic &i, uint64_t *word) { return encode_vtst_f32_lane_less_scalar_semantic(i, word); }
+inline bool encode_semantic(const VtstF32MaxNonzeroValueSemantic &i, uint64_t *word) { return encode_vtst_f32_max_nonzero_value_semantic(i, word); }
 inline bool encode_semantic(const VtstS32Semantic &i, uint64_t *word) { return encode_vtst_s32_semantic(i, word); }
 inline bool encode_semantic(const I32Mad2Semantic &i, uint64_t *word) { return encode_i32mad2_semantic(i, word); }
 inline bool encode_semantic(const VbwSemantic &i, uint64_t *word) { return encode_vbw_semantic(i, word); }

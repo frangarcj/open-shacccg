@@ -1223,6 +1223,50 @@ bool decode_vtst_f32_lane_less_scalar_semantic(uint64_t word,
     return true;
 }
 
+bool encode_vtst_f32_max_nonzero_value_semantic(const VtstF32MaxNonzeroValueSemantic &i,
+                                                 uint64_t *word) {
+    if (!word || i.dst.num>=128 || i.src.num>=128 || i.rhs.num>=128) return false;
+    VtstFields f{};
+    if (!encode_dest_bank(i.dst.bank,&f.dest_bank,&f.dest_ext) ||
+        !encode_src1_bank(i.src.bank,&f.src1_bank,&f.src1_ext) ||
+        !encode_src1_bank(i.rhs.bank,&f.src2_bank,&f.src2_ext)) return false;
+    f.pred=static_cast<uint8_t>(Predicate::Always);
+    f.skip_invalid=true;
+    f.control_bit_54=true;
+    f.precision=true;
+    f.zero_test=2;
+    f.sign_test=0;
+    f.test_crcomb_and=true;
+    f.channel=0;
+    f.predicate_destination=0;
+    f.dest_num=i.dst.num;
+    f.test_write_enable=true;
+    f.alu_select=0;
+    f.alu_op=10; // VMAX F32 in the public Vita3K test-ALU table.
+    f.src1_num=i.src.num;
+    f.src2_num=i.rhs.num;
+    return encode_vtst(f,word);
+}
+
+bool decode_vtst_f32_max_nonzero_value_semantic(uint64_t word,
+                                                 VtstF32MaxNonzeroValueSemantic *i) {
+    if (!i) return false;
+    VtstFields f{};
+    if (!decode_vtst(word,&f) || f.pred!=static_cast<uint8_t>(Predicate::Always) ||
+        !f.skip_invalid || !f.control_bit_54 || f.once_only || f.sync_start ||
+        !f.precision || f.src1_negative || f.src2_vector_scalar_component || f.repeat_count!=0 ||
+        f.sign_test!=0 || f.zero_test!=2 || !f.test_crcomb_and || f.channel!=0 ||
+        f.predicate_destination!=0 || !f.test_write_enable || f.alu_select!=0 || f.alu_op!=10)
+        return false;
+    if (!decode_dest_bank(f.dest_bank,f.dest_ext,&i->dst.bank) ||
+        !decode_src1_bank(f.src1_bank,f.src1_ext,&i->src.bank) ||
+        !decode_src1_bank(f.src2_bank,f.src2_ext,&i->rhs.bank)) return false;
+    i->dst.num=f.dest_num;
+    i->src.num=f.src1_num;
+    i->rhs.num=f.src2_num;
+    return true;
+}
+
 bool encode_vtst_s32_semantic(const VtstS32Semantic &i, uint64_t *word) {
     if (!word || i.op!=CompareOp::Less || i.lhs.num>=128 || i.rhs.num>=128 ||
         i.predicate_destination>=4) return false;
