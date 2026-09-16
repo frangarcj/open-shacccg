@@ -203,9 +203,9 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
         // the next 8-byte boundary.
         // Integer-vector oracle probes extend this same layout to 4/5/8 words;
         // scalar S32->F32 conversion independently anchors a 9-word stream.
-        // Keep the observed upper bound fail-closed until a larger legal stream
-        // is captured.
-        if (image.secondary_instruction_count > 9) return false;
+        // SDK 3.0 one-light Phong fragment now independently anchors 16 words.
+        // Keep the observed upper bound fail-closed beyond that capture.
+        if (image.secondary_instruction_count > 16) return false;
         if (image.fragment_additional_inputs) {
             cursor=l.interface_off+kInterfaceSize;
             if (!add_size(cursor,static_cast<size_t>(image.fragment_additional_inputs)*16u) ||

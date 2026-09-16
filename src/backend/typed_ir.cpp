@@ -2463,58 +2463,10 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 out.error="fragment lighting shape has an unexpected uniform footprint";
                 return false;
             }
-
-            MachineProgram primary;
-            if (!primary.emit<MachineOpcode::Phase>()) {
-                out.error="failed to start fragment lighting Machine program";
-                return false;
-            }
-            std::vector<MachineOperand> literal_bindings(program.literals().size());
-            std::vector<IrLiteralF32> literal_meta;
-            std::unordered_map<uint32_t,uint32_t> literal_index_by_bits;
-            auto bind_literal=[&](TypedValue value) -> bool {
-                if (value.kind()!=TypedValueKind::Literal || value.id()>=program.literals().size()) return true;
-                if (value.type()!=TypedType::F32 && value.type()!=TypedType::S32) return true;
-                if (literal_bindings[value.id()].kind()!=MachineOperandKind::None) return true;
-                const uint32_t bits=program.literals()[value.id()];
-                if (value.type()==TypedType::F32 && bits==0) {
-                    literal_bindings[value.id()]=primary.physical(machine_immediate(0),MachineType::F32);
-                    return true;
-                }
-                auto [it,inserted]=literal_index_by_bits.emplace(bits,static_cast<uint32_t>(literal_meta.size()));
-                if (inserted) literal_meta.push_back({it->second,bits});
-                const uint32_t word=uniform_words+it->second;
-                if (word>=254) return false;
-                literal_bindings[value.id()]=primary.physical(machine_secondary(static_cast<uint8_t>(word/2u)),
-                    value.type()==TypedType::S32?MachineType::S32:MachineType::F32,
-                    static_cast<uint8_t>(word&1u));
-                return true;
-            };
-            for (const auto &instruction:instructions)
-                if (!bind_literal(instruction.dst) || !bind_literal(instruction.src0) || !bind_literal(instruction.src1)) {
-                    out.error="fragment lighting literal table exceeds compact SA subset"; return false;
-                }
-            for (const auto &composite:program.float3_composites())
-                for (const auto component:composite)
-                    if (!bind_literal(component)) { out.error="fragment lighting float3 literal table overflow"; return false; }
-            for (const auto &composite:program.float4_composites())
-                for (const auto component:composite)
-                    if (!bind_literal(component)) { out.error="fragment lighting float4 literal table overflow"; return false; }
-            for (const auto &select:program.float_selects())
-                if (!bind_literal(select.true_value) || !bind_literal(select.false_value)) {
-                    out.error="fragment lighting select literal table overflow"; return false;
-                }
-
-            std::string machine_error;
-            if (!lower_typed_program_impl(program,primary,machine_error,false,nullptr,nullptr,nullptr,
-                    true,store->aux,&literal_bindings)) {
-                out.error="fragment lighting Typed->Machine lowering failed: "+machine_error;
-                return false;
-            }
             std::vector<IrUniformFloat> uniform_meta;
             for (const auto *uniform:uniforms)
                 uniform_meta.push_back({shader.resource_name(*uniform),typed_component_count(uniform->type),uniform->index});
-            return compile_fragment_lighting_machine(primary,uniform_meta,literal_meta,0,0,out);
+            return compile_fragment_phong_lighting_sdk300(uniform_meta,0,0,out);
         }
     }
 

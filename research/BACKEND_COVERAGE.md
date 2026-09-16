@@ -197,6 +197,16 @@ disk (1823 logical), 123 primary + 6 secondary instructions, PA=28/SA=94,
 repacked to Sony's SDK 3.0 default-uniform layout (88 words + six literals),
 including the observed light/matrix/point-size resource indices.
 
+The one-light Phong fragment stage now follows SDK 3.0 byte-for-byte too. Sony
+collapses the former 188-word v1.4 primary-only lowering to 71 primary + 16
+secondary instructions in a 1240-byte v1.5 image, with PA=24/SA=40, seven TEMP
+registers, two literal slots and flags `0x00181007`. The schedule is reconstructed
+from semantic VTST/VMAD/VMAD2/VDUAL/VCOMP/V32NMAD/VPCK/VBW/BR builders; the only
+newly exposed narrow forms are the Phong-fragment VDP+VMOV and FRCP+VMUL dual
+issues, `skip_invalid=false` VMAX value-VTST, and the final V16NMAD VMAX output.
+Reflection matches Sony's reordered uniform layout, with global ambient at word
+12 and the light ambient/diffuse/specular vectors at words 0/4/8.
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.

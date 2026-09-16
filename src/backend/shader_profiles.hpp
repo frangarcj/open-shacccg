@@ -206,6 +206,9 @@ bool compile_fragment_lighting_machine(const MachineProgram &primary,
                                        const std::vector<IrLiteralF32> &literals,
                                        uint32_t binary_guid, uint32_t source_guid,
                                        IrCompileResult &out);
+bool compile_fragment_phong_lighting_sdk300(const std::vector<IrUniformFloat> &uniforms,
+                                            uint32_t binary_guid, uint32_t source_guid,
+                                            IrCompileResult &out);
 bool compile_fragment_s32_machine(const MachineProgram &primary, const MachineProgram &secondary,
                                   const std::vector<IrUniformS32> &uniforms,
                                   uint32_t binary_guid, uint32_t source_guid,

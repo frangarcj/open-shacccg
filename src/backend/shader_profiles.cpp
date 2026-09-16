@@ -2873,6 +2873,109 @@ bool compile_fragment_lighting_machine(const MachineProgram &primary,
     return true;
 }
 
+bool compile_fragment_phong_lighting_sdk300(const std::vector<IrUniformFloat> &uniforms,
+                                            uint32_t binary_guid, uint32_t source_guid,
+                                            IrCompileResult &out) {
+    out={};
+    if (uniforms.size()!=7) {
+        out.error="SDK 3.0 Phong fragment profile requires seven uniforms";
+        return false;
+    }
+    auto find_uniform=[&](const char *name,uint8_t components) -> const IrUniformFloat * {
+        const auto it=std::find_if(uniforms.begin(),uniforms.end(),[&](const IrUniformFloat &u) {
+            return u.name==name && u.components==components;
+        });
+        return it==uniforms.end()?nullptr:&*it;
+    };
+    const auto *global_ambient=find_uniform("Flight_global_ambient",4);
+    const auto *light_ambient=find_uniform("Alights_ambients",4);
+    const auto *light_diffuse=find_uniform("Blights_diffuses",4);
+    const auto *light_specular=find_uniform("Clights_speculars",4);
+    const auto *light_position=find_uniform("Dlights_positions",4);
+    const auto *light_attenuation=find_uniform("Elights_attenuations",3);
+    const auto *shininess=find_uniform("Gshininess",1);
+    if (!global_ambient || !light_ambient || !light_diffuse || !light_specular ||
+        !light_position || !light_attenuation || !shininess) {
+        out.error="SDK 3.0 Phong fragment named uniform mismatch";
+        return false;
+    }
+
+    ProgramBuilder primary,secondary;
+    using namespace usse;
+#include "backend/phong_fragment_sdk300_schedule.inc"
+    if (primary.words().size()!=71 || secondary.words().size()!=16) {
+        out.error="SDK 3.0 Phong fragment semantic schedule size mismatch";
+        return false;
+    }
+
+    const uint8_t interface_block[32]={
+        0,0,0,0,0,0,0,0,0,0,1,4,6,0,0,0,
+        4,0,0,0,0x0f,0x20,0xc0,0x0c,0,0,0,0,0x30,0,0,0,
+    };
+    const uint8_t additional_inputs[5*16]={
+        0,0,0,0,0x0f,0x30,0xc0,0x0c,0,0,0,0,0x30,0,0,0,
+        0,0,0,0,0x0f,0x40,0xc0,0x0c,0,0,0,0,0x30,0,0,0,
+        0,0,0,0,0x0f,0x50,0xc0,0x0c,0,0,0,0,0x30,0,0,0,
+        0,0,0,0,0x0f,0x60,0xc0,0x0c,0,0,0,0,0x30,0,0,0,
+        0,0,0,0,0x0f,0xa0,0xd0,0x0e,0,0,0,0,0x30,0,0,0,
+    };
+    const gxp::LiteralDesc literals[]={{0,0x00000000u},{1,0x3f800000u}};
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,26},{19,0,26,2}};
+    const gxp::ParameterDesc parameters[]={
+        {global_ambient->name.c_str(),1,0,4,14,0,0,1,12},
+        {light_ambient->name.c_str(),1,0,4,14,0,0,1,0},
+        {light_diffuse->name.c_str(),1,0,4,14,0,0,1,4},
+        {light_specular->name.c_str(),1,0,4,14,0,0,1,8},
+        {light_position->name.c_str(),1,0,4,14,0,0,1,16},
+        {light_attenuation->name.c_str(),1,0,3,14,0,0,1,20},
+        {shininess->name.c_str(),1,0,1,14,0,0,1,24},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Fragment;
+    image.minor_version=5;
+    image.sdk_version=0x0300;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00181007;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=24;
+    image.secondary_register_count=40;
+    image.temp_register_count=7;
+    image.primary_phase_count=1;
+    image.data_buffer_count=2;
+    image.default_uniform_buffer_count=26;
+    image.compiler_version_raw=0x00033a90;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.fragment_additional_inputs=5;
+    image.fragment_input_components=4;
+    image.fragment_additional_input_records=additional_inputs;
+    image.fragment_additional_input_records_size=sizeof(additional_inputs);
+    image.secondary_instructions=secondary.words().data();
+    image.secondary_instruction_count=secondary.words().size();
+    image.primary_instructions=primary.words().data();
+    image.primary_instruction_count=primary.words().size();
+    image.containers=containers;
+    image.container_count=std::size(containers);
+    image.parameters=parameters;
+    image.parameter_count=std::size(parameters);
+    image.literals=literals;
+    image.literal_count=std::size(literals);
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) {
+        out.error="GXP writer rejected SDK 3.0 Phong fragment profile";
+        return false;
+    }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear();
+        out.error="GXP writer failed for SDK 3.0 Phong fragment profile";
+        return false;
+    }
+    return true;
+}
+
 bool compile_fragment_machine_profile(FragmentMachineProfile profile,
                                       const std::vector<IrUniformVec4> &uniforms,
                                       const std::vector<IrSampler2D> &samplers,
