@@ -1797,43 +1797,46 @@ void main(float4 Nposition, float2 Otexcoord0, float4 Pcolor,
     vColor=Pcolor;
     psize=Mpoint_size;
 })";
-        VscCompileRequest request{};
-        request.source_name="vp-clip-wvp.cg";
-        request.source=source.data(); request.source_size=source.size();
-        request.entrypoint="main"; request.stage=VSC_STAGE_VERTEX;
-        VscCompileResult result{};
-        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
-        if (ok) {
-            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
-            const uint8_t expected_interface[32]={
-                0x3f,0x0f,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-                0x01,0x19,0,0x0c,0x01,0,0,0,0,0,0,0,0,0,0,0,
-            };
-            const auto varying=view.varyings();
-            const auto primary=view.primary_program();
-            const auto secondary=view.secondary_program();
-            vsc::gxp::ParameterView clip{},modelview{},point{};
-            uint64_t clip_mad=0,secondary_first=0,secondary_last=0;
-            if (primary.size>=43*8) std::memcpy(&clip_mad,primary.data+35*8,8);
-            if (secondary.size>=12*8) {
-                std::memcpy(&secondary_first,secondary.data,8);
-                std::memcpy(&secondary_last,secondary.data+11*8,8);
+        auto compile_clip=[&](const std::string &text,std::vector<uint8_t> &gxp) -> bool {
+            VscCompileRequest request{};
+            request.source_name="vp-clip-wvp.cg";
+            request.source=text.data(); request.source_size=text.size();
+            request.entrypoint="main"; request.stage=VSC_STAGE_VERTEX;
+            VscCompileResult result{};
+            bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
+            if (ok) {
+                vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+                const uint8_t expected_interface[32]={
+                    0x3f,0x0f,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    0x01,0x19,0,0x0c,0x01,0,0,0,0,0,0,0,0,0,0,0,
+                };
+                const auto varying=view.varyings();
+                vsc::gxp::ParameterView clip{},point{},modelview{},projection{},texmat{};
+                ok=view.valid() && view.sdk_version()==0x0165 && view.flags()==0x00090002 &&
+                    view.primary_register_count()==12 && view.parameter_count()==8 &&
+                    view.primary_instruction_count()>0 && varying.size==sizeof(expected_interface) &&
+                    std::memcmp(varying.data,expected_interface,sizeof(expected_interface))==0 &&
+                    view.parameter(3,clip) && clip.name=="Hclip_planes_eq" && clip.resource_index==0 &&
+                    view.parameter(4,point) && point.name=="Mpoint_size" && point.resource_index==52 &&
+                    view.parameter(5,modelview) && modelview.name=="Imodelview" && modelview.resource_index==4 &&
+                    view.parameter(6,projection) && projection.name=="Jwvp" && projection.resource_index==20 &&
+                    view.parameter(7,texmat) && texmat.name=="Ktexmat" && texmat.resource_index==36;
+                if (ok) gxp.assign(result.gxp_data,result.gxp_data+result.gxp_size);
             }
-            ok=view.valid() && result.gxp_size==872 && view.logical_size()==872 &&
-                view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00190004 &&
-                view.primary_register_count()==12 && view.secondary_register_count()==64 &&
-                view.primary_instruction_count()==43 && view.secondary_instruction_count()==12 &&
-                view.parameter_count()==8 && view.container_count()==2 &&
-                view.compiler_version_raw()==0x00033a90 && varying.size==sizeof(expected_interface) &&
-                std::memcmp(varying.data,expected_interface,sizeof(expected_interface))==0 &&
-                view.parameter(3,clip) && clip.name=="Hclip_planes_eq" && clip.resource_index==48 &&
-                view.parameter(4,modelview) && modelview.name=="Imodelview" && modelview.resource_index==0 &&
-                view.parameter(7,point) && point.name=="Mpoint_size" && point.resource_index==52 &&
-                clip_mad==0x18d189018151a200ULL && secondary_first==0x5081000aa7800000ULL &&
-                secondary_last==0x40840d8ea543050fULL;
+            vsc_destroy_result(&request.allocator,&result);
+            return ok;
+        };
+        std::vector<uint8_t> original,changed;
+        bool ok=compile_clip(source,original);
+        auto mutated=source;
+        const std::string from="vClip[i]=dot(modelpos,Hclip_planes_eq[i]);";
+        const auto pos=mutated.find(from);
+        if (pos==std::string::npos) ok=false;
+        else {
+            mutated.replace(pos,from.size(),"vClip[i]=dot(modelpos,Hclip_planes_eq[i])*0.75;");
+            ok=ok && compile_clip(mutated,changed) && !equal_except_guids(changed.data(),changed.size(),original);
         }
-        if (!ok) failures += fail("Cg CLP0 one-element array profile did not reproduce SDK 3.0 clip contract");
-        vsc_destroy_result(&request.allocator,&result);
+        if (!ok) failures += fail("Cg CLP0 generic path did not preserve interface or source mutation");
     }
     {
         static constexpr const char *source=

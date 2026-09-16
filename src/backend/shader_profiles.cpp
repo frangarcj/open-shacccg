@@ -1627,108 +1627,102 @@ bool compile_vertex_lighting_machine(const MachineProgram &primary,
     return true;
 }
 
-bool compile_vertex_clip_sdk300(const std::vector<IrAttribute> &attributes,
-                                const std::vector<IrUniformFloat> &uniforms,
-                                const std::vector<IrMatrix4Uniform> &matrices,
-                                uint32_t binary_guid, uint32_t source_guid,
-                                IrCompileResult &out) {
+bool compile_vertex_clip_machine(const MachineProgram &primary,
+                                 const std::vector<IrAttribute> &attributes,
+                                 const std::vector<IrUniformFloat> &uniforms,
+                                 const std::vector<IrMatrix4Uniform> &matrices,
+                                 const std::vector<IrLiteralF32> &literal_values,
+                                 uint32_t binary_guid, uint32_t source_guid,
+                                 IrCompileResult &out) {
     out={};
-    if (attributes.size()!=3 || uniforms.size()!=2 || matrices.size()!=3) {
-        out.error="SDK 3.0 clip vertex profile resource count mismatch";
+    if (attributes.size()!=3 || matrices.size()!=3 || uniforms.size()!=2) {
+        out.error="clip vertex profile requires three attributes, three mat4s and two uniforms";
         return false;
     }
     const uint8_t expected_components[]={4,2,4};
     for (size_t i=0;i<attributes.size();++i) {
         if (!valid_attribute(attributes[i]) || attributes[i].resource_index!=i*4u ||
             attributes[i].components!=expected_components[i]) {
-            out.error="SDK 3.0 clip vertex attribute layout mismatch";
+            out.error="clip vertex attributes do not match the validated FFP layout";
             return false;
         }
     }
-    auto find_uniform=[&](const char *name,uint8_t components) -> const IrUniformFloat * {
-        const auto it=std::find_if(uniforms.begin(),uniforms.end(),[&](const IrUniformFloat &u) {
-            return u.name==name && u.components==components;
-        });
-        return it==uniforms.end()?nullptr:&*it;
-    };
-    auto find_matrix=[&](const char *name) -> const IrMatrix4Uniform * {
-        const auto it=std::find_if(matrices.begin(),matrices.end(),[&](const IrMatrix4Uniform &m) {
-            return m.name==name;
-        });
-        return it==matrices.end()?nullptr:&*it;
-    };
-    const auto *clip=find_uniform("Hclip_planes_eq",4);
-    const auto *point=find_uniform("Mpoint_size",1);
-    const auto *modelview=find_matrix("Imodelview");
-    const auto *projection=find_matrix("Jwvp");
-    const auto *texmat=find_matrix("Ktexmat");
-    if (!clip || !point || !modelview || !projection || !texmat) {
-        out.error="SDK 3.0 clip vertex named resource mismatch";
+    uint32_t uniform_words=0;
+    for (const auto &matrix:matrices) {
+        if (matrix.name.empty() || (matrix.resource_index&1u)) {
+            out.error="clip vertex matrix metadata is invalid";
+            return false;
+        }
+        uniform_words=std::max(uniform_words,matrix.resource_index+16u);
+    }
+    for (const auto &uniform:uniforms) {
+        if (uniform.name.empty() || uniform.components<1 || uniform.components>4) {
+            out.error="clip vertex uniform metadata is invalid";
+            return false;
+        }
+        uniform_words=std::max<uint32_t>(uniform_words,uniform.resource_index+uniform.components);
+    }
+    uniform_words=(uniform_words+1u)&~1u;
+    if (uniform_words!=54 || uniform_words+literal_values.size()>0xffffu) {
+        out.error="clip vertex profile requires the validated 54-word Open uniform footprint";
         return false;
     }
 
-    ProgramBuilder primary,secondary;
-    using namespace usse;
-#include "backend/clip_sdk300_schedule.inc"
-    if (primary.words().size()!=43 || secondary.words().size()!=12) {
-        out.error="SDK 3.0 clip vertex semantic schedule size mismatch";
-        return false;
-    }
+    MachineCompileResult compiled;
+    if (!compile_words(primary,compiled,out,"clip vertex Machine IR lowering failed")) return false;
 
+    std::vector<gxp::ParameterDesc> parameters;
+    parameters.reserve(attributes.size()+matrices.size()+uniforms.size());
+    for (const auto &attribute:attributes)
+        parameters.push_back({attribute.name.c_str(),0,0,4,0,0,0,1,attribute.resource_index});
+    for (const auto &uniform:uniforms)
+        parameters.push_back({uniform.name.c_str(),1,0,uniform.components,14,0,0,1,uniform.resource_index});
+    for (const auto &matrix:matrices)
+        parameters.push_back({matrix.name.c_str(),1,0,4,14,0,0,4,matrix.resource_index});
+
+    std::vector<gxp::LiteralDesc> literals;
+    literals.reserve(literal_values.size());
+    for (const auto &literal:literal_values) {
+        if (literal.resource_index>=literal_values.size()) {
+            out.error="clip vertex literal resource index is out of range";
+            return false;
+        }
+        literals.push_back({literal.resource_index,literal.value_bits});
+    }
+    std::vector<gxp::ParameterContainerDesc> containers={{14,0,0,static_cast<uint16_t>(uniform_words)}};
+    if (!literals.empty())
+        containers.push_back({19,0,static_cast<uint16_t>(uniform_words),static_cast<uint16_t>(literals.size())});
+
+    // POSITION + COLOR + TEXCOORD0 + CLP0 + PSIZE. A Sony probe with this
+    // exact output mix places CLP0 in O5.y and anchors this interface record.
     const uint8_t interface_block[32]={
         0x3f,0x0f,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
         0x01,0x19,0,0x0c,0x01,0,0,0,0,0,0,0,0,0,0,0,
     };
-    const gxp::LiteralDesc literals[]={{0,0x43ff8000u},{1,0x3f800000u}};
-    const gxp::ParameterContainerDesc containers[]={{14,0,0,54},{19,0,54,2}};
-    const gxp::ParameterDesc parameters[]={
-        {attributes[0].name.c_str(),0,0,4,0,0,0,1,0},
-        {attributes[1].name.c_str(),0,0,4,0,0,0,1,4},
-        {attributes[2].name.c_str(),0,0,4,0,0,0,1,8},
-        {clip->name.c_str(),1,0,4,14,0,0,1,48},
-        {modelview->name.c_str(),1,0,4,14,0,0,4,0},
-        {projection->name.c_str(),1,0,4,14,0,0,4,16},
-        {texmat->name.c_str(),1,0,4,14,0,0,4,32},
-        {point->name.c_str(),1,0,1,14,0,0,1,52},
-    };
     gxp::ProgramImage image{};
     image.type=gxp::ProgramType::Vertex;
-    image.minor_version=5;
-    image.sdk_version=0x0300;
-    image.binary_guid=binary_guid;
-    image.source_guid=source_guid;
-    image.program_flags=0x00190004;
+    image.sdk_version=0x0165;
+    image.binary_guid=binary_guid; image.source_guid=source_guid;
+    image.program_flags=0x00090002;
     image.buffer_flags=0x10000000;
     image.primary_register_count=12;
-    image.secondary_register_count=64;
+    image.secondary_register_count=static_cast<uint16_t>(uniform_words+literals.size());
     image.primary_phase_count=1;
-    image.data_buffer_count=2;
-    image.default_uniform_buffer_count=54;
-    image.compiler_version_raw=0x00033a90;
-    image.interface_block=interface_block;
-    image.interface_block_size=sizeof(interface_block);
-    image.secondary_instructions=secondary.words().data();
-    image.secondary_instruction_count=secondary.words().size();
-    image.primary_instructions=primary.words().data();
-    image.primary_instruction_count=primary.words().size();
-    image.containers=containers;
-    image.container_count=std::size(containers);
-    image.parameters=parameters;
-    image.parameter_count=std::size(parameters);
-    image.literals=literals;
-    image.literal_count=std::size(literals);
+    image.data_buffer_count=static_cast<uint32_t>(literals.size());
+    image.default_uniform_buffer_count=uniform_words;
+    image.compiler_version_raw=0x0002df30;
+    image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
+    image.primary_instructions=compiled.words.data(); image.primary_instruction_count=compiled.words.size();
+    image.containers=containers.data(); image.container_count=containers.size();
+    image.parameters=parameters.data(); image.parameter_count=parameters.size();
+    image.literals=literals.data(); image.literal_count=literals.size();
     image.vertex_primary_padding_word=true;
 
     const size_t needed=gxp::required_size(image);
-    if (!needed) {
-        out.error="GXP writer rejected SDK 3.0 clip vertex profile";
-        return false;
-    }
+    if (!needed) { out.error="GXP writer rejected clip vertex profile"; return false; }
     out.gxp.resize(needed);
     if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
-        out.gxp.clear();
-        out.error="GXP writer failed for SDK 3.0 clip vertex profile";
-        return false;
+        out.gxp.clear(); out.error="GXP writer failed for clip vertex profile"; return false;
     }
     return true;
 }

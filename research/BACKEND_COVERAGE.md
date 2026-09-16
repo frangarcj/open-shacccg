@@ -204,25 +204,21 @@ architecture. Phong fragment now stays on generic Typed/Machine lowering; the
 independently decoded VTST/VDUAL/V16 forms remain available for future local
 instruction-selection and scheduling optimizations.
 
-The one-plane `clip_wvp` vertex path now uses the SDK 3.0 schedule as well. The
-private Unicorn oracle still reports diagnostic 403 on the original vitaGL form
-because it contains several one-element aggregates (`CLP0[1]`, clip-plane and
-texture-matrix arrays). Scalarizing only those size-1 aggregates while preserving
-the active DAG, names and resource footprint produces a stable SDK 3.0 reference:
-872-byte v1.5 GXP, 43 primary + 12 secondary instructions, PA=12/SA=64 and flags
-`0x00190004`. The unmodified vitaGL source in OpenShaccCg now emits a byte-identical
-image to that equivalent reference, including matrices at words 0/16/32, clip
-plane at 48, point size at 52 and the two observed literal slots. The final ISA
-gap was a fail-closed VMAD4 form writing CLP0 with extended GPI1 selector 6; its
-semantic encoder accepts only the captured OUT5.y/PA0 configuration.
+The one-plane `clip_wvp` SDK 3.0 scalarized capture remains the optimization
+oracle: 872-byte v1.5 GXP, 43 primary + 12 secondary instructions, PA=12/SA=64.
+The production fixed schedule has been removed. The original vitaGL source now
+lowers its complete clip CFG through generic Typed/Machine IR and emits a longer
+v1.4 correctness baseline while preserving the validated POSITION/COLOR/
+TEXCOORD0/CLP0/PSIZE interface and reflection. A source-mutation regression
+changes the clip-plane arithmetic and requires the generated GXP to change.
 
 The captured vitaGL corpus remains **24 / 24 compilable**. The earlier SDK 3.0
 fidelity sweep established reference schedules for all 24 pinned cases, but those
 references are no longer all production schedules: large whole-shader templates
 are being removed in favor of generic Typed/Machine lowering plus local
-optimizations. Phong fragment is the first converted case; it now compiles through
-the generic CFG path and intentionally emits a longer v1.4 schedule while its
-71+16 SDK 3.0 capture remains oracle evidence for future local optimizations.
+optimizations. Phong fragment, smooth lighting and clip vertex now compile through generic
+Typed/Machine paths and intentionally emit longer correctness schedules while
+their SDK 3.0 captures remain oracle evidence for future local optimizations.
 
 This statement is deliberately scoped to the pinned 24-case branch-oriented
 matrix, not every possible combination of vitaGL fixed-function defines. The
