@@ -172,6 +172,13 @@ the oracle is run with the exact SceShaccCgExt extension hook required for Cg
 VDUAL, the existing matrix VMAD forms, and PSIZE output. The resulting real
 vitaGL image is 568 bytes with PA=12/SA=36 and compiler `0x00033a90`.
 
+The Phong vertex stage now matches SDK 3.0.0 byte-for-byte as well. The 1004-byte
+v1.5 image uses 48 primary + 12 secondary instructions, PA=28/SA=72 and flags
+`0x00190004`. The profile is assembled from semantic VMOV/VPCK/VMAD/VBW/VCOMP/
+V32NMAD operations plus two SMLSI repeat-control words and the observed
+VDP+VMOV / FRCP+VMOV VDUAL forms; no operand-bearing raw instruction is injected
+by the runtime profile.
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.

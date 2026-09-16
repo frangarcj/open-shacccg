@@ -1343,134 +1343,128 @@ bool compile_vertex_matrix_normal_multivarying_point_size(
         }
     }
 
-    ProgramBuilder primary;
-    if (!primary.phase()) { out.error="failed to emit multivarying PHAS"; return false; }
-
-    auto move=[&](usse::RegisterRef dst, usse::RegisterRef src, uint8_t mask,
-                  uint8_t swizzle=4, uint8_t repeat=0) {
-        usse::VmovSemantic op{};
-        op.dst=dst; op.src=src; op.data_type=usse::DataType::F32;
-        op.dest_mask=mask; op.swizzle=swizzle; op.repeat_count=repeat;
-        op.skip_invalid=true; op.no_schedule=false;
-        return primary.instruction(op);
-    };
-    auto vop=[&](usse::VectorOp opcode, usse::RegisterRef dst, uint8_t mask,
-                 usse::RegisterRef src1, usse::RegisterRef src2,
-                 usse::Swizzle4 sw1=usse::Swizzle4{}, usse::Swizzle4 sw2=usse::Swizzle4{}) {
-        usse::V32NmadSemantic op{};
-        op.op=opcode; op.dst=dst; op.src1=src1; op.src2=src2; op.dest_mask=mask;
-        op.src1_swizzle=sw1; op.src2_swizzle=sw2; op.skip_invalid=true;
-        return primary.instruction(op);
-    };
-    const usse::Swizzle4 xxxx={{usse::SwizzleChannel::X,usse::SwizzleChannel::X,
-                                 usse::SwizzleChannel::X,usse::SwizzleChannel::X}};
-    const usse::Swizzle4 yyyy={{usse::SwizzleChannel::Y,usse::SwizzleChannel::Y,
-                                 usse::SwizzleChannel::Y,usse::SwizzleChannel::Y}};
-    const usse::Swizzle4 xyz0={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
-                                 usse::SwizzleChannel::Z,usse::SwizzleChannel::Zero}};
-    const usse::Swizzle4 xy01={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
-                                 usse::SwizzleChannel::Zero,usse::SwizzleChannel::One}};
-
-    auto mat4=[&](usse::RegisterRef dst, usse::RegisterRef src, uint8_t matrix_sa) {
-        for (uint8_t lane=0;lane<4;++lane) {
-            if (!vop(usse::VectorOp::Dot,dst,static_cast<uint8_t>(1u<<lane),src,
-                     {usse::RegisterBank::SecondaryAttribute,static_cast<uint8_t>(matrix_sa+lane*2u)}))
-                return false;
-        }
-        return true;
-    };
-
-    // Fixed POSITION/COLOR outputs and direct material varyings.
-    if (!move({usse::RegisterBank::Output,2},{usse::RegisterBank::PrimaryAttribute,4},3,4,1) ||
-        !move({usse::RegisterBank::Output,8},{usse::RegisterBank::PrimaryAttribute,6},3,4,1) ||
-        !move({usse::RegisterBank::Output,10},{usse::RegisterBank::PrimaryAttribute,8},3,4,1) ||
-        !move({usse::RegisterBank::Output,12},{usse::RegisterBank::PrimaryAttribute,10},3,4,1)) {
-        out.error="failed to emit multivarying passthrough outputs";
-        return false;
-    }
-
-    // modelpos = Imodelview * position; POSITION = Jwvp * modelpos.
-    if (!mat4({usse::RegisterBank::Temp,40},{usse::RegisterBank::PrimaryAttribute,0},0) ||
-        !mat4({usse::RegisterBank::Output,0},{usse::RegisterBank::Temp,40},8)) {
-        out.error="failed to emit multivarying model/projection transforms";
-        return false;
-    }
-
-    // TEXCOORD0 = (Ktexmat * float4(uv,0,1)).xy. Ktexmat starts at word 44 => SA22.
-    if (!vop(usse::VectorOp::Dot,{usse::RegisterBank::Output,4},1,
-             {usse::RegisterBank::PrimaryAttribute,2},{usse::RegisterBank::SecondaryAttribute,22},xy01) ||
-        !vop(usse::VectorOp::Dot,{usse::RegisterBank::Output,4},2,
-             {usse::RegisterBank::PrimaryAttribute,2},{usse::RegisterBank::SecondaryAttribute,24},xy01)) {
-        out.error="failed to emit multivarying texture transform";
-        return false;
-    }
-
-    // normal = normalize(Lnormal_mat * Tnormals). A float3x3 occupies three
-    // padded float4 columns at words 32,36,40 => SA16,18,20.
-    for (uint8_t lane=0;lane<3;++lane) {
-        if (!vop(usse::VectorOp::Dot,{usse::RegisterBank::Temp,44},static_cast<uint8_t>(1u<<lane),
-                 {usse::RegisterBank::PrimaryAttribute,12},
-                 {usse::RegisterBank::SecondaryAttribute,static_cast<uint8_t>(16+lane*2u)},xyz0)) {
-            out.error="failed to emit multivarying normal-matrix transform";
-            return false;
-        }
-    }
-    if (!vop(usse::VectorOp::Dot,{usse::RegisterBank::Temp,46},1,
-             {usse::RegisterBank::Temp,44},{usse::RegisterBank::Temp,44},xyz0)) {
-        out.error="failed to emit multivarying normal length";
-        return false;
-    }
-    usse::VcompF32Semantic rsqrt{};
-    rsqrt.op=usse::ComplexOp::Rsqrt;
-    rsqrt.dst={usse::RegisterBank::Temp,47};
-    rsqrt.src={usse::RegisterBank::Temp,46};
-    rsqrt.dest_mask=1;
-    if (!primary.instruction(rsqrt) ||
-        !vop(usse::VectorOp::Mul,{usse::RegisterBank::Temp,48},7,
-             {usse::RegisterBank::Temp,44},{usse::RegisterBank::Temp,47},usse::Swizzle4{},xxxx) ||
-        !move({usse::RegisterBank::Output,5},{usse::RegisterBank::Temp,48},3,4) ||
-        !move({usse::RegisterBank::Output,6},{usse::RegisterBank::Temp,48},1,2)) {
-        out.error="failed to emit normalized normal varying";
-        return false;
-    }
-
-    // ecPosition = modelpos.xyz / modelpos.w. The two float3 varyings are
-    // densely packed: normal => O5.xy/O6.x, ecPosition => O6.y/O7.xy.
-    usse::VcompF32Semantic reciprocal{};
-    reciprocal.op=usse::ComplexOp::Reciprocal;
-    reciprocal.dst={usse::RegisterBank::Temp,42};
-    reciprocal.src={usse::RegisterBank::Temp,40};
-    reciprocal.src_component=3;
-    reciprocal.dest_mask=1;
-    if (!primary.instruction(reciprocal) ||
-        !vop(usse::VectorOp::Mul,{usse::RegisterBank::Temp,50},7,
-             {usse::RegisterBank::Temp,40},{usse::RegisterBank::Temp,42},usse::Swizzle4{},xxxx) ||
-        !move({usse::RegisterBank::Output,6},{usse::RegisterBank::Temp,50},2,0) ||
-        !move({usse::RegisterBank::Output,7},{usse::RegisterBank::Temp,50},1,1) ||
-        !move({usse::RegisterBank::Output,7},{usse::RegisterBank::Temp,50},2,2)) {
-        out.error="failed to emit eye-space position varying";
-        return false;
-    }
-
-    // Clamp point size to Sony's observed [1,511] range. Uniform word60 is SA30;
-    // literals 511/1 occupy SA31.x/y.
-    if (!vop(usse::VectorOp::Max,{usse::RegisterBank::Temp,52},1,
-             {usse::RegisterBank::SecondaryAttribute,30},{usse::RegisterBank::SecondaryAttribute,31},xxxx,yyyy) ||
-        !vop(usse::VectorOp::Min,{usse::RegisterBank::Temp,52},1,
-             {usse::RegisterBank::Temp,52},{usse::RegisterBank::SecondaryAttribute,31},xxxx,xxxx)) {
-        out.error="failed to emit multivarying point-size clamp";
-        return false;
-    }
-    usse::VbwSemantic point_copy{};
-    point_copy.op=usse::BitwiseOp::Or;
-    point_copy.dst={usse::RegisterBank::Output,28};
-    point_copy.src1={usse::RegisterBank::Temp,52};
-    point_copy.src2_is_immediate=true;
-    point_copy.immediate=0;
-    if (!primary.instruction(point_copy) || !primary.emit()) {
-        out.error="failed to finish multivarying vertex program";
-        return false;
-    }
+    ProgramBuilder primary,secondary;
+    using namespace usse;
+    // primary 00 fa44070000000000
+    if(!primary.phase()) return false;
+    // primary 01 3880152183080100
+    { VmovSemantic x{}; x.dst={RegisterBank::Output,2}; x.src={RegisterBank::PrimaryAttribute,4}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x3; x.swizzle=4; x.repeat_count=1; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!primary.instruction(x)) return false; }
+    // primary 02 3880352183200180
+    { VmovSemantic x{}; x.dst={RegisterBank::Output,8}; x.src={RegisterBank::PrimaryAttribute,6}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x3; x.swizzle=4; x.repeat_count=3; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!primary.instruction(x)) return false; }
+    // primary 03 38801d2183300280
+    { VmovSemantic x{}; x.dst={RegisterBank::Output,12}; x.src={RegisterBank::PrimaryAttribute,10}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x3; x.swizzle=4; x.repeat_count=1; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
+    // primary 04 40c00d9caf818c1a
+    { VpckSemantic x{}; x.dst={RegisterBank::Temp,124}; x.src1={RegisterBank::PrimaryAttribute,12}; x.src2={RegisterBank::PrimaryAttribute,13}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0x7; x.components[0]=0; x.components[1]=1; x.components[2]=2; x.components[3]=0; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
+    // primary 05 18802880cf51a210
+    { VmadSemantic x{}; x.dst={RegisterBank::Temp,61}; x.src1={RegisterBank::SecondaryAttribute,16}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=false; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::External; x.repeat_count=2; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 06 fa14000301010202
+    { SmlsiSemantic x{}; x.no_schedule=true; x.temp_limit=0; x.primary_limit=0; x.secondary_limit=0; x.dest_inc_mode=false; x.src0_inc_mode=false; x.src1_inc_mode=true; x.src2_inc_mode=true; x.dest_inc=1; x.src0_inc=1; x.src1_inc=2; x.src2_inc=2; if(!primary.instruction(x)) return false; }
+    // primary 07 50c1000ae1801900
+    { VbwSemantic x{}; x.op=BitwiseOp::Or; x.dst={RegisterBank::PrimaryAttribute,12}; x.src1={RegisterBank::SecondaryAttribute,50}; x.src2={RegisterBank::Invalid,0}; x.predicate=Predicate::Always; x.src2_is_immediate=true; x.immediate=0x0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
+    // primary 08 38800d0ac2180140
+    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,6}; x.src={RegisterBank::SecondaryAttribute,5}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x2; x.swizzle=1; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
+    // primary 09 40c00dbcff998812
+    { VpckSemantic x{}; x.dst={RegisterBank::Temp,124}; x.src1={RegisterBank::SecondaryAttribute,8}; x.src2={RegisterBank::SecondaryAttribute,9}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0xf; x.components[0]=0; x.components[1]=1; x.components[2]=2; x.components[3]=3; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
+    // primary 10 18919882c0d1a220
+    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,3}; x.src1={RegisterBank::SecondaryAttribute,32}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=1; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 11 18918882c111a219
+    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,4}; x.src1={RegisterBank::SecondaryAttribute,25}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 12 38800d22c31406c0
+    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,5}; x.src={RegisterBank::SecondaryAttribute,27}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x3; x.swizzle=4; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
+    // primary 13 189189028111a203
+    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,4}; x.src1={RegisterBank::PrimaryAttribute,3}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 14 40c00dbcff99860e
+    { VpckSemantic x{}; x.dst={RegisterBank::Temp,124}; x.src1={RegisterBank::SecondaryAttribute,6}; x.src2={RegisterBank::SecondaryAttribute,7}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0xf; x.components[0]=0; x.components[1]=1; x.components[2]=2; x.components[3]=3; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
+    // primary 15 18919880cf91a220
+    { VmadSemantic x{}; x.dst={RegisterBank::Temp,62}; x.src1={RegisterBank::SecondaryAttribute,32}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=1; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 16 fa14000001010101
+    { SmlsiSemantic x{}; x.no_schedule=true; x.temp_limit=0; x.primary_limit=0; x.secondary_limit=0; x.dest_inc_mode=false; x.src0_inc_mode=false; x.src1_inc_mode=false; x.src2_inc_mode=false; x.dest_inc=1; x.src0_inc=1; x.src1_inc=1; x.src2_inc=1; if(!primary.instruction(x)) return false; }
+    // primary 17 18918a00cf91a21b
+    { VmadSemantic x{}; x.dst={RegisterBank::Temp,62}; x.src1={RegisterBank::SecondaryAttribute,27}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x4; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 18 18918c008f91a205
+    { VmadSemantic x{}; x.dst={RegisterBank::Temp,62}; x.src1={RegisterBank::PrimaryAttribute,5}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x8; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 19 40c00dbcaf998002
+    { VpckSemantic x{}; x.dst={RegisterBank::Temp,124}; x.src1={RegisterBank::PrimaryAttribute,0}; x.src2={RegisterBank::PrimaryAttribute,1}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0xf; x.components[0]=0; x.components[1]=1; x.components[2]=2; x.components[3]=3; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
+    // primary 20 28c41511e0160b8c
+    if(!primary.instruction(VdualF32DotMoveSemantic{})) return false;
+    // primary 21 189189018011a203
+    { VmadSemantic x{}; x.dst={RegisterBank::Output,0}; x.src1={RegisterBank::PrimaryAttribute,3}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 22 18918882e011a222
+    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,0}; x.src1={RegisterBank::SecondaryAttribute,34}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 23 18918902e011a220
+    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,0}; x.src1={RegisterBank::SecondaryAttribute,32}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 24 18918882e051a21b
+    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,1}; x.src1={RegisterBank::SecondaryAttribute,27}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 25 18918902a051a205
+    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,1}; x.src1={RegisterBank::PrimaryAttribute,5}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 26 189188818051a200
+    { VmadSemantic x{}; x.dst={RegisterBank::Output,1}; x.src1={RegisterBank::PrimaryAttribute,0}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 27 40c00dbcffd98e1e
+    { VpckSemantic x{}; x.dst={RegisterBank::Temp,126}; x.src1={RegisterBank::SecondaryAttribute,14}; x.src2={RegisterBank::SecondaryAttribute,15}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0xf; x.components[0]=0; x.components[1]=1; x.components[2]=2; x.components[3]=3; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
+    // primary 28 18918882e011a222
+    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,0}; x.src1={RegisterBank::SecondaryAttribute,34}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 29 18918902e011a220
+    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,0}; x.src1={RegisterBank::SecondaryAttribute,32}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 30 18918882e051a21b
+    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,1}; x.src1={RegisterBank::SecondaryAttribute,27}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 31 18918902a051a205
+    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,1}; x.src1={RegisterBank::PrimaryAttribute,5}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 32 189189018051a200
+    { VmadSemantic x{}; x.dst={RegisterBank::Output,1}; x.src1={RegisterBank::PrimaryAttribute,0}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 33 18902882c011a200
+    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,0}; x.src1={RegisterBank::SecondaryAttribute,0}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::External; x.repeat_count=2; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 34 18918880cf11a206
+    { VmadSemantic x{}; x.dst={RegisterBank::Temp,60}; x.src1={RegisterBank::SecondaryAttribute,6}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 35 28847000ef950096
+    if(!primary.instruction(VdualF32ReciprocalMoveSemantic{})) return false;
+    // primary 36 18e18981a1c18140
+    { VmadSemantic x{}; x.dst={RegisterBank::Output,7}; x.src1={RegisterBank::PrimaryAttribute,0}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=0; x.write_mask=0x3; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}}; x.src1_swizzle={{SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W,SwizzleChannel::W}}; x.gpi1_swizzle={{SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::X}}; x.vec4=false; x.control_bit_53=true; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=true; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 37 18e18901a1818000
+    { VmadSemantic x{}; x.dst={RegisterBank::Output,6}; x.src1={RegisterBank::PrimaryAttribute,0}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=0; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}}; x.gpi1_swizzle={{SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::X}}; x.vec4=false; x.control_bit_53=true; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=true; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 38 189188818112c202
+    { VmadSemantic x{}; x.dst={RegisterBank::Output,4}; x.src1={RegisterBank::PrimaryAttribute,2}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=0; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::Z,SwizzleChannel::W,SwizzleChannel::Z,SwizzleChannel::W}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 39 40c00dbcff999832
+    { VpckSemantic x{}; x.dst={RegisterBank::Temp,124}; x.src1={RegisterBank::SecondaryAttribute,24}; x.src2={RegisterBank::SecondaryAttribute,25}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0xf; x.components[0]=0; x.components[1]=1; x.components[2]=2; x.components[3]=3; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
+    // primary 40 189189018112c202
+    { VmadSemantic x{}; x.dst={RegisterBank::Output,4}; x.src1={RegisterBank::PrimaryAttribute,2}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=0; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::Z,SwizzleChannel::W,SwizzleChannel::Z,SwizzleChannel::W}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 41 188188801f11a23d
+    { VmadSemantic x{}; x.dst={RegisterBank::Temp,60}; x.src1={RegisterBank::Temp,61}; x.predicate=Predicate::Always; x.gpi0=1; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=false; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 42 30800a000f803e01
+    { VcompF32Semantic x{}; x.op=ComplexOp::Rsqrt; x.dst={RegisterBank::Temp,124}; x.src={RegisterBank::Temp,124}; x.src_component=0; x.dest_mask=0x1; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
+    // primary 43 18e181810141813d
+    { VmadSemantic x{}; x.dst={RegisterBank::Output,5}; x.src1={RegisterBank::Temp,61}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=0; x.write_mask=0x3; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.gpi1_swizzle={{SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::X}}; x.vec4=false; x.control_bit_53=true; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=true; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; if(!primary.instruction(x)) return false; }
+    // primary 44 08800881018d0f7c
+    { V32NmadSemantic x{}; x.op=VectorOp::Mul; x.dst={RegisterBank::Output,6}; x.src1={RegisterBank::Temp,61}; x.src2={RegisterBank::Temp,60}; x.dest_mask=0x1; x.src1_swizzle={{SwizzleChannel::Z,SwizzleChannel::W,SwizzleChannel::X,SwizzleChannel::X}}; x.src2_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}}; x.src1_negative=false; x.src1_absolute=false; x.src2_absolute=false; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
+    // primary 45 08a41084ff04679f
+    { V32NmadSemantic x{}; x.op=VectorOp::Max; x.dst={RegisterBank::Temp,60}; x.src1={RegisterBank::SecondaryAttribute,30}; x.src2={RegisterBank::SecondaryAttribute,31}; x.dest_mask=0x1; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src2_swizzle={{SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y}}; x.src1_negative=false; x.src1_absolute=false; x.src2_absolute=false; x.skip_invalid=true; x.no_schedule=false; if(!primary.instruction(x)) return false; }
+    // primary 46 08a4008533845f1f
+    { V32NmadSemantic x{}; x.op=VectorOp::Min; x.dst={RegisterBank::Output,14}; x.src1={RegisterBank::Temp,60}; x.src2={RegisterBank::SecondaryAttribute,31}; x.dest_mask=0x1; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src2_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}}; x.src1_negative=false; x.src1_absolute=false; x.src2_absolute=false; x.skip_invalid=true; x.no_schedule=false; if(!primary.instruction(x)) return false; }
+    // primary 47 fb275000a0200000
+    if(!primary.emit()) return false;
+    // secondary 00 5081000aa8800000
+    { VbwSemantic x{}; x.op=BitwiseOp::Or; x.dst={RegisterBank::PrimaryAttribute,68}; x.src1={RegisterBank::PrimaryAttribute,0}; x.src2={RegisterBank::Invalid,0}; x.predicate=Predicate::Always; x.src2_is_immediate=true; x.immediate=0x0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
+    // secondary 01 3880050282880080
+    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,34}; x.src={RegisterBank::PrimaryAttribute,2}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x2; x.swizzle=0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
+    // secondary 02 5081000aa8c00400
+    { VbwSemantic x{}; x.op=BitwiseOp::Or; x.dst={RegisterBank::PrimaryAttribute,70}; x.src1={RegisterBank::PrimaryAttribute,8}; x.src2={RegisterBank::Invalid,0}; x.predicate=Predicate::Always; x.src2_is_immediate=true; x.immediate=0x0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
+    // secondary 03 38800502828c0180
+    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,35}; x.src={RegisterBank::PrimaryAttribute,6}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x2; x.swizzle=0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
+    // secondary 04 40800d8ea8030005
+    { VpckSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,64}; x.src1={RegisterBank::PrimaryAttribute,0}; x.src2={RegisterBank::PrimaryAttribute,2}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0x3; x.components[0]=1; x.components[1]=3; x.components[2]=0; x.components[3]=0; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
+    // secondary 05 40800d8ea843040d
+    { VpckSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,66}; x.src1={RegisterBank::PrimaryAttribute,4}; x.src2={RegisterBank::PrimaryAttribute,6}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0x3; x.components[0]=1; x.components[1]=3; x.components[2]=0; x.components[3]=0; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
+    // secondary 06 5081000aa6c00100
+    { VbwSemantic x{}; x.op=BitwiseOp::Or; x.dst={RegisterBank::PrimaryAttribute,54}; x.src1={RegisterBank::PrimaryAttribute,2}; x.src2={RegisterBank::Invalid,0}; x.predicate=Predicate::Always; x.src2_is_immediate=true; x.immediate=0x0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
+    // secondary 07 38800502826c00c0
+    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,27}; x.src={RegisterBank::PrimaryAttribute,3}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x2; x.swizzle=0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
+    // secondary 08 5081000aa7000500
+    { VbwSemantic x{}; x.op=BitwiseOp::Or; x.dst={RegisterBank::PrimaryAttribute,56}; x.src1={RegisterBank::PrimaryAttribute,10}; x.src2={RegisterBank::Invalid,0}; x.predicate=Predicate::Always; x.src2_is_immediate=true; x.immediate=0x0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
+    // secondary 09 38800502827001c0
+    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,28}; x.src={RegisterBank::PrimaryAttribute,7}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x2; x.swizzle=0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
+    // secondary 10 40800d8ea7430107
+    { VpckSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,58}; x.src1={RegisterBank::PrimaryAttribute,1}; x.src2={RegisterBank::PrimaryAttribute,3}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0x3; x.components[0]=1; x.components[1]=3; x.components[2]=0; x.components[3]=0; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
+    // secondary 11 3884050a81680140
+    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,26}; x.src={RegisterBank::PrimaryAttribute,5}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x1; x.swizzle=1; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=true; if(!secondary.instruction(x)) return false; }
 
     const uint8_t interface_block[32]={
         0x3f,0xff,0xff,0x07,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -1494,17 +1488,19 @@ bool compile_vertex_matrix_normal_multivarying_point_size(
     };
     gxp::ProgramImage image{};
     image.type=gxp::ProgramType::Vertex;
-    image.sdk_version=0x0165;
+    image.minor_version=5;
+    image.sdk_version=0x0300;
     image.binary_guid=binary_guid; image.source_guid=source_guid;
-    image.program_flags=0x00090000;
+    image.program_flags=0x00190004;
     image.buffer_flags=0x10000000;
     image.primary_register_count=28;
-    image.secondary_register_count=64;
+    image.secondary_register_count=72;
     image.primary_phase_count=1;
     image.data_buffer_count=2;
     image.default_uniform_buffer_count=62;
-    image.compiler_version_raw=0x0002df30;
+    image.compiler_version_raw=0x00033a90;
     image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
+    image.secondary_instructions=secondary.words().data(); image.secondary_instruction_count=secondary.words().size();
     image.primary_instructions=primary.words().data(); image.primary_instruction_count=primary.words().size();
     image.containers=containers; image.container_count=2;
     image.parameters=parameters; image.parameter_count=std::size(parameters);

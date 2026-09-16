@@ -428,7 +428,7 @@ bool compile_matrix_normal_multivarying_profile() {
     request.stage=VSC_STAGE_VERTEX;
     VscCompileResult result{};
     const int rc=vsc_compile(&request,&result);
-    bool ok=rc==0 && result.gxp_data && result.gxp_size==776 && result.diagnostic_count==0;
+    bool ok=rc==0 && result.gxp_data && result.gxp_size==1004 && result.diagnostic_count==0;
     if (ok) {
         const uint8_t interface_block[]={
             0x3f,0xff,0xff,0x07,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -436,15 +436,44 @@ bool compile_matrix_normal_multivarying_profile() {
         };
         const uint32_t resources[]={0,4,8,12,16,20,24,0,16,44,60,32};
         const uint8_t components[]={4,4,4,4,4,4,4,4,4,4,1,3};
+        const uint64_t primary_words[]={
+            0xfa44070000000000ULL,0x3880152183080100ULL,0x3880352183200180ULL,
+            0x38801d2183300280ULL,0x40c00d9caf818c1aULL,0x18802880cf51a210ULL,
+            0xfa14000301010202ULL,0x50c1000ae1801900ULL,0x38800d0ac2180140ULL,
+            0x40c00dbcff998812ULL,0x18919882c0d1a220ULL,0x18918882c111a219ULL,
+            0x38800d22c31406c0ULL,0x189189028111a203ULL,0x40c00dbcff99860eULL,
+            0x18919880cf91a220ULL,0xfa14000001010101ULL,0x18918a00cf91a21bULL,
+            0x18918c008f91a205ULL,0x40c00dbcaf998002ULL,0x28c41511e0160b8cULL,
+            0x189189018011a203ULL,0x18918882e011a222ULL,0x18918902e011a220ULL,
+            0x18918882e051a21bULL,0x18918902a051a205ULL,0x189188818051a200ULL,
+            0x40c00dbcffd98e1eULL,0x18918882e011a222ULL,0x18918902e011a220ULL,
+            0x18918882e051a21bULL,0x18918902a051a205ULL,0x189189018051a200ULL,
+            0x18902882c011a200ULL,0x18918880cf11a206ULL,0x28847000ef950096ULL,
+            0x18e18981a1c18140ULL,0x18e18901a1818000ULL,0x189188818112c202ULL,
+            0x40c00dbcff999832ULL,0x189189018112c202ULL,0x188188801f11a23dULL,
+            0x30800a000f803e01ULL,0x18e181810141813dULL,0x08800881018d0f7cULL,
+            0x08a41084ff04679fULL,0x08a4008533845f1fULL,0xfb275000a0200000ULL,
+        };
+        const uint64_t secondary_words[]={
+            0x5081000aa8800000ULL,0x3880050282880080ULL,0x5081000aa8c00400ULL,
+            0x38800502828c0180ULL,0x40800d8ea8030005ULL,0x40800d8ea843040dULL,
+            0x5081000aa6c00100ULL,0x38800502826c00c0ULL,0x5081000aa7000500ULL,
+            0x38800502827001c0ULL,0x40800d8ea7430107ULL,0x3884050a81680140ULL,
+        };
         vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
         const auto interface=view.varyings();
-        ok=view.valid() && view.logical_size()==775 && view.sdk_version()==0x0165 &&
-            view.flags()==0x00090000 && view.primary_register_count()==28 &&
-            view.secondary_register_count()==64 && view.primary_instruction_count()==32 &&
-            view.secondary_instruction_count()==0 && view.literal_count()==2 &&
-            view.container_count()==2 && view.parameter_count()==12 &&
+        const auto primary=view.primary_program(),secondary=view.secondary_program();
+        ok=view.valid() && view.logical_size()==1003 && view.minor_version()==5 &&
+            view.sdk_version()==0x0300 && view.flags()==0x00190004 &&
+            view.primary_register_count()==28 && view.secondary_register_count()==72 &&
+            view.primary_instruction_count()==48 && view.secondary_instruction_count()==12 &&
+            view.literal_count()==2 && view.container_count()==2 && view.parameter_count()==12 &&
+            view.compiler_version_raw()==0x00033a90 &&
             interface.size==sizeof(interface_block) &&
-            std::memcmp(interface.data,interface_block,sizeof(interface_block))==0;
+            std::memcmp(interface.data,interface_block,sizeof(interface_block))==0 &&
+            primary.size==sizeof(primary_words) && secondary.size==sizeof(secondary_words) &&
+            std::memcmp(primary.data,primary_words,sizeof(primary_words))==0 &&
+            std::memcmp(secondary.data,secondary_words,sizeof(secondary_words))==0;
         for (size_t i=0;ok && i<12;++i) {
             vsc::gxp::ParameterView parameter{};
             ok=view.parameter(i,parameter) && parameter.resource_index==resources[i] &&
