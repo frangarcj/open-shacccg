@@ -261,6 +261,62 @@ bool decode_vmov_semantic(uint64_t word, VmovSemantic *i) {
     return true;
 }
 
+bool encode_vmovc_f32_lt_zero_semantic(const VmovcF32LtZeroSemantic &i, uint64_t *word) {
+    if (!word || i.predicate!=Predicate::Always || i.dest_mask==0 || i.dest_mask>=16 ||
+        i.swizzle>=16 || i.dst.num>=64 || i.test.num>=64 ||
+        i.src_true.num>=64 || i.src_false.num>=64)
+        return false;
+    VmovFields f{};
+    bool src0_ext=false;
+    if (!encode_dest_bank(i.dst.bank,&f.dest_bank,&f.dest_bank_ext) ||
+        !encode_src0_bank(i.test.bank,&f.src0_bank,&src0_ext) ||
+        !encode_src1_bank(i.src_true.bank,&f.src1_bank,&f.src1_bank_ext) ||
+        !encode_src1_bank(i.src_false.bank,&f.src2_bank,&f.src2_bank_ext))
+        return false;
+    f.pred=0;
+    f.skip_invalid=i.skip_invalid;
+    f.test_bit_2=true;
+    f.src0_component_select=false;
+    f.sync_start=false;
+    f.end_or_src0_bank_ext=src0_ext;
+    f.move_type=1;
+    f.repeat_count=0;
+    f.no_schedule=i.no_schedule;
+    f.data_type=static_cast<uint8_t>(DataType::F32);
+    f.test_bit_1=false;
+    f.src0_swizzle=i.swizzle;
+    f.dest_mask=i.dest_mask;
+    f.dest_num=i.dst.num;
+    f.src0_num=i.test.num;
+    f.src1_num=i.src_true.num;
+    f.src2_num=i.src_false.num;
+    return encode_vmov(f,word);
+}
+
+bool decode_vmovc_f32_lt_zero_semantic(uint64_t word, VmovcF32LtZeroSemantic *i) {
+    if (!i) return false;
+    VmovFields f{};
+    if (!decode_vmov(word,&f) || f.pred!=0 || f.move_type!=1 || !f.test_bit_2 || f.test_bit_1 ||
+        f.src0_component_select || f.sync_start || f.repeat_count!=0 ||
+        f.data_type!=static_cast<uint8_t>(DataType::F32) || f.dest_mask==0 || f.src0_swizzle>=16)
+        return false;
+    if (!decode_dest_bank(f.dest_bank,f.dest_bank_ext,&i->dst.bank) ||
+        !decode_src0_bank(f.src0_bank,f.end_or_src0_bank_ext,&i->test.bank) ||
+        !decode_src1_bank(f.src1_bank,f.src1_bank_ext,&i->src_true.bank) ||
+        !decode_src1_bank(f.src2_bank,f.src2_bank_ext,&i->src_false.bank))
+        return false;
+    i->dst.num=f.dest_num;
+    i->test.num=f.src0_num;
+    i->src_true.num=f.src1_num;
+    i->src_false.num=f.src2_num;
+    i->predicate=Predicate::Always;
+    i->dest_mask=f.dest_mask;
+    i->swizzle=f.src0_swizzle;
+    i->skip_invalid=f.skip_invalid;
+    i->no_schedule=f.no_schedule;
+    return true;
+}
+
 bool encode_vpck_semantic(const VpckSemantic &i, uint64_t *word) {
     if (!word || i.dst.num >= 128 || i.src1.num >= 64 || i.src2.num >= 64 ||
         i.dest_mask >= 16 || i.repeat_count >= 16) return false;

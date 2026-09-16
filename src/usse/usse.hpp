@@ -64,6 +64,20 @@ struct VmovSemantic {
     bool end = false;
 };
 
+// Conditional F32 move: dst = (test < 0) ? src_true : src_false.
+// This is the VMOVC form selected by SDK 3.0.0 sRGB lowering.
+struct VmovcF32LtZeroSemantic {
+    RegisterRef dst{};
+    RegisterRef test{};
+    RegisterRef src_true{};
+    RegisterRef src_false{};
+    Predicate predicate = Predicate::Always;
+    uint8_t dest_mask = 1;
+    uint8_t swizzle = 0;
+    bool skip_invalid = true;
+    bool no_schedule = false;
+};
+
 // VPCK has its own 3-bit format namespace.
 enum class PackFormat : uint8_t {
     U8 = 0, S8 = 1, O8 = 2, U16 = 3, S16 = 4, F16 = 5, F32 = 6, C10 = 7
@@ -684,6 +698,8 @@ bool decode_src1_bank(uint8_t selector, bool extended, RegisterBank *bank);
 // controls for differential testing.
 bool encode_vmov_semantic(const VmovSemantic &instruction, uint64_t *word);
 bool decode_vmov_semantic(uint64_t word, VmovSemantic *instruction);
+bool encode_vmovc_f32_lt_zero_semantic(const VmovcF32LtZeroSemantic &instruction, uint64_t *word);
+bool decode_vmovc_f32_lt_zero_semantic(uint64_t word, VmovcF32LtZeroSemantic *instruction);
 bool encode_phase_semantic(const PhaseSemantic &instruction, uint64_t *word);
 bool decode_phase_semantic(uint64_t word, PhaseSemantic *instruction);
 bool encode_nop_semantic(const NopSemantic &instruction, uint64_t *word);
@@ -740,6 +756,7 @@ bool encode_branch_semantic(const BranchSemantic &instruction, uint64_t *word);
 bool decode_branch_semantic(uint64_t word, BranchSemantic *instruction);
 
 inline bool encode_semantic(const VmovSemantic &i, uint64_t *word) { return encode_vmov_semantic(i, word); }
+inline bool encode_semantic(const VmovcF32LtZeroSemantic &i, uint64_t *word) { return encode_vmovc_f32_lt_zero_semantic(i, word); }
 inline bool encode_semantic(const PhaseSemantic &i, uint64_t *word) { return encode_phase_semantic(i, word); }
 inline bool encode_semantic(const NopSemantic &i, uint64_t *word) { return encode_nop_semantic(i, word); }
 inline bool encode_semantic(const VpckSemantic &i, uint64_t *word) { return encode_vpck_semantic(i, word); }

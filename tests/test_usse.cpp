@@ -532,6 +532,27 @@ int test_usse() {
             failures += fail("SDK 3.0 sRGB FEXP/VMOV VDUAL mismatch");
     }
     {
+        VmovcF32LtZeroSemantic probes[2]{};
+        probes[0].dst={RegisterBank::Temp,0}; probes[0].test={RegisterBank::Temp,0};
+        probes[0].src_true={RegisterBank::SecondaryAttribute,0}; probes[0].src_false={RegisterBank::Special,0};
+        probes[0].dest_mask=3; probes[0].no_schedule=true;
+        probes[1].dst={RegisterBank::Temp,62}; probes[1].test={RegisterBank::Temp,60};
+        probes[1].src_true={RegisterBank::SecondaryAttribute,0}; probes[1].src_false={RegisterBank::Special,0};
+        probes[1].dest_mask=1; probes[1].no_schedule=true;
+        const uint64_t words[]={0x38c14d00d3000000ULL,0x38c14d00d1fbc000ULL};
+        for (size_t i=0;i<2;++i) {
+            uint64_t word=0;
+            VmovcF32LtZeroSemantic decoded{};
+            if (!encode_vmovc_f32_lt_zero_semantic(probes[i],&word) || word!=words[i] ||
+                !decode_vmovc_f32_lt_zero_semantic(word,&decoded) ||
+                decoded.dst.bank!=probes[i].dst.bank || decoded.dst.num!=probes[i].dst.num ||
+                decoded.test.bank!=probes[i].test.bank || decoded.test.num!=probes[i].test.num ||
+                decoded.src_true.bank!=RegisterBank::SecondaryAttribute ||
+                decoded.src_false.bank!=RegisterBank::Special || decoded.dest_mask!=probes[i].dest_mask)
+                failures += fail("SDK 3.0 sRGB VMOVC LT-zero mismatch");
+        }
+    }
+    {
         const auto sw=[](SwizzleChannel a,SwizzleChannel b,SwizzleChannel c,SwizzleChannel d) {
             return Swizzle4{{a,b,c,d}};
         };
