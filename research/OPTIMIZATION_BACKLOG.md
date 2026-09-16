@@ -108,6 +108,10 @@ Related texture cleanup:
   structural profile: 12 primary + 3 secondary instructions, PA=8/SA=9, two
   literals (`1.0f` and `LOG2E^2`), and the observed VMAD3 + VDUAL + base-selector
   Exp2 sequence feeding the same clamp/mix tail as linear fog.
+- The sRGB output conversion now reproduces SDK 3.0.0 byte-for-byte as a
+  20-instruction v1.5 profile. The remaining sRGB work is generalization only:
+  preserve this exact path while accepting equivalent front-end DAG orderings
+  if a second real shader requires them.
 
 ### `TM2_FAST_FS`
 

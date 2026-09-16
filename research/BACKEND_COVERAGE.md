@@ -137,6 +137,12 @@ and the SDK 3.0 Exp2 VCOMP destination selector. The three-word secondary stream
 precomputes `-density * distance` and its second multiply; clamp/mix/output then
 reuse the linear-fog semantics.
 
+The vitaGL sRGB output transform now also reproduces SDK 3.0.0 byte-for-byte.
+The structural Typed-IR recognizer anchors the three cutoff selects plus the
+`log2 -> * (1/2.4) -> exp2` RGB chain and affine/lerp tail rather than shader
+names. Codegen emits the observed 20-word v1.5 primary stream, six literal slots,
+PA=4/SA=6, and compiler version `0x00033a90`.
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.

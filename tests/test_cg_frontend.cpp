@@ -1047,13 +1047,39 @@ int test_cg_frontend() {
             "float main(float x:TEXCOORD0):COLOR0{return exp(x);}",
             "scalar-exp.cg"))
         failures += fail("scalar Exp did not lower through LOG2E + Exp2 VCOMP");
-    if (!compile_fragment_gxp(
+    {
+        const std::string source=
             "float4 main(float4 c:COLOR0):COLOR0{"
             "float3 cutoff=float3(c.r<0.0031308f?1.0f:0.0f,c.g<0.0031308f?1.0f:0.0f,c.b<0.0031308f?1.0f:0.0f);"
             "float3 higher=float3(1.055f)*pow(c.rgb,float3(1.0f/2.4f))-float3(0.055f);"
-            "float3 lower=c.rgb*float3(12.92f);return float4(lerp(higher,lower,cutoff),c.a);}",
-            "srgb-compose3-pow.cg"))
-        failures += fail("sRGB float3 compose/Pow/FMix/RGB replacement did not compile end to end");
+            "float3 lower=c.rgb*float3(12.92f);return float4(lerp(higher,lower,cutoff),c.a);}";
+        VscCompileRequest request{};
+        request.source_name="srgb-sdk30.cg"; request.source=source.data(); request.source_size=source.size();
+        request.entrypoint="main"; request.stage=VSC_STAGE_FRAGMENT;
+        VscCompileResult result{};
+        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.diagnostic_count==0;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            const uint64_t primary[]={
+                0xfa44070000000000ULL,0x3080044080000001ULL,0x3080044880000002ULL,
+                0x30800c4080200081ULL,0x08a40b843f440002ULL,0x20c54000a0150480ULL,
+                0x30800e080fc03e82ULL,0x30800e100fc03e84ULL,0x00a00b80ff53e041ULL,
+                0x08c07b20cfa49080ULL,0x40c10d8c20013e80ULL,0x38c14d00d3000000ULL,
+                0x08c008a4ef289080ULL,0x38c14d00d1fbc000ULL,0x00a0898ec010003dULL,
+                0x0080488ccf10103dULL,0x38800d4006f80000ULL,0x18b18182a0111100ULL,
+                0x18b180822048903cULL,0x40800d7ea0198002ULL,
+            };
+            const auto p=view.primary_program();
+            ok=view.valid() && result.gxp_size==412 && view.logical_size()==412 &&
+                view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00181001 &&
+                view.primary_register_count()==4 && view.secondary_register_count()==6 &&
+                view.compiler_version_raw()==0x00033a90 && view.literal_count()==6 &&
+                view.container_count()==1 && view.parameter_count()==0 &&
+                p.size==sizeof(primary) && std::memcmp(p.data,primary,sizeof(primary))==0;
+        }
+        if (!ok) failures += fail("sRGB conversion did not reproduce the SDK 3.0.0 GXP profile");
+        vsc_destroy_result(&request.allocator,&result);
+    }
     {
         vsc::backend::IrCompileResult combined;
         if (!vsc::backend::compile_fragment_two_texture_combine({"tex1",1},{"tex2",2},0,0,combined)) {

@@ -3344,6 +3344,124 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             w->src0.bits==inputs[1]->value.bits;
     };
 
+    auto srgb_shape=[&]() -> bool {
+        if (instructions.size()!=40 || resources.size()!=2 || inputs.size()!=1 ||
+            !uniforms.empty() || !samplers.empty() || output_stores.size()!=1 ||
+            inputs[0]->index!=0 || inputs[0]->type!=TypedType::F32x4 ||
+            inputs[0]->semantic!=TypedSemantic::Color ||
+            program.literals().size()!=19 || program.float_selects().size()!=3 ||
+            program.float3_composites().size()!=5 || !program.float4_composites().empty())
+            return false;
+        const auto *store=output_stores[0];
+        if (store->aux>=resources.size() || resources[store->aux].kind!=TypedResourceKind::Output ||
+            resources[store->aux].index!=0 || store->src0.type()!=TypedType::F32x4)
+            return false;
+
+        static constexpr std::array<uint32_t,19> expected_literals={{
+            0x3b4d2e1cu,0x3f800000u,0x00000000u,
+            0x3b4d2e1cu,0x3f800000u,0x00000000u,
+            0x3b4d2e1cu,0x3f800000u,0x00000000u,
+            0x3ed55555u,
+            0x3f870a3du,0x3f870a3du,0x3f870a3du,
+            0x3d6147aeu,0x3d6147aeu,0x3d6147aeu,
+            0x414eb852u,0x414eb852u,0x414eb852u,
+        }};
+        if (!std::equal(program.literals().begin(),program.literals().end(),expected_literals.begin()))
+            return false;
+
+        struct ExpectedOp { TypedOpcode opcode; uint8_t subop; uint16_t aux; };
+        static constexpr std::array<ExpectedOp,40> expected={{
+            {TypedOpcode::Input,0,0},
+            {TypedOpcode::FloatExtract,0,0},{TypedOpcode::Compare,static_cast<uint8_t>(usse::CompareOp::Less),0},{TypedOpcode::FloatSelect,0,0},
+            {TypedOpcode::FloatExtract,1,0},{TypedOpcode::Compare,static_cast<uint8_t>(usse::CompareOp::Less),0},{TypedOpcode::FloatSelect,0,1},
+            {TypedOpcode::FloatExtract,2,0},{TypedOpcode::Compare,static_cast<uint8_t>(usse::CompareOp::Less),0},{TypedOpcode::FloatSelect,0,2},
+            {TypedOpcode::FloatCompose3,0,0},{TypedOpcode::FloatSwizzle,static_cast<uint8_t>(TypedFloatSwizzleOp::XYZ),0},
+            {TypedOpcode::FloatExtract,0,0},{TypedOpcode::FloatUnary,static_cast<uint8_t>(TypedFloatUnaryOp::Log2),0},
+            {TypedOpcode::FloatBinary,static_cast<uint8_t>(TypedFloatOp::Mul),0},{TypedOpcode::FloatUnary,static_cast<uint8_t>(TypedFloatUnaryOp::Exp2),0},
+            {TypedOpcode::FloatExtract,1,0},{TypedOpcode::FloatUnary,static_cast<uint8_t>(TypedFloatUnaryOp::Log2),0},
+            {TypedOpcode::FloatBinary,static_cast<uint8_t>(TypedFloatOp::Mul),0},{TypedOpcode::FloatUnary,static_cast<uint8_t>(TypedFloatUnaryOp::Exp2),0},
+            {TypedOpcode::FloatExtract,2,0},{TypedOpcode::FloatUnary,static_cast<uint8_t>(TypedFloatUnaryOp::Log2),0},
+            {TypedOpcode::FloatBinary,static_cast<uint8_t>(TypedFloatOp::Mul),0},{TypedOpcode::FloatUnary,static_cast<uint8_t>(TypedFloatUnaryOp::Exp2),0},
+            {TypedOpcode::FloatCompose3,0,1},{TypedOpcode::FloatCompose3,0,2},
+            {TypedOpcode::FloatBinary,static_cast<uint8_t>(TypedFloatOp::Mul),0},{TypedOpcode::FloatCompose3,0,3},
+            {TypedOpcode::FloatBinary,static_cast<uint8_t>(TypedFloatOp::Sub),0},{TypedOpcode::FloatCompose3,0,4},
+            {TypedOpcode::FloatBinary,static_cast<uint8_t>(TypedFloatOp::Mul),0},
+            {TypedOpcode::FloatBinary,static_cast<uint8_t>(TypedFloatOp::Sub),0},
+            {TypedOpcode::FloatBinary,static_cast<uint8_t>(TypedFloatOp::Mul),0},
+            {TypedOpcode::FloatBinary,static_cast<uint8_t>(TypedFloatOp::Add),0},
+            {TypedOpcode::FloatExtract,3,0},{TypedOpcode::FloatExtract,0,0},
+            {TypedOpcode::FloatExtract,1,0},{TypedOpcode::FloatExtract,2,0},
+            {TypedOpcode::FloatReplaceRGB,0,0},{TypedOpcode::StoreOutput,0,1},
+        }};
+        for (size_t i=0;i<expected.size();++i)
+            if (instructions[i].opcode()!=expected[i].opcode || instructions[i].subop()!=expected[i].subop ||
+                instructions[i].aux!=expected[i].aux) return false;
+
+        auto literal_is=[&](TypedValue value,uint32_t id) {
+            return value.kind()==TypedValueKind::Literal && value.type()==TypedType::F32 && value.id()==id;
+        };
+        const uint8_t extract_lanes[]={0,1,2};
+        const uint32_t cutoff_literals[]={0,3,6};
+        const uint32_t one_literals[]={1,4,7};
+        const uint32_t zero_literals[]={2,5,8};
+        const size_t extract_indices[]={1,4,7};
+        const size_t compare_indices[]={2,5,8};
+        const size_t select_indices[]={3,6,9};
+        for (size_t lane=0;lane<3;++lane) {
+            const auto &extract=instructions[extract_indices[lane]];
+            const auto &compare=instructions[compare_indices[lane]];
+            const auto &select=program.float_selects()[lane];
+            if (extract.subop()!=extract_lanes[lane] || extract.src0.bits!=inputs[0]->value.bits ||
+                compare.src0.bits!=extract.dst.bits || !literal_is(compare.src1,cutoff_literals[lane]) ||
+                select.predicate.bits!=compare.dst.bits || !literal_is(select.true_value,one_literals[lane]) ||
+                !literal_is(select.false_value,zero_literals[lane]) ||
+                instructions[select_indices[lane]].dst.bits==0)
+                return false;
+        }
+        const auto &cutoff=program.float3_composites()[0];
+        if (cutoff[0].bits!=instructions[3].dst.bits || cutoff[1].bits!=instructions[6].dst.bits ||
+            cutoff[2].bits!=instructions[9].dst.bits) return false;
+
+        if (instructions[11].src0.bits!=inputs[0]->value.bits) return false;
+        const size_t extract_rgb[]={12,16,20};
+        const size_t log_rgb[]={13,17,21};
+        const size_t mul_rgb[]={14,18,22};
+        const size_t exp_rgb[]={15,19,23};
+        for (size_t lane=0;lane<3;++lane) {
+            if (instructions[extract_rgb[lane]].src0.bits!=instructions[11].dst.bits ||
+                instructions[extract_rgb[lane]].subop()!=lane ||
+                instructions[log_rgb[lane]].src0.bits!=instructions[extract_rgb[lane]].dst.bits ||
+                instructions[mul_rgb[lane]].src0.bits!=instructions[log_rgb[lane]].dst.bits ||
+                !literal_is(instructions[mul_rgb[lane]].src1,9) ||
+                instructions[exp_rgb[lane]].src0.bits!=instructions[mul_rgb[lane]].dst.bits)
+                return false;
+        }
+        const auto &pow_rgb=program.float3_composites()[1];
+        if (pow_rgb[0].bits!=instructions[15].dst.bits || pow_rgb[1].bits!=instructions[19].dst.bits ||
+            pow_rgb[2].bits!=instructions[23].dst.bits) return false;
+        for (size_t lane=0;lane<3;++lane) {
+            if (!literal_is(program.float3_composites()[2][lane],10+lane) ||
+                !literal_is(program.float3_composites()[3][lane],13+lane) ||
+                !literal_is(program.float3_composites()[4][lane],16+lane)) return false;
+        }
+        if (instructions[26].src0.bits!=instructions[25].dst.bits || instructions[26].src1.bits!=instructions[24].dst.bits ||
+            instructions[28].src0.bits!=instructions[26].dst.bits || instructions[28].src1.bits!=instructions[27].dst.bits ||
+            instructions[30].src0.bits!=instructions[11].dst.bits || instructions[30].src1.bits!=instructions[29].dst.bits ||
+            instructions[31].src0.bits!=instructions[30].dst.bits || instructions[31].src1.bits!=instructions[28].dst.bits ||
+            instructions[32].src0.bits!=instructions[31].dst.bits || instructions[32].src1.bits!=instructions[10].dst.bits ||
+            instructions[33].src0.bits!=instructions[28].dst.bits || instructions[33].src1.bits!=instructions[32].dst.bits ||
+            instructions[34].src0.bits!=inputs[0]->value.bits || instructions[34].subop()!=3 ||
+            instructions[35].src0.bits!=instructions[33].dst.bits || instructions[36].src0.bits!=instructions[33].dst.bits ||
+            instructions[37].src0.bits!=instructions[33].dst.bits ||
+            instructions[38].src0.bits!=inputs[0]->value.bits || instructions[38].src1.bits!=instructions[33].dst.bits ||
+            store->src0.bits!=instructions[38].dst.bits)
+            return false;
+        return true;
+    };
+
+    if (srgb_shape())
+        return compile_fragment_srgb(0,0,out);
+
     if (linear_fog_shape())
         return compile_fragment_linear_fog(fragment_uniforms[0],fragment_float_uniforms[0],
                                            fragment_float_uniforms[1],0,0,out);

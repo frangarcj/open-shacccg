@@ -175,6 +175,8 @@ bool compile_fragment_exp2_fog(const IrUniformVec4 &fog_color,
                                const IrUniformFloat &fog_density,
                                uint32_t binary_guid, uint32_t source_guid,
                                IrCompileResult &out);
+bool compile_fragment_srgb(uint32_t binary_guid, uint32_t source_guid,
+                           IrCompileResult &out);
 bool compile_fragment_texture_alpha_select_machine(const IrUniformFloat &uniform,
                                                    const IrSampler2D &sampler,
                                                    uint32_t binary_guid, uint32_t source_guid,
