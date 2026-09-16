@@ -22,9 +22,28 @@ POLY/POLY3D now use generic Typed -> Machine lowering again, not fixture detecti
 
 New optimizations must operate on subexpressions with explicit operands and preserve
 unmatched code. Tests must include changed constants/operand edges and renamed
-identifiers, not only the original golden shader. Existing large vitaGL profiles
-still need the same mutation audit; their 24/24 captured result does not prove
-general compilation or correctness for nearby source variants.
+identifiers, not only the original golden shader. The fixed16 and smooth paths
+now share a calculation-independent output ABI; remaining vitaGL interface
+selectors and smaller codegen patterns still need the same mutation audit.
+The 24/24 captured result does not prove general compilation or numerical
+correctness for nearby source variants.
+
+### Fixed16 and the shared vertex output ABI
+
+- Removed the complete fixed16 schedule and its opcode-count matcher. Changing
+  `1/65536` to `1/32768` now changes the literal table rather than being ignored.
+- The shared POSITION/COLOR0/TEXCOORD0/PSIZE route accepts unrelated calculations,
+  added/removed uniform and matrix resources, and renamed identifiers. It also
+  replaces smooth lighting's named-resource guard; unsupported output layouts or
+  stores outside the unconditional final block remain fail-closed.
+- Current fixed16 corpus output: 72 primary + 0 secondary instructions, 956 bytes,
+  PA=12/SA=37. Sony SDK 3.0 reference: 21+3, 568 bytes, PA=12/SA=36.
+- Next optimizations must target local bitcast/extract/unpack chains, matrix
+  lowering and point-size hoisting, retaining actual operands and constants.
+  Do not restore the complete schedule to recover byte equality.
+- Continue numeric validation of mixed integer/F32 register addressing, register
+  allocation and TEMP accounting; mutation tests alone are not execution tests.
+  `sceGxmProgramCheck` and render validation remain a separate hardware gate.
 
 ## Geometrizer integration baselines
 

@@ -165,12 +165,24 @@ texture2 RGB, a VMAD3 with extended GPI0=`111` folds the RGB add, MIN/MAX clamp
 in place, alpha multiplies into T60.w, and one final VPCK writes COLOR. Both
 sampler-query slots are `0x0301`, including the v1.5 `0x30` iterator anchor.
 
-The fixed-point halfword vertex path is also byte-identical to SDK 3.0.0 when
-the oracle is run with the exact SceShaccCgExt extension hook required for Cg
-`bit_cast`. Sony collapses the old 72-word generic bitcast/narrow expansion to
-21 primary instructions: repeated/scaled U16/S16->F32 VPCK unpack, one VADD+VMOV
-VDUAL, the existing matrix VMAD forms, and PSIZE output. The resulting real
-vitaGL image is 568 bytes with PA=12/SA=36 and compiler `0x00033a90`.
+The fixed-point halfword SDK 3.0 capture remains a reference: with SceShaccCgExt
+enabled, Sony emits 21 primary + 3 secondary instructions in a 568-byte v1.5
+image, PA=12/SA=36. The whole-shader fixed16 template has been removed: it emitted
+the same GXP after changing the live scale from `1/65536` to `1/32768`.
+The captured vitaGL source now lowers through generic Typed/Machine IR, producing
+72 primary instructions, no secondary stream and a 956-byte v1.4 GXP, PA=12/SA=37.
+The validated U16/S16 VPCK and VDUAL encoders remain available for local selection.
+
+Fixed16 and smooth lighting share an output-ABI packer for POSITION, COLOR0,
+float2 TEXCOORD0 and PSIZE. It does not require conversion or lighting operations,
+particular names, or fixed counts of attributes/uniforms/matrices. All calculations
+and literals come from the IR; only output register packing is fixed by the ABI.
+Deferred output stores are limited to the unconditional final block. Regression
+tests cover eight expression/resource mutations, full identifier/file renaming,
+an ordinary shader without fixed conversion or matrices, and direct Typed IR
+tests for accepted/rejected interfaces. Vertex float2 inputs keep four-word PA
+spacing, and F32 PSIZE writes address scalar word 10 as O5.x, not O10.x.
+The frontend also preserves direct scalar F32 output constants as typed literals.
 
 The Phong vertex SDK 3.0 capture remains the optimization oracle: 1004-byte
 v1.5, 48 primary + 12 secondary instructions, PA=28/SA=72. The production
@@ -194,8 +206,11 @@ The smooth-lighting SDK 3.0 image remains the optimization oracle: Sony emits
 123 primary + 6 secondary instructions in 1824 bytes with PA=28/SA=94. The
 production whole-shader schedule has been removed; the current path lowers the
 structured lighting CFG through generic Typed/Machine IR and then packages the
-validated POSITION/COLOR/TEXCOORD0/PSIZE interface. Its longer v1.4 stream is an
-intentional correctness baseline for future local VMAD/VDUAL/scheduling work.
+validated POSITION/COLOR/TEXCOORD0/PSIZE interface. The shared output-ABI route
+also removes its old named-resource guards. Integer loop constants remain integer
+operands rather than being prebound as F32 literals. Its current 248-word primary
+stream is 2740 bytes, PA=28/SA=90; this is a compilation baseline for future local
+VMAD/VDUAL/scheduling work, not a numerical or hardware equivalence claim.
 
 The one-light Phong fragment SDK 3.0 capture remains a fidelity oracle: Sony
 emits 71 primary + 16 secondary instructions in a 1240-byte v1.5 image, with
@@ -208,8 +223,8 @@ instruction-selection and scheduling optimizations.
 The one-plane `clip_wvp` SDK 3.0 scalarized capture remains the optimization
 oracle: 872-byte v1.5 GXP, 43 primary + 12 secondary instructions, PA=12/SA=64.
 The production fixed schedule has been removed. The original vitaGL source now
-lowers its complete clip CFG through generic Typed/Machine IR and emits a longer
-v1.4 correctness baseline while preserving the validated POSITION/COLOR/
+lowers its complete clip CFG through generic Typed/Machine IR and emits a different
+v1.4 baseline while preserving the validated POSITION/COLOR/
 TEXCOORD0/CLP0/PSIZE interface and reflection. A source-mutation regression
 changes the clip-plane arithmetic and requires the generated GXP to change.
 
@@ -217,16 +232,18 @@ The captured vitaGL corpus remains **24 / 24 compilable**. The earlier SDK 3.0
 fidelity sweep established reference schedules for all 24 pinned cases, but those
 references are no longer all production schedules: large whole-shader templates
 are being removed in favor of generic Typed/Machine lowering plus local
-optimizations. Phong fragment, smooth lighting and clip vertex now compile through generic
-Typed/Machine paths and intentionally emit longer correctness schedules while
-their SDK 3.0 captures remain oracle evidence for future local optimizations.
+optimizations. Fixed16, both Phong stages, smooth lighting and clip vertex now
+compile their arithmetic through Typed/Machine paths rather than fixed schedules.
+Their SDK 3.0 captures remain oracle evidence for future local optimizations;
+some interface selectors outside the shared four-output ABI remain specialized.
 
 This statement is deliberately scoped to the pinned 24-case branch-oriented
 matrix, not every possible combination of vitaGL fixed-function defines. The
 private oracle still needs reduced probes for a few aggregate-heavy shapes, and
 real-Vita `sceGxmProgramCheck` / render validation remains the separate hardware
 gate. New work uses source-mutation tests to ensure arithmetic edits change the
-GXP instead of being hidden by a fixed whole-shader schedule.
+GXP instead of being hidden by a fixed whole-shader schedule. Such tests and
+successful compilation do not establish numerical equivalence of a whole shader.
 
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and

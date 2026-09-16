@@ -2318,6 +2318,19 @@ bool spirv_cross_to_typed_shader(const std::vector<uint32_t> &words,
                     } else {
                         const auto output = outputs.find(args[0]);
                         auto value = values.find(args[1]);
+                        if (value==values.end() && output!=outputs.end() && output->second<typed.resources().size() &&
+                            typed.resources()[output->second].type==backend::TypedType::F32) {
+                            const auto constant=constants.find(args[1]);
+                            if (constant!=constants.end()) {
+                                const auto literal=program.literal_f32(constant->second);
+                                if (literal.kind()==backend::TypedValueKind::None) {
+                                    error="failed to materialize scalar float output constant";
+                                    return false;
+                                }
+                                values[args[1]]=literal;
+                                value=values.find(args[1]);
+                            }
+                        }
                         if (value==values.end()) {
                             const auto constant=float_vector_constants.find(args[1]);
                             if (constant!=float_vector_constants.end() && output!=outputs.end() &&

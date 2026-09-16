@@ -1,5 +1,6 @@
 #include "backend/typed_ir.hpp"
 #include "backend/shader_profiles.hpp"
+#include "gxp/gxp_reader.hpp"
 #include "spirv/spirv_cross_adapter.hpp"
 #include "spirv/spirv_pipeline.hpp"
 #include "usse/usse.hpp"
@@ -800,6 +801,54 @@ int test_typed_ir() {
         MachineCompileResult result;
         if (compile_typed_program(program, result))
             failures += fail("typed bitwise accepted unsupported F32 operands");
+    }
+
+    // No frontend and no fixed-point/lighting operations: selecting the output
+    // ABI must preserve PA spacing and write PSIZE within its 11-word interface.
+    for (unsigned variant=0;variant<3;++variant) {
+        TypedShader shader(TypedStage::Vertex);
+        auto &program=shader.program();
+        const auto p=program.input<TypedType::F32x4>(0);
+        const auto uv=program.input<TypedType::F32x2>(1);
+        const auto c=program.input<TypedType::F32x4>(2);
+        shader.add_resource(TypedResourceKind::Input,p,TypedType::F32x4,"a",0,TypedSemantic::TexCoord,0);
+        shader.add_resource(TypedResourceKind::Input,uv,TypedType::F32x2,"b",1,TypedSemantic::TexCoord,1);
+        shader.add_resource(TypedResourceKind::Input,c,TypedType::F32x4,"c",2,TypedSemantic::TexCoord,2);
+        const auto position=shader.add_resource(TypedResourceKind::Output,{},TypedType::F32x4,"o0",0,TypedSemantic::Position,0);
+        const auto color=shader.add_resource(TypedResourceKind::Output,{},TypedType::F32x4,"o1",1,TypedSemantic::Color,0);
+        const auto texcoord=shader.add_resource(TypedResourceKind::Output,{},TypedType::F32x2,"o2",2,TypedSemantic::TexCoord,variant==2?1:0);
+        const auto point=shader.add_resource(TypedResourceKind::Output,{},TypedType::F32,"o3",3,TypedSemantic::PointSize,0);
+        bool built=program.emit<TypedOpcode::StoreOutput>(0,{},p,{},position);
+        if (variant==1) built=program.bind_label(program.make_label()) && built;
+        built=program.emit<TypedOpcode::StoreOutput>(0,{},c,{},color) && built;
+        built=program.emit<TypedOpcode::StoreOutput>(0,{},uv,{},texcoord) && built;
+        built=program.emit<TypedOpcode::StoreOutput>(0,{},program.literal_f32(0x40400000u),{},point) && built;
+        IrCompileResult result;
+        const bool compiled=built && compile_typed_shader(shader,result);
+        if (variant) {
+            if (compiled) failures += fail("output-ABI lowering accepted stores across blocks or an unsupported TEXCOORD slot");
+            continue;
+        }
+        if (!compiled) {
+            std::fprintf(stderr,"test_typed_ir: vertex output ABI: %s\n",result.error.c_str());
+            ++failures;
+            continue;
+        }
+        gxp::ProgramView view(result.gxp.data(),result.gxp.size());
+        const auto code=view.primary_program(),interface=view.varyings();
+        bool uv_from_correct_pa=false,point_in_bounds=false;
+        for (size_t offset=0;offset+8<=code.size;offset+=8) {
+            uint64_t word=0; std::memcpy(&word,code.data+offset,8);
+            usse::VmovSemantic move{};
+            if (!usse::decode_vmov_semantic(word,&move) || move.dst.bank!=usse::RegisterBank::Output) continue;
+            if (move.dst.num==4 && move.dest_mask==3)
+                uv_from_correct_pa=move.src.bank==usse::RegisterBank::PrimaryAttribute && move.src.num==2;
+            if (move.dst.num==5 && move.dest_mask==1) point_in_bounds=true;
+        }
+        if (!view.valid() || view.primary_register_count()!=12 || view.parameter_count()!=3 ||
+            interface.size!=32 || interface.data[0]!=0x3f || interface.data[1]!=0x0f ||
+            interface.data[19]!=11 || !uv_from_correct_pa || !point_in_bounds)
+            failures += fail("generic vertex output ABI did not preserve attribute or PSIZE word addressing");
     }
 
 #if defined(OPENSHACCG_ENABLE_SPIRV_CROSS)

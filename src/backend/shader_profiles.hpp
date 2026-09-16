@@ -123,11 +123,6 @@ bool compile_vertex_uniform_matrix_three_texcoords_color_point_size(
     const IrMatrix4Uniform &texcoord_matrix0, const IrMatrix4Uniform &texcoord_matrix1,
     const IrMatrix4Uniform &texcoord_matrix2, const IrUniformFloat &point_size,
     uint32_t binary_guid, uint32_t source_guid, IrCompileResult &out);
-bool compile_vertex_fixed16_matrix(const std::vector<IrAttribute> &attributes,
-                                   const std::vector<IrMatrix4Uniform> &matrices,
-                                   const IrUniformFloat &point_size,
-                                   uint32_t binary_guid, uint32_t source_guid,
-                                   IrCompileResult &out);
 bool compile_vertex_multivarying_machine(
     const MachineProgram &primary,
     const std::vector<IrAttribute> &attributes,
@@ -136,11 +131,11 @@ bool compile_vertex_multivarying_machine(
     const IrMatrix3Uniform &normal_matrix,
     const std::vector<IrLiteralF32> &literals,
     uint32_t binary_guid, uint32_t source_guid, IrCompileResult &out);
-bool compile_vertex_lighting_machine(const MachineProgram &primary,
+bool compile_vertex_color_texcoord_point_machine(const MachineProgram &primary,
                                      const std::vector<IrAttribute> &attributes,
                                      const std::vector<IrUniformFloat> &uniforms,
                                      const std::vector<IrMatrix4Uniform> &matrices,
-                                     const IrMatrix3Uniform &normal_matrix,
+                                     const std::vector<IrMatrix3Uniform> &matrices3,
                                      const std::vector<IrLiteralF32> &literals,
                                      uint32_t binary_guid, uint32_t source_guid,
                                      IrCompileResult &out);

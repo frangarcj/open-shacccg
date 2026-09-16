@@ -1139,188 +1139,6 @@ bool compile_vertex_uniform_matrix_three_texcoords_color_point_size(
     return true;
 }
 
-bool compile_vertex_fixed16_matrix(const std::vector<IrAttribute> &attributes,
-                                   const std::vector<IrMatrix4Uniform> &matrices,
-                                   const IrUniformFloat &point_size,
-                                   uint32_t binary_guid, uint32_t source_guid,
-                                   IrCompileResult &out) {
-    out={};
-    if (attributes.size()!=3 || matrices.size()!=2 || point_size.components!=1 ||
-        attributes[0].components!=4 || attributes[0].resource_index!=0 ||
-        attributes[1].components!=2 || attributes[1].resource_index!=4 ||
-        attributes[2].components!=4 || attributes[2].resource_index!=8 ||
-        matrices[0].resource_index!=0 || matrices[1].resource_index!=16 ||
-        point_size.resource_index!=32) {
-        out.error="fixed16 matrix profile requires position/uv/color, mat4@0/16 and point-size@32";
-        return false;
-    }
-    ProgramBuilder sdk3_primary,secondary;
-    auto pack16=[&](usse::RegisterRef dst, usse::RegisterRef src, usse::PackFormat format,
-                    uint8_t component, uint8_t repeat, bool scale, bool no_schedule) {
-        usse::Vpck16ToF32Semantic pack{};
-        pack.dst=dst; pack.src=src; pack.src_format=format; pack.component=component;
-        pack.repeat_count=repeat; pack.scale=scale; pack.no_schedule=no_schedule;
-        return sdk3_primary.instruction(pack);
-    };
-    usse::VmovSemantic color{};
-    color.dst={usse::RegisterBank::Output,2}; color.src={usse::RegisterBank::PrimaryAttribute,4};
-    color.data_type=usse::DataType::F32; color.dest_mask=3; color.swizzle=4; color.repeat_count=1;
-
-    usse::VmovSemantic stage_y{};
-    stage_y.dst={usse::RegisterBank::Temp,62}; stage_y.src={usse::RegisterBank::Temp,60};
-    stage_y.data_type=usse::DataType::F32; stage_y.dest_mask=2; stage_y.swizzle=0; stage_y.no_schedule=true;
-
-    usse::V32NmadSemantic add_uv{};
-    add_uv.op=usse::VectorOp::Add; add_uv.dst={usse::RegisterBank::Temp,60};
-    add_uv.src1={usse::RegisterBank::PrimaryAttribute,0}; add_uv.src2={usse::RegisterBank::PrimaryAttribute,5};
-    add_uv.dest_mask=2; add_uv.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::X,
-        usse::SwizzleChannel::X,usse::SwizzleChannel::X}};
-    add_uv.src2_swizzle=add_uv.src1_swizzle; add_uv.no_schedule=true;
-
-    auto tex_mad=[](uint8_t mask) {
-        usse::VmadSemantic mad{};
-        mad.dst={usse::RegisterBank::Output,4}; mad.src1={usse::RegisterBank::Temp,60};
-        mad.gpi0=1; mad.gpi1=0; mad.write_mask=mask; mad.vec4=true; mad.control_bit_53=false;
-        mad.repeat_mode=usse::RepeatMode::Slmsi; mad.no_schedule=true;
-        mad.gpi0_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
-                           usse::SwizzleChannel::Z,usse::SwizzleChannel::W}};
-        mad.gpi1_swizzle={{usse::SwizzleChannel::Z,usse::SwizzleChannel::W,
-                           usse::SwizzleChannel::Z,usse::SwizzleChannel::W}};
-        mad.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
-                           usse::SwizzleChannel::X,usse::SwizzleChannel::Y}};
-        return mad;
-    };
-    usse::VpckSemantic tex_matrix_stage{};
-    tex_matrix_stage.dst={usse::RegisterBank::Temp,125};
-    tex_matrix_stage.src1={usse::RegisterBank::SecondaryAttribute,10};
-    tex_matrix_stage.src2={usse::RegisterBank::SecondaryAttribute,11};
-    tex_matrix_stage.src_format=usse::PackFormat::F32; tex_matrix_stage.dst_format=usse::PackFormat::F32;
-    tex_matrix_stage.dest_mask=0xf; tex_matrix_stage.no_schedule=true;
-
-    usse::VmovSemantic position_zw{};
-    position_zw.dst={usse::RegisterBank::Temp,62}; position_zw.src={usse::RegisterBank::PrimaryAttribute,1};
-    position_zw.data_type=usse::DataType::F32; position_zw.dest_mask=0xc; position_zw.swizzle=8;
-    position_zw.no_schedule=true;
-
-    usse::V32NmadSemantic position_join{};
-    position_join.op=usse::VectorOp::Add; position_join.dst={usse::RegisterBank::Temp,60};
-    position_join.src1={usse::RegisterBank::PrimaryAttribute,3}; position_join.src2={usse::RegisterBank::Temp,62};
-    position_join.dest_mask=0xf;
-
-    usse::VmadSemantic position_mad{};
-    position_mad.dst={usse::RegisterBank::Output,0}; position_mad.src1={usse::RegisterBank::SecondaryAttribute,0};
-    position_mad.gpi0=0; position_mad.gpi1=2; position_mad.write_mask=1;
-    position_mad.vec4=true; position_mad.control_bit_53=false;
-    position_mad.repeat_mode=usse::RepeatMode::External; position_mad.repeat_count=3;
-    position_mad.gpi0_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
-                                usse::SwizzleChannel::Z,usse::SwizzleChannel::W}};
-    position_mad.gpi1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
-                                usse::SwizzleChannel::Z,usse::SwizzleChannel::Z}};
-    position_mad.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
-                                usse::SwizzleChannel::X,usse::SwizzleChannel::Y}};
-
-    usse::VbwSemantic point{};
-    point.op=usse::BitwiseOp::Or; point.dst={usse::RegisterBank::Output,10};
-    point.src1={usse::RegisterBank::SecondaryAttribute,24}; point.src2_is_immediate=true; point.immediate=0;
-
-    if (!sdk3_primary.phase() || !sdk3_primary.instruction(color) ||
-        !pack16({usse::RegisterBank::PrimaryAttribute,6},{usse::RegisterBank::PrimaryAttribute,0},usse::PackFormat::U16,0,3,true,false) ||
-        !pack16({usse::RegisterBank::PrimaryAttribute,2},{usse::RegisterBank::PrimaryAttribute,1},usse::PackFormat::S16,1,1,false,true) ||
-        !pack16({usse::RegisterBank::Temp,126},{usse::RegisterBank::PrimaryAttribute,0},usse::PackFormat::S16,1,0,false,true) ||
-        !pack16({usse::RegisterBank::Temp,124},{usse::RegisterBank::PrimaryAttribute,0},usse::PackFormat::S16,3,0,false,true) ||
-        !sdk3_primary.instruction(stage_y) ||
-        !pack16({usse::RegisterBank::PrimaryAttribute,0},{usse::RegisterBank::PrimaryAttribute,2},usse::PackFormat::S16,3,0,false,true) ||
-        !pack16({usse::RegisterBank::PrimaryAttribute,10},{usse::RegisterBank::PrimaryAttribute,2},usse::PackFormat::U16,2,0,true,true) ||
-        !pack16({usse::RegisterBank::Temp,124},{usse::RegisterBank::PrimaryAttribute,2},usse::PackFormat::S16,1,0,false,true) ||
-        !pack16({usse::RegisterBank::Temp,125},{usse::RegisterBank::PrimaryAttribute,2},usse::PackFormat::U16,0,0,true,true) ||
-        !sdk3_primary.instruction(usse::VdualFixed16AddMoveSemantic{}) ||
-        !sdk3_primary.instruction(add_uv) || !sdk3_primary.instruction(tex_mad(1)) ||
-        !sdk3_primary.instruction(tex_matrix_stage) || !sdk3_primary.instruction(tex_mad(2)) ||
-        !sdk3_primary.instruction(position_zw) || !sdk3_primary.instruction(position_join) ||
-        !sdk3_primary.instruction(position_mad) || !sdk3_primary.instruction(point) ||
-        !sdk3_primary.emit()) {
-        out.error="failed to build SDK 3.0 fixed16 primary stream";
-        return false;
-    }
-
-    usse::V32NmadSemantic point_max{};
-    point_max.op=usse::VectorOp::Max; point_max.dst={usse::RegisterBank::PrimaryAttribute,12};
-    point_max.src1={usse::RegisterBank::PrimaryAttribute,16}; point_max.src2={usse::RegisterBank::PrimaryAttribute,17};
-    point_max.dest_mask=1;
-    point_max.src2_swizzle={{usse::SwizzleChannel::Y,usse::SwizzleChannel::Y,
-                             usse::SwizzleChannel::Y,usse::SwizzleChannel::Y}};
-    usse::V32NmadSemantic point_min=point_max;
-    point_min.op=usse::VectorOp::Min; point_min.src1={usse::RegisterBank::PrimaryAttribute,12};
-    point_min.src2_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::X,
-                             usse::SwizzleChannel::X,usse::SwizzleChannel::X}};
-    if (!secondary.instruction(point_max) || !secondary.instruction(point_min) || !secondary.nop(false,true)) {
-        out.error="failed to build SDK 3.0 fixed16 secondary stream";
-        return false;
-    }
-
-    const uint64_t expected_primary[]={
-        0xfa44070000000000ULL,0x3880152183080100ULL,0x40813786a0c40000ULL,
-        0x40c11986a0400101ULL,0x40c10984afc00001ULL,0x40c10984af800081ULL,
-        0x38800d0002f80f00ULL,0x40c10986a0000281ULL,0x40c10786a1440280ULL,
-        0x40c10984af800201ULL,0x40c10784afa40200ULL,0x28844000cfb61088ULL,
-        0x08800900af001005ULL,0x189188811112c23cULL,0x40c00dbcffb98a16ULL,
-        0x189189011112c23cULL,0x38800d408cf80040ULL,0x08a447848f0410feULL,
-        0x18903081c011a200ULL,0x50810009e1400c00ULL,0xfb275000a0200000ULL,
-    };
-    const uint64_t expected_secondary[]={
-        0x08a41086a3046411ULL,0x08a40086a3045311ULL,0xf804014000000000ULL,
-    };
-    if (sdk3_primary.words().size()!=std::size(expected_primary) ||
-        !std::equal(sdk3_primary.words().begin(),sdk3_primary.words().end(),std::begin(expected_primary)) ||
-        secondary.words().size()!=std::size(expected_secondary) ||
-        !std::equal(secondary.words().begin(),secondary.words().end(),std::begin(expected_secondary))) {
-        out.error="fixed16 semantic stream no longer matches SDK 3.0 words";
-        return false;
-    }
-
-    const uint8_t interface_block[32]={
-        0x3f,0x0f,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-        0,0x19,0,0x0b,0x01,0,0,0,0x01,0,0,0,0,0,0,0,
-    };
-    const gxp::LiteralDesc literals[]={{0,0x43ff8000u},{1,0x3f800000u}};
-    const gxp::ParameterContainerDesc containers[]={{14,0,0,34},{19,0,34,2}};
-    const gxp::ParameterDesc parameters[]={
-        {attributes[0].name.c_str(),0,0,4,0,0,0,1,0},
-        {attributes[1].name.c_str(),0,0,4,0,0,0,1,4},
-        {attributes[2].name.c_str(),0,0,4,0,0,0,1,8},
-        {matrices[0].name.c_str(),1,0,4,14,0,0,4,0},
-        {matrices[1].name.c_str(),1,0,4,14,0,0,4,16},
-        {point_size.name.c_str(),1,0,1,14,0,0,1,32},
-    };
-    gxp::ProgramImage image{};
-    image.type=gxp::ProgramType::Vertex;
-    image.minor_version=5;
-    image.sdk_version=0x0300;
-    image.binary_guid=binary_guid; image.source_guid=source_guid;
-    image.program_flags=0x00190000;
-    image.buffer_flags=0x10000000;
-    image.primary_register_count=12;
-    image.secondary_register_count=36;
-    image.primary_phase_count=1;
-    image.data_buffer_count=2;
-    image.default_uniform_buffer_count=34;
-    image.compiler_version_raw=0x00033a90;
-    image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
-    image.secondary_instructions=secondary.words().data(); image.secondary_instruction_count=secondary.words().size();
-    image.primary_instructions=sdk3_primary.words().data(); image.primary_instruction_count=sdk3_primary.words().size();
-    image.containers=containers; image.container_count=2;
-    image.parameters=parameters; image.parameter_count=std::size(parameters);
-    image.literals=literals; image.literal_count=2;
-    image.vertex_primary_padding_word=true;
-    const size_t needed=gxp::required_size(image);
-    if (!needed) { out.error="GXP writer rejected fixed16 matrix profile"; return false; }
-    out.gxp.resize(needed);
-    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
-        out.gxp.clear(); out.error="GXP writer failed for fixed16 matrix profile"; return false;
-    }
-    return true;
-}
-
 bool compile_vertex_multivarying_machine(
     const MachineProgram &primary,
     const std::vector<IrAttribute> &attributes,
@@ -1431,61 +1249,69 @@ bool compile_vertex_multivarying_machine(
     return true;
 }
 
-bool compile_vertex_lighting_machine(const MachineProgram &primary,
+bool compile_vertex_color_texcoord_point_machine(const MachineProgram &primary,
                                      const std::vector<IrAttribute> &attributes,
                                      const std::vector<IrUniformFloat> &uniforms,
                                      const std::vector<IrMatrix4Uniform> &matrices,
-                                     const IrMatrix3Uniform &normal_matrix,
+                                     const std::vector<IrMatrix3Uniform> &matrices3,
                                      const std::vector<IrLiteralF32> &literal_values,
                                      uint32_t binary_guid, uint32_t source_guid,
                                      IrCompileResult &out) {
     out={};
-    if (attributes.size()!=7 || matrices.size()!=3 || normal_matrix.name.empty()) {
-        out.error="lighting vertex profile requires seven attributes, three mat4s and one mat3";
+    if (attributes.empty() || attributes.size()>16) {
+        out.error="color/texcoord/point vertex interface requires 1..16 attributes";
         return false;
     }
-    const uint8_t expected_components[]={4,2,4,4,4,4,3};
     uint32_t primary_words=0;
     for (size_t i=0;i<attributes.size();++i) {
-        if (!valid_attribute(attributes[i]) || attributes[i].resource_index!=i*4u ||
-            attributes[i].components!=expected_components[i]) {
-            out.error="lighting vertex attributes do not match the validated FFP layout";
+        if (!valid_attribute(attributes[i]) || attributes[i].resource_index!=i*4u) {
+            out.error="vertex attributes must be contiguous four-word resources";
             return false;
         }
         primary_words=std::max(primary_words,attributes[i].resource_index+4u);
     }
 
-    uint32_t uniform_words=normal_matrix.resource_index+12u;
+    uint32_t uniform_words=0;
+    for (const auto &matrix:matrices3) {
+        if (matrix.name.empty() || (matrix.resource_index&1u) || matrix.resource_index>242) {
+            out.error="vertex mat3 metadata is invalid";
+            return false;
+        }
+        uniform_words=std::max(uniform_words,matrix.resource_index+12u);
+    }
     for (const auto &matrix:matrices) {
-        if (matrix.name.empty() || (matrix.resource_index&1u)) {
-            out.error="lighting mat4 metadata is invalid";
+        if (matrix.name.empty() || (matrix.resource_index&1u) || matrix.resource_index>238) {
+            out.error="vertex mat4 metadata is invalid";
             return false;
         }
         uniform_words=std::max(uniform_words,matrix.resource_index+16u);
     }
     for (const auto &uniform:uniforms) {
-        if (uniform.name.empty() || uniform.components<1 || uniform.components>4) {
-            out.error="lighting scalar/vector uniform metadata is invalid";
+        if (uniform.name.empty() || uniform.components<1 || uniform.components>4 ||
+            uniform.resource_index>254u-uniform.components) {
+            out.error="vertex scalar/vector uniform metadata is invalid";
             return false;
         }
         uniform_words=std::max(uniform_words,uniform.resource_index+uniform.components);
     }
     uniform_words=(uniform_words+1u)&~1u;
-    if (uniform_words>0xffffu || uniform_words+literal_values.size()>0xffffu) {
-        out.error="lighting secondary-attribute footprint is too large";
+    if (uniform_words+literal_values.size()>254u) {
+        out.error="vertex secondary-attribute footprint is too large";
         return false;
     }
 
     MachineCompileResult compiled;
-    if (!compile_words(primary,compiled,out,"lighting vertex Machine IR lowering failed")) return false;
+    if (!compile_words(primary,compiled,out,"color/texcoord/point vertex Machine IR lowering failed")) return false;
 
     std::vector<gxp::ParameterDesc> parameters;
-    parameters.reserve(attributes.size()+uniforms.size()+matrices.size()+1);
+    parameters.reserve(attributes.size()+uniforms.size()+matrices.size()+matrices3.size());
     for (const auto &attribute:attributes)
-        parameters.push_back({attribute.name.c_str(),0,0,4,0,0,0,1,attribute.resource_index});
+        parameters.push_back({attribute.name.c_str(),0,0,4,0,attribute.semantic,
+                              attribute.semantic_index,1,attribute.resource_index});
     for (const auto &matrix:matrices)
         parameters.push_back({matrix.name.c_str(),1,0,4,14,0,0,4,matrix.resource_index});
-    parameters.push_back({normal_matrix.name.c_str(),1,0,3,14,0,0,3,normal_matrix.resource_index});
+    for (const auto &matrix:matrices3)
+        parameters.push_back({matrix.name.c_str(),1,0,3,14,0,0,3,matrix.resource_index});
     for (const auto &uniform:uniforms)
         parameters.push_back({uniform.name.c_str(),1,0,uniform.components,14,0,0,1,uniform.resource_index});
 
@@ -1493,28 +1319,30 @@ bool compile_vertex_lighting_machine(const MachineProgram &primary,
     literals.reserve(literal_values.size());
     for (const auto &literal:literal_values) {
         if (literal.resource_index>=literal_values.size()) {
-            out.error="lighting literal resource index is out of range";
+            out.error="vertex literal resource index is out of range";
             return false;
         }
         literals.push_back({literal.resource_index,literal.value_bits});
     }
     std::vector<gxp::ParameterContainerDesc> containers;
-    containers.push_back({14,0,0,static_cast<uint16_t>(uniform_words)});
+    if (uniform_words) containers.push_back({14,0,0,static_cast<uint16_t>(uniform_words)});
     if (!literals.empty())
         containers.push_back({19,0,static_cast<uint16_t>(uniform_words),static_cast<uint16_t>(literals.size())});
 
-    // Independently captured from vitaGL's one-light smooth FFP vertex shape.
-    // POSITION occupies O0/O1, COLOR O2/O3, TEXCOORD0 O4 and PSIZE O10.
-    const uint8_t interface_block[32]={
-        0x3f,0xf7,0x77,0x07,0,0,0,0,0,0,0,0,0,0,0,0,
+    // Interface only: POSITION O0/O1, COLOR O2/O3, TEXCOORD0 O4,
+    // PSIZE scalar word 10. All arithmetic comes from the Machine program.
+    uint8_t interface_block[32]={
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
         0,0x19,0,0x0b,0x01,0,0,0,0,0,0,0,0,0,0,0,
     };
+    for (size_t i=0;i<attributes.size();++i)
+        interface_block[i/2u] |= static_cast<uint8_t>(((1u<<attributes[i].components)-1u)<<((i&1u)*4u));
     gxp::ProgramImage image{};
     image.type=gxp::ProgramType::Vertex;
     image.sdk_version=0x0165;
     image.binary_guid=binary_guid;
     image.source_guid=source_guid;
-    image.program_flags=0x00090002;
+    image.program_flags=primary.labels().empty()?0x00090000:0x00090002;
     image.buffer_flags=0x10000000;
     image.primary_register_count=static_cast<uint16_t>(primary_words);
     image.secondary_register_count=static_cast<uint16_t>(uniform_words+literals.size());
@@ -1535,10 +1363,10 @@ bool compile_vertex_lighting_machine(const MachineProgram &primary,
     image.vertex_primary_padding_word=true;
 
     const size_t needed=gxp::required_size(image);
-    if (!needed) { out.error="GXP writer rejected lighting vertex profile"; return false; }
+    if (!needed) { out.error="GXP writer rejected color/texcoord/point vertex interface"; return false; }
     out.gxp.resize(needed);
     if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
-        out.gxp.clear(); out.error="GXP writer failed for lighting vertex profile"; return false;
+        out.gxp.clear(); out.error="GXP writer failed for color/texcoord/point vertex interface"; return false;
     }
     return true;
 }

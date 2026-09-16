@@ -7,6 +7,7 @@
 #include "usse/usse.hpp"
 
 #include <cstdio>
+#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -1035,7 +1036,7 @@ int test_cg_frontend() {
     if (!compile("float main(float a:TEXCOORD0):COLOR0{unsigned int x=bit_cast<unsigned int>(a);return (float)x;}", VSC_STAGE_FRAGMENT))
         failures += fail("Cg scalar bit_cast<unsigned int> did not normalize to HLSL asuint");
     {
-        static constexpr const char *source=
+        const std::string source=
             "float fx(float v){return float(bit_cast<short2>(v).y)+"
             "float(bit_cast<unsigned short2>(v).x)*(1.0f/65536.0f);}"
             "void main(float4 p,float2 uv,float4 c,float2 out tc:TEXCOORD0,float4 out pos:POSITION,"
@@ -1043,39 +1044,103 @@ int test_cg_frontend() {
             "uniform float point_size){p=float4(fx(p.x),fx(p.y),fx(p.z),fx(p.w));"
             "uv=float2(fx(uv.x),fx(uv.y));pos=mul(mvp,p);tc=mul(texmat[0],float4(uv,0.f,1.f)).xy;"
             "col=c;ps=point_size;}";
-        VscCompileRequest request{};
-        request.source_name="fixed16-matrix-texcoord-color-psize";
-        request.source=source; request.source_size=std::strlen(source);
-        request.entrypoint="main"; request.stage=VSC_STAGE_VERTEX;
-        VscCompileResult result{};
-        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.diagnostic_count==0;
+        auto snapshot=[](const std::string &text,const char *name,std::vector<uint8_t> &bytes) {
+            VscCompileRequest request{};
+            request.source_name=name; request.source=text.data(); request.source_size=text.size();
+            request.entrypoint="main"; request.stage=VSC_STAGE_VERTEX;
+            VscCompileResult result{};
+            const bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.gxp_size &&
+                result.diagnostic_count==0 && vsc::gxp::ProgramView(result.gxp_data,result.gxp_size).valid();
+            if (ok) bytes.assign(result.gxp_data,result.gxp_data+result.gxp_size);
+            else if (result.diagnostic_count)
+                std::fprintf(stderr,"test_cg_frontend: %s: %s\n",name,result.diagnostics[0].message);
+            vsc_destroy_result(&request.allocator,&result);
+            return ok;
+        };
+        auto has_literal=[](const std::vector<uint8_t> &bytes,uint32_t bits) {
+            if (bytes.size()<0x80) return false;
+            auto u32=[&](size_t offset) { uint32_t v=0; std::memcpy(&v,bytes.data()+offset,4); return v; };
+            const size_t count=u32(0x70),offset=0x74u+u32(0x74);
+            if (offset>bytes.size() || count>(bytes.size()-offset)/8u) return false;
+            for (size_t i=0;i<count;++i) if (u32(offset+i*8u+4u)==bits) return true;
+            return false;
+        };
+        std::vector<uint8_t> original,changed;
+        bool ok=snapshot(source,"packed-input.cg",original);
         if (ok) {
-            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
-            const uint64_t primary_words[]={
-                0xfa44070000000000ULL,0x3880152183080100ULL,0x40813786a0c40000ULL,
-                0x40c11986a0400101ULL,0x40c10984afc00001ULL,0x40c10984af800081ULL,
-                0x38800d0002f80f00ULL,0x40c10986a0000281ULL,0x40c10786a1440280ULL,
-                0x40c10984af800201ULL,0x40c10784afa40200ULL,0x28844000cfb61088ULL,
-                0x08800900af001005ULL,0x189188811112c23cULL,0x40c00dbcffb98a16ULL,
-                0x189189011112c23cULL,0x38800d408cf80040ULL,0x08a447848f0410feULL,
-                0x18903081c011a200ULL,0x50810009e1400c00ULL,0xfb275000a0200000ULL,
-            };
-            const uint64_t secondary_words[]={
-                0x08a41086a3046411ULL,0x08a40086a3045311ULL,0xf804014000000000ULL,
-            };
-            const auto primary=view.primary_program(),secondary=view.secondary_program();
-            ok=view.valid() && view.minor_version()==5 && view.sdk_version()==0x0300 &&
-                view.flags()==0x00190000 && view.primary_register_count()==12 &&
-                view.secondary_register_count()==36 && view.primary_instruction_count()==21 &&
-                view.secondary_instruction_count()==3 && view.literal_count()==2 &&
-                view.container_count()==2 && view.parameter_count()==6 &&
-                view.compiler_version_raw()==0x00033a90 &&
-                primary.size==sizeof(primary_words) && secondary.size==sizeof(secondary_words) &&
-                std::memcmp(primary.data,primary_words,sizeof(primary_words))==0 &&
-                std::memcmp(secondary.data,secondary_words,sizeof(secondary_words))==0;
+            vsc::gxp::ProgramView view(original.data(),original.size());
+            const auto code=view.primary_program(),interface=view.varyings();
+            bool signed_unpack=false,unsigned_unpack=false,point_write=false;
+            for (size_t offset=0;offset+8<=code.size;offset+=8) {
+                uint64_t word=0; std::memcpy(&word,code.data+offset,8);
+                vsc::usse::VpckSemantic pack{};
+                vsc::usse::VmovSemantic move{};
+                if (vsc::usse::decode_vpck_semantic(word,&pack) && pack.dst_format==vsc::usse::PackFormat::F32) {
+                    signed_unpack |= pack.src_format==vsc::usse::PackFormat::S16;
+                    unsigned_unpack |= pack.src_format==vsc::usse::PackFormat::U16;
+                }
+                if (vsc::usse::decode_vmov_semantic(word,&move) && move.dst.bank==vsc::usse::RegisterBank::Output) {
+                    point_write |= move.dst.num==5 && move.dest_mask==1;
+                    // Float VMOV indices address pairs; PSIZE word 10 is O5.x, not O10.x.
+                    ok=ok && move.dst.num<6;
+                }
+            }
+            ok=ok && view.minor_version()==4 && view.sdk_version()==0x0165 &&
+                view.primary_register_count()==12 && view.parameter_count()==6 &&
+                view.secondary_instruction_count()==0 && signed_unpack && unsigned_unpack && point_write &&
+                interface.size==32 && interface.data[19]==11 && has_literal(original,0x37800000u);
+            const uint32_t offsets[]={0,4,8,0,16,32};
+            for (uint32_t i=0;ok && i<6;++i) {
+                vsc::gxp::ParameterView parameter{};
+                ok=view.parameter(i,parameter) && parameter.resource_index==offsets[i];
+            }
         }
-        if (!ok) failures += fail("Cg packed fixed16 bit_cast vertex profile did not reproduce SDK 3.0 codegen");
-        vsc_destroy_result(&request.allocator,&result);
+        const struct { const char *from; const char *to; } mutations[]={
+            {"65536.0f","32768.0f"},
+            {"(v).y)+","(v).y)-"},
+            {"fx(p.x)","fx(p.y)"},
+            {"col=c;","col=c*0.75f;"},
+            {"ps=point_size;","ps=point_size*0.5f;"},
+            {"col=c;","col=float4(c.x,0.25f,c.z,1.f);"},
+            {"pos=mul(mvp,p);","pos=p;"},
+            {"uniform float point_size){","uniform float point_size,uniform float shift){p.x+=shift;"},
+        };
+        for (const auto &mutation:mutations) {
+            auto text=source; const auto at=text.find(mutation.from);
+            if (at==std::string::npos) { ok=false; break; }
+            text.replace(at,std::strlen(mutation.from),mutation.to);
+            const bool compiled=snapshot(text,"changed-expression.cg",changed);
+            if (!compiled || changed==original) {
+                std::fprintf(stderr,"test_cg_frontend: ignored fixed16 mutation: %s\n",mutation.to);
+                ok=false;
+            }
+            if (std::strcmp(mutation.from,"65536.0f")==0)
+                ok=ok && has_literal(changed,0x38000000u) && !has_literal(changed,0x37800000u);
+        }
+        std::string renamed;
+        for (size_t i=0;i<source.size();) {
+            if (std::isalpha(static_cast<unsigned char>(source[i])) || source[i]=='_') {
+                const size_t start=i++;
+                while (i<source.size() && (std::isalnum(static_cast<unsigned char>(source[i])) || source[i]=='_')) ++i;
+                const auto token=source.substr(start,i-start);
+                const char *names[]={"fx","v","p","uv","c","tc","pos","col","ps","mvp","texmat","point_size"};
+                bool replace=false;
+                for (const char *name:names) replace |= token==name;
+                renamed += replace ? "renamed_"+token : token;
+            } else renamed+=source[i++];
+        }
+        if (!snapshot(renamed,"unrelated-filename.cg",changed)) ok=false;
+        else {
+            const auto a=vsc::gxp::ProgramView(original.data(),original.size()).primary_program();
+            const auto b=vsc::gxp::ProgramView(changed.data(),changed.size()).primary_program();
+            ok=ok && a.size!=0 && a.size==b.size && std::memcmp(a.data,b.data,a.size)==0;
+        }
+        const std::string ordinary=
+            "void main(float4 a:TEXCOORD0,float2 b:TEXCOORD1,float4 c:TEXCOORD2,"
+            "out float4 p:POSITION,out float4 shade:COLOR,out float2 t:TEXCOORD0,out float s:PSIZE){"
+            "p=float4(a.xyz,1.f);shade=c*0.75f;t=b;s=3.f;}";
+        ok=snapshot(ordinary,"no-fixed-conversion-or-matrices.cg",changed) && ok;
+        if (!ok) failures += fail("generic color/texcoord/point vertex did not follow expressions, literals or renames");
     }
     if (!compile("void f(float4 inout a){a+=1.f;} float4 main(float4 a:TEXCOORD0):COLOR0{f(a);return a;}", VSC_STAGE_FRAGMENT))
         failures += fail("Cg post-type inout qualifier normalization did not compile");
@@ -1785,8 +1850,20 @@ void main(float4 Nposition, float2 Otexcoord0, float4 Pcolor,
                 };
                 const auto varying=view.varyings();
                 vsc::gxp::ParameterView clip{},point{},modelview{},projection{},texmat{};
+                bool point_write=false,clip_write=false,outputs_in_bounds=true;
+                const auto code=view.primary_program();
+                for (size_t offset=0;offset+8<=code.size;offset+=8) {
+                    uint64_t word=0; std::memcpy(&word,code.data+offset,8);
+                    vsc::usse::VmovSemantic move{};
+                    if (!vsc::usse::decode_vmov_semantic(word,&move) ||
+                        move.dst.bank!=vsc::usse::RegisterBank::Output) continue;
+                    point_write |= move.dst.num==5 && move.dest_mask==1;
+                    clip_write |= move.dst.num==5 && move.dest_mask==2;
+                    outputs_in_bounds = outputs_in_bounds && move.dst.num<6;
+                }
                 ok=view.valid() && view.sdk_version()==0x0165 && view.flags()==0x00090002 &&
                     view.primary_register_count()==12 && view.parameter_count()==8 &&
+                    point_write && clip_write && outputs_in_bounds &&
                     view.primary_instruction_count()>0 && varying.size==sizeof(expected_interface) &&
                     std::memcmp(varying.data,expected_interface,sizeof(expected_interface))==0 &&
                     view.parameter(3,clip) && clip.name=="Hclip_planes_eq" && clip.resource_index==0 &&
