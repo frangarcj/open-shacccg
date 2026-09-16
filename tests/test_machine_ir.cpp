@@ -264,6 +264,25 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        const auto target=program.make_label();
+        if (target.kind()==MachineOperandKind::None || !program.branch(target) ||
+            !program.emit<MachineOpcode::TransformMat4>(0,
+                program.physical(machine_vertex_output(0),MachineType::F32),
+                program.physical(machine_primary(0),MachineType::F32),
+                program.physical(machine_secondary(0),MachineType::F32)) ||
+            !program.bind_label(target) || !program.emit<MachineOpcode::Emit>()) {
+            failures += fail("could not construct aligned mat4 branch-offset fixture");
+        } else {
+            MachineCompileResult result;
+            usse::BranchSemantic branch{};
+            if (!compile_machine_program(program,result) || result.words.size()!=4 ||
+                !usse::decode_branch_semantic(result.words[0],&branch) || branch.offset!=3)
+                failures += fail("aligned mat4 word count did not feed branch offset resolution");
+        }
+    }
+
+    {
+        MachineProgram program;
         if (!program.emit<MachineOpcode::TransformMat3>(0,
                 program.physical(usse::RegisterBank::Temp,40,MachineType::F32),
                 program.physical(machine_primary(0),MachineType::F32),

@@ -762,7 +762,14 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
         else if (program.instructions()[i].opcode()==MachineOpcode::F32ToS32Color) words=3;
         else if (program.instructions()[i].opcode()==MachineOpcode::S32ToF32Scalar) words=9;
         else if (program.instructions()[i].opcode()==MachineOpcode::S32x2ColorPack) words=2;
-        else if (program.instructions()[i].opcode()==MachineOpcode::TransformMat4) words=4;
+        else if (program.instructions()[i].opcode()==MachineOpcode::TransformMat4) {
+            const auto &matrix=program.instructions()[i].src1;
+            const bool aligned_vmad=matrix.kind()==MachineOperandKind::PhysicalValue &&
+                matrix.type()==MachineType::F32 &&
+                matrix.physical_register().bank==usse::RegisterBank::SecondaryAttribute &&
+                (matrix.physical_register().num&7u)==0;
+            words=aligned_vmad ? 2u : 4u;
+        }
         else if (program.instructions()[i].opcode()==MachineOpcode::TransformMat3) words=3;
         else if (program.instructions()[i].opcode()==MachineOpcode::TransformTexcoordMat4XY) words=4;
         word_positions[i + 1] = word_positions[i] + words;
