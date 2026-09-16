@@ -332,6 +332,10 @@ struct VmadSemantic {
     bool gpi0_one3_extended = false;
     // Validated VMAD3 extended GPI1 swizzle code 6 = 000 (fourth lane unused).
     bool gpi1_zero3_extended = false;
+    // SDK 3.0 clip vertex independently uses the same extended selector 6 in
+    // one VMAD4 form writing CLP0 (OUT5.y). Keep it separate/fail-closed from
+    // the broader VMAD3 use above.
+    bool gpi1_zero4_clip_extended = false;
     RepeatMode repeat_mode = RepeatMode::Slmsi;
     uint8_t repeat_count = 0;
     bool skip_invalid = true;

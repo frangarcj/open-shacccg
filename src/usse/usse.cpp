@@ -1047,8 +1047,24 @@ bool encode_vmad_semantic(const VmadSemantic &i, uint64_t *word) {
         s1=4;
         f.src1_swizzle_ext=true;
     }
+    if (i.gpi1_zero3_extended && i.gpi1_zero4_clip_extended) return false;
     if (i.gpi1_zero3_extended) {
         if (i.vec4) return false;
+        g1=6;
+        f.gpi1_swizzle_ext=true;
+    } else if (i.gpi1_zero4_clip_extended) {
+        const Swizzle4 gpi0_identity{};
+        const Swizzle4 src1_xyxy={{SwizzleChannel::X,SwizzleChannel::Y,
+                                    SwizzleChannel::X,SwizzleChannel::Y}};
+        const Swizzle4 gpi1_zero={{SwizzleChannel::Zero,SwizzleChannel::Zero,
+                                   SwizzleChannel::Zero,SwizzleChannel::X}};
+        if (!i.vec4 || i.dst.bank!=RegisterBank::Output || i.dst.num!=5 ||
+            i.src1.bank!=RegisterBank::PrimaryAttribute || i.src1.num!=0 ||
+            i.gpi0!=0 || i.gpi1!=2 || i.write_mask!=0x2 || i.control_bit_53 ||
+            i.src1_negative || i.repeat_mode!=RepeatMode::Slmsi || i.repeat_count!=0 ||
+            !i.skip_invalid || !i.no_schedule || !same_swizzle(i.gpi0_swizzle,gpi0_identity) ||
+            !same_swizzle(i.src1_swizzle,src1_xyxy) || !same_swizzle(i.gpi1_swizzle,gpi1_zero))
+            return false;
         g1=6;
         f.gpi1_swizzle_ext=true;
     } else if (!encode_std_swizzle(i.gpi1_swizzle,&g1)) return false;
@@ -1062,16 +1078,25 @@ bool encode_vmad_semantic(const VmadSemantic &i, uint64_t *word) {
 
 bool decode_vmad_semantic(uint64_t word, VmadSemantic *i) {
     if (!i) return false; VmadFields f{}; if (!decode_vmad(word,&f)) return false;
-    // Keep extended swizzles limited to the oracle-observed VMAD3 forms.
+    // Keep extended swizzles limited to the oracle-observed VMAD3 forms plus
+    // the single SDK 3.0 clip VMAD4 form validated below.
     if (f.gpi0_abs || f.gpi0_neg ||
         f.gpi1_abs || f.gpi1_neg || f.src1_abs) return false;
     if (f.src1_swizzle_ext && (f.opcode2 || f.src1_swizzle!=4)) return false;
     if (f.gpi0_swizzle_ext && (f.opcode2 || f.gpi0_swizzle!=7)) return false;
-    if (f.gpi1_swizzle_ext && (f.opcode2 || f.gpi1_swizzle!=6)) return false;
+    const bool clip_gpi1_zero4=f.gpi1_swizzle_ext && f.opcode2 && f.gpi1_swizzle==6 &&
+        f.dest_bank==1 && !f.dest_bank_ext && f.dest_num==5 &&
+        f.src1_bank==2 && !f.src1_bank_ext && f.src1_num==0 &&
+        f.gpi0_num==0 && f.gpi1_num==2 && f.write_mask==0x2 &&
+        !f.control_bit_53 && f.repeat_mode==static_cast<uint8_t>(RepeatMode::Slmsi) &&
+        f.repeat_count==0 && f.skip_invalid && f.no_schedule && !f.src1_neg &&
+        !f.gpi0_swizzle_ext && f.gpi0_swizzle==4 && !f.src1_swizzle_ext && f.src1_swizzle==8;
+    if (f.gpi1_swizzle_ext && !clip_gpi1_zero4 && (f.opcode2 || f.gpi1_swizzle!=6)) return false;
     if (!decode_dest_bank(f.dest_bank,f.dest_bank_ext,&i->dst.bank) || !decode_src1_bank(f.src1_bank,f.src1_bank_ext,&i->src1.bank)) return false;
     i->dst.num=f.dest_num; i->src1.num=f.src1_num; i->predicate=static_cast<Predicate>(f.pred); i->gpi0=f.gpi0_num; i->gpi1=f.gpi1_num; i->write_mask=f.write_mask;
     i->gpi0_one3_extended=f.gpi0_swizzle_ext;
-    i->gpi1_zero3_extended=f.gpi1_swizzle_ext;
+    i->gpi1_zero3_extended=f.gpi1_swizzle_ext && !f.opcode2;
+    i->gpi1_zero4_clip_extended=clip_gpi1_zero4;
     if (f.gpi0_swizzle_ext) {
         i->gpi0_swizzle={{SwizzleChannel::One,SwizzleChannel::One,SwizzleChannel::One,SwizzleChannel::X}};
     } else i->gpi0_swizzle=decode_std_swizzle(f.gpi0_swizzle);

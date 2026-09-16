@@ -844,6 +844,31 @@ int test_usse() {
             decoded.src1.bank!=RegisterBank::PrimaryAttribute || decoded.src1.num!=0)
             failures += fail("SDK 3.0 texture-combine GPI0=111 VMAD3 mismatch");
     }
+    {
+        VmadSemantic clip{};
+        clip.dst={RegisterBank::Output,5};
+        clip.src1={RegisterBank::PrimaryAttribute,0};
+        clip.gpi0=0; clip.gpi1=2; clip.write_mask=0x2;
+        clip.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,
+                            SwizzleChannel::Z,SwizzleChannel::W}};
+        clip.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,
+                            SwizzleChannel::X,SwizzleChannel::Y}};
+        clip.gpi1_swizzle={{SwizzleChannel::Zero,SwizzleChannel::Zero,
+                            SwizzleChannel::Zero,SwizzleChannel::X}};
+        clip.vec4=true; clip.control_bit_53=false; clip.gpi1_zero4_clip_extended=true;
+        clip.repeat_mode=RepeatMode::Slmsi; clip.skip_invalid=true; clip.no_schedule=true;
+        uint64_t word=0;
+        VmadSemantic decoded{};
+        if (!encode_vmad_semantic(clip,&word) || word!=0x18d189018151a200ULL ||
+            !decode_vmad_semantic(word,&decoded) || !decoded.gpi1_zero4_clip_extended ||
+            decoded.gpi1_zero3_extended || !decoded.vec4 || decoded.write_mask!=0x2 ||
+            decoded.dst.bank!=RegisterBank::Output || decoded.dst.num!=5 ||
+            decoded.src1.bank!=RegisterBank::PrimaryAttribute || decoded.src1.num!=0)
+            failures += fail("SDK 3.0 clip VMAD4 extended GPI1=000 mismatch");
+        clip.write_mask=0x1;
+        if (encode_vmad_semantic(clip,&word))
+            failures += fail("unvalidated clip VMAD4 extended GPI1 neighbor was accepted");
+    }
 
     // Semantic VMAD: reconstruct the complete four-instruction matrix path.
     const uint64_t matrix_words[] = {
