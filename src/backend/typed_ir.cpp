@@ -1770,116 +1770,13 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 tex_transform->aux==static_cast<uint16_t>(texmat-resources.data()) &&
                 point_value.bits==point->value.bits && color.type()==TypedType::F32x4;
             if (shape) {
-                uint32_t uniform_words=0;
-                for (const auto &resource:resources) {
-                    uint32_t words=0;
-                    if (resource.kind==TypedResourceKind::Matrix4) words=16;
-                    else if (resource.kind==TypedResourceKind::Matrix3) words=12;
-                    else if (resource.kind==TypedResourceKind::Uniform) words=typed_component_count(resource.type);
-                    if (words) uniform_words=std::max<uint32_t>(uniform_words,resource.index+words);
-                }
-                uniform_words=(uniform_words+1u)&~1u;
-                if (uniform_words>=254) { out.error="lighting uniform footprint exceeds compact SA subset"; return false; }
-
-                MachineProgram primary;
-                if (!primary.emit<MachineOpcode::Phase>()) {
-                    out.error="failed to start smooth-lighting Machine program";
-                    return false;
-                }
-                std::vector<MachineOperand> literal_bindings(program.literals().size());
-                std::vector<IrLiteralF32> literal_meta;
-                std::unordered_map<uint32_t,uint32_t> literal_index_by_bits;
-                auto bind_literal=[&](TypedValue value) -> bool {
-                    if (value.kind()!=TypedValueKind::Literal || value.id()>=program.literals().size()) return true;
-                    if (value.type()!=TypedType::F32 && value.type()!=TypedType::S32) return true;
-                    if (literal_bindings[value.id()].kind()!=MachineOperandKind::None) return true;
-                    const uint32_t bits=program.literals()[value.id()];
-                    if (value.type()==TypedType::F32 && bits==0) {
-                        literal_bindings[value.id()]=primary.physical(machine_immediate(0),MachineType::F32);
-                        return true;
-                    }
-                    auto [it,inserted]=literal_index_by_bits.emplace(bits,static_cast<uint32_t>(literal_meta.size()));
-                    if (inserted) literal_meta.push_back({it->second,bits});
-                    const uint32_t word=uniform_words+it->second;
-                    if (word>=254) return false;
-                    literal_bindings[value.id()]=primary.physical(machine_secondary(static_cast<uint8_t>(word/2u)),
-                        value.type()==TypedType::S32?MachineType::S32:MachineType::F32,
-                        static_cast<uint8_t>(word&1u));
-                    return true;
-                };
-                for (const auto &instruction:instructions)
-                    if (!bind_literal(instruction.dst) || !bind_literal(instruction.src0) || !bind_literal(instruction.src1)) {
-                        out.error="lighting literal table exceeds compact SA subset"; return false;
-                    }
-                for (const auto &composite:program.float3_composites())
-                    for (const auto component:composite)
-                        if (!bind_literal(component)) { out.error="lighting float3 literal table overflow"; return false; }
-                for (const auto &composite:program.float4_composites())
-                    for (const auto component:composite)
-                        if (!bind_literal(component)) { out.error="lighting float4 literal table overflow"; return false; }
-                for (const auto &select:program.float_selects())
-                    if (!bind_literal(select.true_value) || !bind_literal(select.false_value)) {
-                        out.error="lighting select literal table overflow"; return false;
-                    }
-                auto [point_literal_it,point_literal_inserted]=literal_index_by_bits.emplace(
-                    0x43ff8000u,static_cast<uint32_t>(literal_meta.size()));
-                if (point_literal_inserted) literal_meta.push_back({point_literal_it->second,0x43ff8000u});
-                const uint32_t point_literal_word=uniform_words+point_literal_it->second;
-                if (point_literal_word>=254) { out.error="lighting point-size literal is out of SA range"; return false; }
-
-                std::vector<uint16_t> matrix_bindings(resources.size(),std::numeric_limits<uint16_t>::max());
-                for (uint16_t id=0;id<resources.size();++id)
-                    if (resources[id].kind==TypedResourceKind::Matrix4 || resources[id].kind==TypedResourceKind::Matrix3)
-                        matrix_bindings[id]=resources[id].index;
-                std::vector<MachineOperand> lowered;
-                std::string machine_error;
-                if (!lower_typed_program_impl(program,primary,machine_error,false,nullptr,nullptr,nullptr,
-                        false,std::numeric_limits<uint16_t>::max(),&literal_bindings,&lowered,true,nullptr,&matrix_bindings)) {
-                    out.error="smooth-lighting Typed->Machine lowering failed: "+machine_error;
-                    return false;
-                }
-                auto lowered_value=[&](TypedValue value) -> MachineOperand {
-                    if (value.kind()==TypedValueKind::Value)
-                        return value.id()<lowered.size()?lowered[value.id()]:MachineOperand{};
-                    if (value.kind()==TypedValueKind::Literal)
-                        return value.id()<literal_bindings.size()?literal_bindings[value.id()]:MachineOperand{};
-                    return {};
-                };
-                const auto p=lowered_value(position), c=lowered_value(color), uv=lowered_value(texcoord), ps=lowered_value(point_value);
-                if (p.kind()==MachineOperandKind::None || c.kind()==MachineOperandKind::None ||
-                    uv.kind()==MachineOperandKind::None || ps.kind()==MachineOperandKind::None ||
-                    !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
-                        machine_move_config(3,4,1),primary.physical(machine_vertex_output(0),MachineType::F32),p) ||
-                    !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
-                        machine_move_config(3,4,1),primary.physical(machine_vertex_output(2),MachineType::F32),c) ||
-                    !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
-                        machine_move_config(3),primary.physical(machine_vertex_output(4),MachineType::F32),uv)) {
-                    out.error="failed to append smooth-lighting vertex outputs";
-                    return false;
-                }
-                const auto point_low=primary.make_value<MachineType::F32>();
-                const auto point_clamped=primary.make_value<MachineType::F32>();
-                const auto max_point=primary.physical(machine_secondary(static_cast<uint8_t>(point_literal_word/2u)),
-                    MachineType::F32,static_cast<uint8_t>(point_literal_word&1u));
-                if (point_low.kind()==MachineOperandKind::None || point_clamped.kind()==MachineOperandKind::None ||
-                    !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Max),
-                        machine_vector_config(1),point_low,ps,primary.physical(machine_special(2),MachineType::F32,0)) ||
-                    !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Min),
-                        machine_vector_config(1),point_clamped,point_low,max_point) ||
-                    !primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
-                        machine_move_config(1),primary.physical(machine_vertex_output(10),MachineType::F32),point_clamped) ||
-                    !primary.emit<MachineOpcode::Emit>()) {
-                    out.error="failed to append smooth-lighting point-size/EMIT";
-                    return false;
-                }
-
                 std::vector<IrUniformFloat> uniform_meta;
                 for (const auto *uniform:vertex_uniforms)
                     uniform_meta.push_back({shader.resource_name(*uniform),typed_component_count(uniform->type),uniform->index});
                 std::vector<IrMatrix4Uniform> matrix_meta;
                 for (const auto *matrix:matrices) matrix_meta.push_back({shader.resource_name(*matrix),matrix->index});
-                return compile_vertex_lighting_machine(primary,vertex_attributes,uniform_meta,matrix_meta,
-                    {shader.resource_name(*normal),normal->index},literal_meta,0,0,out);
+                return compile_vertex_smooth_lighting_sdk300(vertex_attributes,uniform_meta,matrix_meta,
+                    {shader.resource_name(*normal),normal->index},0,0,out);
             }
         }
 

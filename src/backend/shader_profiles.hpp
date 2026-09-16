@@ -142,6 +142,12 @@ bool compile_vertex_lighting_machine(const MachineProgram &primary,
                                      const std::vector<IrLiteralF32> &literals,
                                      uint32_t binary_guid, uint32_t source_guid,
                                      IrCompileResult &out);
+bool compile_vertex_smooth_lighting_sdk300(const std::vector<IrAttribute> &attributes,
+                                           const std::vector<IrUniformFloat> &uniforms,
+                                           const std::vector<IrMatrix4Uniform> &matrices,
+                                           const IrMatrix3Uniform &normal_matrix,
+                                           uint32_t binary_guid, uint32_t source_guid,
+                                           IrCompileResult &out);
 bool compile_vertex_clip_machine(const MachineProgram &primary,
                                  const std::vector<IrAttribute> &attributes,
                                  const std::vector<IrUniformFloat> &uniforms,

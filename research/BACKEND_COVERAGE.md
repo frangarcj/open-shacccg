@@ -189,11 +189,13 @@ Decoder reuse also resets both extended-GPI flags instead of inheriting them
 from the preceding instruction. Regression probes cover both captured words,
 standard/extended transitions and rejected neighboring selectors.
 
-This is **instruction-codec coverage, not full shader fidelity**. The production
-smooth-lighting path still uses generic Typed/Machine lowering and the older
-GXP layout; connecting the validated SDK 3.0 schedule, resources and metadata
-remains pending. The reference target is 1824 bytes on disk (1823 logical),
-123 primary + 6 secondary instructions, PA=28/SA=94 and flags `0x00190006`.
+The production smooth-lighting path now uses that validated SDK 3.0 schedule
+directly instead of the older 250-word generic Typed/Machine expansion. The
+result is byte-identical to the captured one-light oracle image: 1824 bytes on
+disk (1823 logical), 123 primary + 6 secondary instructions, PA=28/SA=94,
+19 TEMP registers, six literal slots and flags `0x00190006`. Reflection is also
+repacked to Sony's SDK 3.0 default-uniform layout (88 words + six literals),
+including the observed light/matrix/point-size resource indices.
 
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and

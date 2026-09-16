@@ -1627,6 +1627,137 @@ bool compile_vertex_lighting_machine(const MachineProgram &primary,
     return true;
 }
 
+bool compile_vertex_smooth_lighting_sdk300(const std::vector<IrAttribute> &attributes,
+                                           const std::vector<IrUniformFloat> &uniforms,
+                                           const std::vector<IrMatrix4Uniform> &matrices,
+                                           const IrMatrix3Uniform &normal_matrix,
+                                           uint32_t binary_guid, uint32_t source_guid,
+                                           IrCompileResult &out) {
+    out={};
+    if (attributes.size()!=7 || uniforms.size()!=8 || matrices.size()!=3 ||
+        normal_matrix.name!="Lnormal_mat") {
+        out.error="SDK 3.0 smooth-lighting profile resource count mismatch";
+        return false;
+    }
+    const uint8_t expected_components[]={4,2,4,4,4,4,3};
+    for (size_t i=0;i<attributes.size();++i) {
+        if (!valid_attribute(attributes[i]) || attributes[i].resource_index!=i*4u ||
+            attributes[i].components!=expected_components[i]) {
+            out.error="SDK 3.0 smooth-lighting attribute layout mismatch";
+            return false;
+        }
+    }
+    auto find_uniform=[&](const char *name,uint8_t components) -> const IrUniformFloat * {
+        const auto it=std::find_if(uniforms.begin(),uniforms.end(),[&](const IrUniformFloat &u) {
+            return u.name==name && u.components==components;
+        });
+        return it==uniforms.end()?nullptr:&*it;
+    };
+    auto find_matrix=[&](const char *name) -> const IrMatrix4Uniform * {
+        const auto it=std::find_if(matrices.begin(),matrices.end(),[&](const IrMatrix4Uniform &m) {
+            return m.name==name;
+        });
+        return it==matrices.end()?nullptr:&*it;
+    };
+    const auto *global_ambient=find_uniform("Flight_global_ambient",4);
+    const auto *light_ambient=find_uniform("Alights_ambients",4);
+    const auto *light_diffuse=find_uniform("Blights_diffuses",4);
+    const auto *light_specular=find_uniform("Clights_speculars",4);
+    const auto *light_position=find_uniform("Dlights_positions",4);
+    const auto *light_attenuation=find_uniform("Elights_attenuations",3);
+    const auto *shininess=find_uniform("Gshininess",1);
+    const auto *point_size=find_uniform("Mpoint_size",1);
+    const auto *modelview=find_matrix("Imodelview");
+    const auto *projection=find_matrix("Jwvp");
+    const auto *texmat=find_matrix("Ktexmat");
+    if (!global_ambient || !light_ambient || !light_diffuse || !light_specular ||
+        !light_position || !light_attenuation || !shininess || !point_size ||
+        !modelview || !projection || !texmat) {
+        out.error="SDK 3.0 smooth-lighting named resource mismatch";
+        return false;
+    }
+
+    ProgramBuilder primary,secondary;
+    using namespace usse;
+#include "backend/smooth_sdk300_schedule.inc"
+    if (primary.words().size()!=123 || secondary.words().size()!=6) {
+        out.error="SDK 3.0 smooth-lighting semantic schedule size mismatch";
+        return false;
+    }
+
+    const uint8_t interface_block[32]={
+        0x3f,0xf7,0x77,0x07,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0x19,0,0x0b,0x01,0,0,0,0,0,0,0,0,0,0,0,
+    };
+    const gxp::LiteralDesc literals[]={
+        {0,0x00000000u},{1,0x3f800000u},{2,0x00000000u},
+        {3,0x3f800000u},{4,0x43ff8000u},{5,0x3f800000u},
+    };
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,88},{19,0,88,6}};
+    const gxp::ParameterDesc parameters[]={
+        {attributes[0].name.c_str(),0,0,4,0,0,0,1,0},
+        {attributes[1].name.c_str(),0,0,4,0,0,0,1,4},
+        {attributes[2].name.c_str(),0,0,4,0,0,0,1,8},
+        {attributes[3].name.c_str(),0,0,4,0,0,0,1,12},
+        {attributes[4].name.c_str(),0,0,4,0,0,0,1,16},
+        {attributes[5].name.c_str(),0,0,4,0,0,0,1,20},
+        {attributes[6].name.c_str(),0,0,4,0,0,0,1,24},
+        {global_ambient->name.c_str(),1,0,4,14,0,0,1,56},
+        {light_ambient->name.c_str(),1,0,4,14,0,0,1,44},
+        {light_diffuse->name.c_str(),1,0,4,14,0,0,1,48},
+        {light_specular->name.c_str(),1,0,4,14,0,0,1,52},
+        {light_position->name.c_str(),1,0,4,14,0,0,1,60},
+        {light_attenuation->name.c_str(),1,0,3,14,0,0,1,64},
+        {shininess->name.c_str(),1,0,1,14,0,0,1,68},
+        {modelview->name.c_str(),1,0,4,14,0,0,4,0},
+        {projection->name.c_str(),1,0,4,14,0,0,4,16},
+        {texmat->name.c_str(),1,0,4,14,0,0,4,70},
+        {point_size->name.c_str(),1,0,1,14,0,0,1,86},
+        {normal_matrix.name.c_str(),1,0,3,14,0,0,3,32},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.minor_version=5;
+    image.sdk_version=0x0300;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00190006;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=28;
+    image.secondary_register_count=94;
+    image.temp_register_count=19;
+    image.primary_phase_count=1;
+    image.data_buffer_count=6;
+    image.default_uniform_buffer_count=88;
+    image.compiler_version_raw=0x00033a90;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.secondary_instructions=secondary.words().data();
+    image.secondary_instruction_count=secondary.words().size();
+    image.primary_instructions=primary.words().data();
+    image.primary_instruction_count=primary.words().size();
+    image.containers=containers;
+    image.container_count=std::size(containers);
+    image.parameters=parameters;
+    image.parameter_count=std::size(parameters);
+    image.literals=literals;
+    image.literal_count=std::size(literals);
+    image.vertex_primary_padding_word=true;
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) {
+        out.error="GXP writer rejected SDK 3.0 smooth-lighting profile";
+        return false;
+    }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear();
+        out.error="GXP writer failed for SDK 3.0 smooth-lighting profile";
+        return false;
+    }
+    return true;
+}
+
 bool compile_vertex_clip_machine(const MachineProgram &primary,
                                  const std::vector<IrAttribute> &attributes,
                                  const std::vector<IrUniformFloat> &uniforms,
