@@ -548,16 +548,16 @@ bool compile_vertex_uniform_matrix_point_size(const IrAttribute &position,
     const auto gpi0=primary.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
     const auto zero=primary.literal_u32(0);
     if (gpi0.kind()==MachineOperandKind::None || zero.kind()==MachineOperandKind::None ||
-        !primary.emit<MachineOpcode::Phase>() || !primary.emit<MachineOpcode::Nop>() ||
+        !primary.emit<MachineOpcode::Phase>() ||
+        !primary.emit_config<MachineOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),
+            machine_bitwise_config(true),primary.physical(machine_vertex_output(4),MachineType::U32),
+            primary.physical(machine_secondary(16),MachineType::U32),zero) ||
         !primary.emit_config<MachineOpcode::Pack>(machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F32),
             machine_pack_config(0xF,true,false),gpi0,
             primary.physical(machine_primary(0),MachineType::F32),
             primary.physical(machine_primary(1),MachineType::F32)) ||
         !primary.emit<MachineOpcode::VmadUniformMat4>(0,
             primary.physical(machine_vertex_output(0),MachineType::F32),gpi0) ||
-        !primary.emit<MachineOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),
-            primary.physical(machine_vertex_output(4),MachineType::U32),
-            primary.physical(machine_secondary(16),MachineType::U32),zero) ||
         !primary.emit<MachineOpcode::Emit>() ||
         !secondary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Max),
             machine_vector_config(1),secondary.physical(machine_primary(8),MachineType::F32),
@@ -576,8 +576,8 @@ bool compile_vertex_uniform_matrix_point_size(const IrAttribute &position,
         !compile_words(secondary,secondary_compiled,out,"uniform-matrix point-size secondary lowering failed"))
         return false;
     const uint64_t expected_primary[]={
-        0xfa44070000000000ULL,0xf800094000000000ULL,0x40800dbcaf998002ULL,
-        0x18903081c011a200ULL,0x50810009e0800800ULL,0xfb275000a0200000ULL,
+        0xfa44070000000000ULL,0x50c10009e0800800ULL,0x40800dbcaf998002ULL,
+        0x18903081c011a200ULL,0xfb275000a0200000ULL,
     };
     const uint64_t expected_secondary[]={
         0x08a41086a2046209ULL,0x08a40086a2045209ULL,0xf804014000000000ULL,
@@ -607,17 +607,18 @@ bool compile_vertex_uniform_matrix_point_size(const IrAttribute &position,
     };
     gxp::ProgramImage image{};
     image.type=gxp::ProgramType::Vertex;
-    image.sdk_version=0x0165;
+    image.minor_version=5;
+    image.sdk_version=0x0300;
     image.binary_guid=binary_guid;
     image.source_guid=source_guid;
-    image.program_flags=0x00090000;
+    image.program_flags=0x00190000;
     image.buffer_flags=0x10000000;
     image.primary_register_count=4;
     image.secondary_register_count=20;
     image.primary_phase_count=1;
     image.data_buffer_count=2;
     image.default_uniform_buffer_count=18;
-    image.compiler_version_raw=0x0002df30;
+    image.compiler_version_raw=0x00033a90;
     image.interface_block=interface_block;
     image.interface_block_size=sizeof(interface_block);
     image.secondary_instructions=secondary_compiled.words.data();
@@ -720,17 +721,18 @@ bool compile_vertex_uniform_matrix_varying_point_size(const IrAttribute &positio
     };
     gxp::ProgramImage image{};
     image.type=gxp::ProgramType::Vertex;
-    image.sdk_version=0x0165;
+    image.minor_version=5;
+    image.sdk_version=0x0300;
     image.binary_guid=binary_guid;
     image.source_guid=source_guid;
-    image.program_flags=0x00090000;
+    image.program_flags=0x00190000;
     image.buffer_flags=0x10000000;
     image.primary_register_count=8;
     image.secondary_register_count=20;
     image.primary_phase_count=1;
     image.data_buffer_count=2;
     image.default_uniform_buffer_count=18;
-    image.compiler_version_raw=0x0002df30;
+    image.compiler_version_raw=0x00033a90;
     image.interface_block=interface_block;
     image.interface_block_size=sizeof(interface_block);
     image.secondary_instructions=secondary_compiled.words.data();
@@ -776,7 +778,10 @@ bool compile_vertex_uniform_matrix_texcoord_point_size(const IrAttribute &positi
     const auto gpi0=primary.make_value<MachineType::F32>(MachineRegisterClass::Gpi);
     const auto zero=primary.literal_u32(0);
     if (gpi0.kind()==MachineOperandKind::None || zero.kind()==MachineOperandKind::None ||
-        !primary.emit<MachineOpcode::Phase>() || !primary.emit<MachineOpcode::Nop>() ||
+        !primary.emit<MachineOpcode::Phase>() ||
+        !primary.emit_config<MachineOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),
+            machine_bitwise_config(true),primary.physical(machine_vertex_output(6),MachineType::U32),
+            primary.physical(machine_secondary(24),MachineType::U32),zero) ||
         !primary.emit_config<MachineOpcode::Pack>(machine_pack_subop(usse::PackFormat::F32,usse::PackFormat::F32),
             machine_pack_config(0xF,true,false),gpi0,
             primary.physical(machine_primary(0),MachineType::F32),
@@ -787,9 +792,6 @@ bool compile_vertex_uniform_matrix_texcoord_point_size(const IrAttribute &positi
             primary.physical(machine_vertex_output(2),MachineType::F32),
             primary.physical(machine_primary(2),MachineType::F32),
             primary.physical(machine_secondary(8),MachineType::F32)) ||
-        !primary.emit<MachineOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),
-            primary.physical(machine_vertex_output(6),MachineType::U32),
-            primary.physical(machine_secondary(24),MachineType::U32),zero) ||
         !primary.emit<MachineOpcode::Emit>() ||
         !secondary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Max),
             machine_vector_config(1),secondary.physical(machine_primary(12),MachineType::F32),
@@ -809,10 +811,9 @@ bool compile_vertex_uniform_matrix_texcoord_point_size(const IrAttribute &positi
         !compile_words(secondary,secondary_compiled,out,"matrix texcoord point-size secondary lowering failed"))
         return false;
     const uint64_t expected_primary[]={
-        0xfa44070000000000ULL,0xf800094000000000ULL,0x40800dbcaf998002ULL,
+        0xfa44070000000000ULL,0x50c10009e0c00c00ULL,0x40800dbcaf998002ULL,
         0x18903881c011a200ULL,0x40800dbcff998812ULL,0x189188818092c202ULL,
-        0x40800dbcff998a16ULL,0x189181018092c202ULL,0x50810009e0c00c00ULL,
-        0xfb275000a0200000ULL,
+        0x40800dbcff998a16ULL,0x189181018092c202ULL,0xfb275000a0200000ULL,
     };
     const uint64_t expected_secondary[]={
         0x08a41086a3046411ULL,0x08a40086a3045311ULL,0xf804014000000000ULL,
@@ -840,17 +841,18 @@ bool compile_vertex_uniform_matrix_texcoord_point_size(const IrAttribute &positi
     };
     gxp::ProgramImage image{};
     image.type=gxp::ProgramType::Vertex;
-    image.sdk_version=0x0165;
+    image.minor_version=5;
+    image.sdk_version=0x0300;
     image.binary_guid=binary_guid;
     image.source_guid=source_guid;
-    image.program_flags=0x00090000;
+    image.program_flags=0x00190000;
     image.buffer_flags=0x10000000;
     image.primary_register_count=8;
     image.secondary_register_count=36;
     image.primary_phase_count=1;
     image.data_buffer_count=2;
     image.default_uniform_buffer_count=34;
-    image.compiler_version_raw=0x0002df30;
+    image.compiler_version_raw=0x00033a90;
     image.interface_block=interface_block;
     image.interface_block_size=sizeof(interface_block);
     image.secondary_instructions=secondary_compiled.words.data();

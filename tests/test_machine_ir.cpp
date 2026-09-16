@@ -289,6 +289,22 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        const auto zero=program.literal_u32(0);
+        if (zero.kind()==MachineOperandKind::None ||
+            !program.emit_config<MachineOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::Or),
+                machine_bitwise_config(true),program.physical(machine_vertex_output(4),MachineType::U32),
+                program.physical(machine_secondary(16),MachineType::U32),zero)) {
+            failures += fail("could not construct no-schedule PSIZE VBW Machine profile");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=1 ||
+                result.words[0]!=0x50c10009e0800800ULL)
+                failures += fail("Machine bitwise no-schedule config did not reproduce SDK 3.0 PSIZE VBW");
+        }
+    }
+
+    {
+        MachineProgram program;
         if (!program.emit<MachineOpcode::F32ToS32Color>(0,
                 program.physical(machine_fragment_output(0),MachineType::S32),
                 program.physical(machine_primary(0),MachineType::F32,0))) {

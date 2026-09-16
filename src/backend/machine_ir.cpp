@@ -349,7 +349,8 @@ bool uses_instruction_config(MachineOpcode opcode) {
     return opcode == MachineOpcode::Nop || opcode == MachineOpcode::Move || opcode == MachineOpcode::MoveUpdate || opcode == MachineOpcode::Pack ||
         opcode == MachineOpcode::PredicatedMove || opcode == MachineOpcode::PredicatedMoveUpdate ||
         opcode == MachineOpcode::PackSwizzle || opcode == MachineOpcode::PackValue || opcode == MachineOpcode::Vector ||
-        opcode == MachineOpcode::ComplexF32 || opcode == MachineOpcode::Vmad || opcode == MachineOpcode::VmadUniformMat4 ||
+        opcode == MachineOpcode::ComplexF32 || opcode == MachineOpcode::Bitwise ||
+        opcode == MachineOpcode::Vmad || opcode == MachineOpcode::VmadUniformMat4 ||
         opcode == MachineOpcode::TransformTexcoordMat4XY;
 }
 
@@ -1629,6 +1630,11 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 out.error = "invalid bitwise subop";
                 return false;
             }
+            const uint16_t config=instruction.config();
+            if (config & ~0x0003u) {
+                out.error="invalid bitwise config";
+                return false;
+            }
             const MachineType type=instruction.dst.type();
             if (type!=MachineType::U32 && type!=MachineType::S32) {
                 out.error = "bitwise destination must be U32 or S32";
@@ -1641,6 +1647,8 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 return false;
             }
             op.predicate = guard;
+            op.no_schedule=(config&0x0001u)!=0;
+            op.end=(config&0x0002u)!=0;
             if (!resolve_register_value(instruction.src0,type,out.value_registers,&op.src1)) {
                 out.error = "bitwise source1 must be a matching register-backed integer value";
                 return false;

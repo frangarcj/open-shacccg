@@ -146,6 +146,12 @@ The structural Typed-IR recognizer anchors the three cutoff selects plus the
 names. Codegen emits the observed 20-word v1.5 primary stream, six literal slots,
 PA=4/SA=6, and compiler version `0x00033a90`.
 
+The simple FFP vertex profiles now follow SDK 3.0.0 too. Baseline position+PSIZE
+and the one-texture transform move the PSIZE VBW immediately after PHAS with
+`no_schedule`, eliminating the older NOP; the COLOR variant keeps the same USSE
+stream and only migrates to v1.5 metadata. All three are byte-identical to the
+SDK 3.0 oracle (364, 396 and 448 bytes on disk respectively).
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.

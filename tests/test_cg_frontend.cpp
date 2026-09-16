@@ -322,8 +322,8 @@ bool compile_matrix_point_size_profile(bool with_color) {
     VscCompileResult result{};
     const int rc=vsc_compile(&request,&result);
     const uint64_t base_words[]={
-        0xfa44070000000000ULL,0xf800094000000000ULL,0x40800dbcaf998002ULL,
-        0x18903081c011a200ULL,0x50810009e0800800ULL,0xfb275000a0200000ULL,
+        0xfa44070000000000ULL,0x50c10009e0800800ULL,0x40800dbcaf998002ULL,
+        0x18903081c011a200ULL,0xfb275000a0200000ULL,
     };
     const uint64_t color_words[]={
         0xfa44070000000000ULL,0x38801d2183080080ULL,0x40800dbcaf998002ULL,
@@ -348,12 +348,15 @@ bool compile_matrix_point_size_profile(bool with_color) {
         const auto interface=view.varyings();
         const uint64_t *expected_primary=with_color ? color_words : base_words;
         const uint8_t *expected_interface=with_color ? color_interface : base_interface;
-        ok=view.valid() && view.logical_size()==(with_color ? 390u : 367u) &&
-            view.flags()==0x00090000 && view.primary_register_count()==(with_color ? 8u : 4u) &&
-            view.secondary_register_count()==20 && view.primary_instruction_count()==6 &&
+        const size_t expected_primary_size=with_color ? sizeof(color_words) : sizeof(base_words);
+        ok=view.valid() && view.logical_size()==(with_color ? 394u : 363u) &&
+            view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00190000 &&
+            view.primary_register_count()==(with_color ? 8u : 4u) &&
+            view.secondary_register_count()==20 && view.primary_instruction_count()==(with_color ? 6u : 5u) &&
             view.secondary_instruction_count()==3 && view.literal_count()==2 && view.container_count()==2 &&
+            view.compiler_version_raw()==0x00033a90 &&
             view.parameter_count()==(with_color ? 4u : 3u) &&
-            primary.size==sizeof(base_words) && std::memcmp(primary.data,expected_primary,sizeof(base_words))==0 &&
+            primary.size==expected_primary_size && std::memcmp(primary.data,expected_primary,expected_primary_size)==0 &&
             secondary.size==sizeof(secondary_words) && std::memcmp(secondary.data,secondary_words,sizeof(secondary_words))==0 &&
             interface.size==sizeof(base_interface) &&
             std::memcmp(interface.data,expected_interface,sizeof(base_interface))==0;
@@ -361,6 +364,43 @@ bool compile_matrix_point_size_profile(bool with_color) {
     if (!ok && result.diagnostic_count && result.diagnostics)
         std::fprintf(stderr,"test_cg_frontend: %s diagnostic=%s\n",request.source_name,
                      result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
+    vsc_destroy_result(&request.allocator,&result);
+    return ok;
+}
+
+bool compile_matrix_texcoord_point_size_profile() {
+    static constexpr const char *source=
+        "void main(float4 p,float2 uv,uniform float4x4 mvp,uniform float4x4 texmat[1],uniform float point_size,"
+        "float2 out tc:TEXCOORD0,float4 out pos:POSITION,float out ps:PSIZE){"
+        "pos=mul(mvp,p);tc=mul(texmat[0],float4(uv,0.f,1.f)).xy;ps=point_size;}";
+    VscCompileRequest request{};
+    request.source_name="matrix-texcoord-point-size-sdk30.cg";
+    request.source=source; request.source_size=std::strlen(source);
+    request.entrypoint="main"; request.stage=VSC_STAGE_VERTEX;
+    VscCompileResult result{};
+    const int rc=vsc_compile(&request,&result);
+    const uint64_t primary_words[]={
+        0xfa44070000000000ULL,0x50c10009e0c00c00ULL,0x40800dbcaf998002ULL,
+        0x18903881c011a200ULL,0x40800dbcff998812ULL,0x189188818092c202ULL,
+        0x40800dbcff998a16ULL,0x189181018092c202ULL,0xfb275000a0200000ULL,
+    };
+    const uint64_t secondary_words[]={
+        0x08a41086a3046411ULL,0x08a40086a3045311ULL,0xf804014000000000ULL,
+    };
+    bool ok=rc==0 && result.gxp_data && result.diagnostic_count==0;
+    if (ok) {
+        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+        const auto primary=view.primary_program(),secondary=view.secondary_program();
+        ok=view.valid() && result.gxp_size==428 && view.logical_size()==427 &&
+            view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00190000 &&
+            view.primary_register_count()==8 && view.secondary_register_count()==36 &&
+            view.primary_instruction_count()==9 && view.secondary_instruction_count()==3 &&
+            view.literal_count()==2 && view.container_count()==2 && view.parameter_count()==5 &&
+            view.compiler_version_raw()==0x00033a90 &&
+            primary.size==sizeof(primary_words) && secondary.size==sizeof(secondary_words) &&
+            std::memcmp(primary.data,primary_words,sizeof(primary_words))==0 &&
+            std::memcmp(secondary.data,secondary_words,sizeof(secondary_words))==0;
+    }
     vsc_destroy_result(&request.allocator,&result);
     return ok;
 }
@@ -921,12 +961,8 @@ int test_cg_frontend() {
     if (!compile("float4 main(float4 p:POSITION,uniform float4x4 model,uniform float4x4 mvp):POSITION{"
                  "mvp=mul(mvp,model);return mul(mvp,p);}", VSC_STAGE_VERTEX))
         failures += fail("Cg mutable uniform parameter was not normalized to a local copy");
-    if (!compile_vertex_gxp(
-            "void main(float4 p,float2 uv,uniform float4x4 mvp,uniform float4x4 texmat[1],uniform float point_size,"
-            "float2 out tc:TEXCOORD0,float4 out pos:POSITION,float out ps:PSIZE){"
-            "pos=mul(mvp,p);tc=mul(texmat[0],float4(uv,0.f,1.f)).xy;ps=point_size;}",
-            "vp-mat4-array-texcoord-psize"))
-        failures += fail("Cg mat4[1] TEXCOORD transform + PSIZE did not compile end to end");
+    if (!compile_matrix_texcoord_point_size_profile())
+        failures += fail("Cg mat4[1] TEXCOORD transform + PSIZE did not reproduce SDK 3.0 codegen");
     if (!compile_vertex_gxp(
             "void main(float4 p,float2 uv0,float2 uv1,float4 c,uniform float4x4 mvp,"
             "uniform float4x4 texmat[2],uniform float point_size,float2 out tc0:TEXCOORD0,"
