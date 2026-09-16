@@ -1,10 +1,9 @@
 # Optimization backlog
 
 This file tracks code-generation work that is intentionally **not** required for
-language/backend correctness. The current vitaGL fidelity reference is Sony
-SceShaccCg SDK 3.0.0; older Geometrizer baselines below were captured with the
-1.6.5 oracle and remain historical optimization targets until they are explicitly
-recaptured. OpenShaccCg may emit a longer semantically equivalent program where
+language/backend correctness. The current fidelity reference is Sony
+SceShaccCg SDK 3.0.0; older 1.6.5 counts below are explicitly historical.
+OpenShaccCg may emit a longer semantically equivalent program where
 byte fidelity has not yet been made a target, until a transformation is
 independently validated.
 
@@ -12,36 +11,64 @@ Keep these items separate from `BACKEND_COVERAGE.md`: a shader compiling through
 Typed IR -> Machine IR -> legal USSE/GXP is a coverage milestone; matching Sony's
 instruction count/layout is an optimization milestone.
 
+## Generic lowering first
+
+Do not add whole-shader schedules selected by resource shapes or opcode counts.
+The POLY matcher and unpublished POLY3D experiment emitted the same GXP after
+changing the live depth factor from `1.998` to `1.25`: their matchers did not
+verify constants or operand edges. Both schedules have been removed from runtime
+code; their validated ISA encoders remain available for local instruction selection.
+POLY/POLY3D now use generic Typed -> Machine lowering again, not fixture detection.
+
+New optimizations must operate on subexpressions with explicit operands and preserve
+unmatched code. Tests must include changed constants/operand edges and renamed
+identifiers, not only the original golden shader. Existing large vitaGL profiles
+still need the same mutation audit; their 24/24 captured result does not prove
+general compilation or correctness for nearby source variants.
+
 ## Geometrizer integration baselines
 
 ### `POLY_VS`
 
 Current integration fixture: `oracle_corpus_v2/vp-geometrizer-poly.cg`.
 
-- Recaptured against SDK 3.0.0: Sony emits a 476-byte v1.5 image with 13 primary
-  + 4 secondary instructions, PA=8/SA=8, four literal slots and compiler version
-  `0x00033a90`.
-- Open now reproduces that image byte-for-byte. A structural Typed matcher
-  recognizes the two screen-space divisions, clamp + Log2 depth path and direct
-  COLOR passthrough, then selects the semantic SDK 3.0 schedule instead of the
-  former 19+2 generic expansion.
-- The schedule uses the three observed VMAD2 fusions and secondary reciprocal /
-  projection setup directly. Its only new VMAD encoding is the fail-closed
-  VMAD3 GPI0 extended selector 5 (`x10`) paired with the already validated
-  GPI1=`000` selector.
-- The old 1.6.5 counts above are superseded for this fixture; no code-generation
-  optimization debt remains for captured `POLY_VS`.
+- Sony 1.6.5 (historical): 14 primary + 4 secondary instructions, 480-byte GXP.
+- Sony 3.0.0 reference: 13 primary + 4 secondary instructions, 476-byte v1.5
+  GXP, PA=8/SA=8. This is an optimization target, not a runtime template.
+- Open after reciprocal hoisting: 19 primary + 2 secondary instructions,
+  496-byte GXP. The two secondary words are byte-identical to Sony's first
+  reciprocal pair: `0x3080000a80000002`, `0x3080000280000001`.
+- Reflection/interface is compatible; Open intentionally uses validated
+  VCOMP/V32NMAD/VMOV forms instead of Sony's tighter VMAD2 schedule.
+
+Pending optimizations:
+
+1. ~~Hoist reciprocal computations of screen-size uniforms into the secondary
+   program when the denominator is draw-constant.~~ Done for denominator-only
+   uniform components; the analysis is use-driven and not shader-name-specific.
+2. Fold `x * reciprocal`, scale-by-two and +/-1 projection chains into the
+   VMAD2 forms selected by Sony.
+3. Canonicalize the literal set/order to Sony's `{depth_scale, -1, 2, 1}`
+   profile where doing so reduces code or improves scheduling.
+4. Coalesce the four scalar POSITION writes into the compact vector move/pack
+   sequence used by Sony.
+5. Reproduce Sony NOSCHED/END placement only after the dependency rules are
+   independently validated.
 
 ### `POLY3D_VS`
 
 Current integration fixture: `oracle_corpus_v2/vp-geometrizer-poly3d.cg`.
 
-- Sony: 20 primary + 10 secondary instructions, logical size 701 bytes
+- Sony 1.6.5 (historical): 20 primary + 10 secondary instructions, logical size 701 bytes
   (704 bytes on disk), PA=20, SA=14.
-- Open after denominator-only reciprocal hoisting: 39 primary + 2 secondary
-  instructions, logical size 781 bytes (784 bytes on disk), PA=20, SA=13.
-  This reduces total USSE words from 43 to 41 and moves both screen-size
-  reciprocals out of primary code.
+- Sony 3.0.0 reference: 18 primary + 11 secondary instructions, 697 logical
+  bytes (700 on disk), PA=20/SA=15 and flags `0x00190000`.
+- Open generic lowering: 37 primary + 2 secondary instructions, logical size
+  765 bytes (768 on disk), PA=20/SA=13. Denominator-only reciprocal hoisting
+  previously gave 39+2 / 784 bytes. Generic float composition now groups the
+  three `a_pos.xyz` lane writes into one masked VMOV, followed by the `1` write.
+  This saves two primary instructions without changing arithmetic or using a
+  POLY3D matcher. The generic writer still uses its validated v1.4 metadata.
 - Sony uses four literals: `0.0602059935`, `-1`, `1`, `2`; Open currently
   omits the standalone `-1` literal and uses three.
 - Attribute/uniform reflection, GXP semantics, PA count and program flag
@@ -50,21 +77,21 @@ Current integration fixture: `oracle_corpus_v2/vp-geometrizer-poly3d.cg`.
 Pending optimizations:
 
 1. The `1/u_screen.x` / `1/u_screen.y` denominator hoist is complete. Continue
-   with the remaining draw-constant projection work in Sony's 10-word secondary
+   with the remaining draw-constant projection work in Sony 3.0's 11-word secondary
    evidence set; unlike POLY, Sony relocates one reciprocal result instead of
    overwriting both uniform slots in place.
-2. Replace the generic four-VMOV materialization of `float4(a_pos.xyz, 1)` with
-   the VPCK/GPI staging used by Sony.
+2. Generic composition is now two masked VMOVs rather than four scalar VMOVs.
+   Derive the remaining VPCK/GPI staging optimization as a local transformation.
 3. Lower the three `dot(matrix_row, xyz1)` operations through the compact
    VMAD/VDP sequence instead of generic V32NMAD + temporary materialization.
 4. Fuse `ax*vz + bx*vx`, `ay*vz + by*vy`, and depth projection into the
    observed VMAD2 forms.
 5. Coalesce POSITION output writes and remove dead/intermediate temporaries.
-6. Match Sony's literal canonicalization and SA=14 only as a consequence of
+6. Match Sony 3.0's literal canonicalization and SA=15 only as a consequence of
    useful scheduling/selection; do not add dummy literals merely for byte
    similarity.
 7. Revisit register allocation after the above fusions; avoid tuning allocator
-   heuristics around the current deliberately verbose 43-word program.
+   heuristics around a single captured shader.
 
 ### `CMP_FS`
 

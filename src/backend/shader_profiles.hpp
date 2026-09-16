@@ -153,10 +153,6 @@ bool compile_vertex_clip_sdk300(const std::vector<IrAttribute> &attributes,
                                 const std::vector<IrMatrix4Uniform> &matrices,
                                 uint32_t binary_guid, uint32_t source_guid,
                                 IrCompileResult &out);
-bool compile_vertex_geometrizer_poly_sdk300(const std::vector<IrAttribute> &attributes,
-                                            const std::vector<IrUniformFloat> &uniforms,
-                                            uint32_t binary_guid, uint32_t source_guid,
-                                            IrCompileResult &out);
 bool compile_vertex_indexed_clear(const IrUniformVec4 &position,
                                   const IrUniformFloat &clear_depth,
                                   uint32_t binary_guid, uint32_t source_guid,

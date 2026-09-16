@@ -666,38 +666,29 @@ bool compile_geometrizer_poly_vertex(const std::string &source) {
     bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
     if (ok) {
         vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
-        ok=view.valid() && result.gxp_size==476 && view.logical_size()==476 &&
-            view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00190000 &&
-            view.primary_register_count()==8 && view.secondary_register_count()==8 &&
-            view.parameter_count()==4 && view.literal_count()==4 && view.container_count()==2 &&
-            view.primary_instruction_count()==13 && view.secondary_instruction_count()==4 &&
-            view.compiler_version_raw()==0x00033a90;
+        ok=view.valid() && view.sdk_version()==0x0165 && view.flags()==0x00090000 &&
+            view.primary_register_count()==8 && view.secondary_register_count()>=7 &&
+            view.parameter_count()==4 && view.literal_count()>=3 &&
+            view.primary_instruction_count()==19 && view.secondary_instruction_count()==2;
         const char *names[]={"a_pos","a_color","u_screen_size","u_z_max"};
         const uint32_t resources[]={0,4,0,2};
-        const uint8_t semantics[]={14,14,0,0};
-        const uint8_t semantic_indices[]={0,1,0,0};
         for (uint32_t i=0;ok && i<4;++i) {
             vsc::gxp::ParameterView parameter{};
-            ok=view.parameter(i,parameter) && parameter.name==names[i] &&
-                parameter.resource_index==resources[i] && parameter.semantic==semantics[i] &&
-                parameter.semantic_index==semantic_indices[i];
+            ok=view.parameter(i,parameter) && parameter.name==names[i] && parameter.resource_index==resources[i];
         }
-        const uint64_t primary_words[]={
-            0xfa44070000000000ULL,0x38801d2183080080ULL,0x08a40884ef045041ULL,
-            0x08a508841f046f00ULL,0x18a18884cf1c0043ULL,0x30800c000fa03e01ULL,
-            0x08841880bf248000ULL,0x00802886f0000002ULL,0x00802922f003c0c3ULL,
-            0x00802880ff03d082ULL,0x08a5118590040001ULL,0x18e3818540558041ULL,
-            0xfb275000a0200000ULL,
-        };
-        const uint64_t secondary_words[]={
-            0x3080000280000001ULL,0x3080000a80000002ULL,
-            0x08800082a00000c0ULL,0xf804014000000000ULL,
-        };
+        bool vcomp=false,v32=false,vmov=false;
         const auto code=view.primary_program();
+        for (size_t off=0;ok && off+sizeof(uint64_t)<=code.size;off+=sizeof(uint64_t)) {
+            uint64_t word=0;
+            std::memcpy(&word,code.data+off,sizeof(word));
+            const auto family=vsc::usse::classify_major(word);
+            vcomp |= family==vsc::usse::MajorClass::Vcomp;
+            v32 |= family==vsc::usse::MajorClass::V32Nmad;
+            vmov |= family==vsc::usse::MajorClass::Vmov;
+        }
+        const uint64_t secondary_words[]={0x3080000a80000002ULL,0x3080000280000001ULL};
         const auto secondary=view.secondary_program();
-        ok=ok && code.size==sizeof(primary_words) &&
-            std::memcmp(code.data,primary_words,sizeof(primary_words))==0 &&
-            secondary.size==sizeof(secondary_words) &&
+        ok=ok && vcomp && v32 && vmov && secondary.size==sizeof(secondary_words) &&
             std::memcmp(secondary.data,secondary_words,sizeof(secondary_words))==0;
     }
     if (!ok && result.diagnostic_count && result.diagnostics)
@@ -722,7 +713,7 @@ bool compile_geometrizer_poly3d_vertex(const std::string &source) {
         ok=view.valid() && view.sdk_version()==0x0165 && view.flags()==0x00090004 &&
             view.primary_register_count()==20 && view.secondary_register_count()>=13 &&
             view.parameter_count()==10 && view.literal_count()>=3 &&
-            view.primary_instruction_count()==39 && view.secondary_instruction_count()==2;
+            view.primary_instruction_count()==37 && view.secondary_instruction_count()==2;
         const char *names[]={"a_m0","a_m1","a_m2","a_pos","a_color",
                              "u_xc","u_zoom","u_view","u_screen","u_z_max"};
         const uint32_t resources[]={0,4,8,12,16,0,2,4,6,8};
@@ -790,6 +781,59 @@ bool compile_geometrizer_cmp_fragment(const std::string &source) {
                      result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
     vsc_destroy_result(&request.allocator,&result);
     return ok;
+}
+
+bool vertex_mutations_follow_source(const std::string &source,
+                                    const char *rewire_from,const char *rewire_to) {
+    auto snapshot=[](const std::string &text,const char *name,std::vector<uint8_t> &gxp) -> bool {
+        VscCompileRequest request{};
+        request.source_name=name; request.source=text.data(); request.source_size=text.size();
+        request.entrypoint="main"; request.stage=VSC_STAGE_VERTEX;
+        VscCompileResult result{};
+        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.gxp_size && !result.diagnostic_count;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            ok=view.valid();
+            if (ok) gxp.assign(result.gxp_data,result.gxp_data+result.gxp_size);
+        }
+        vsc_destroy_result(&request.allocator,&result);
+        return ok;
+    };
+    std::vector<uint8_t> original,changed;
+    if (!snapshot(source,"arbitrary-input.cg",original) ||
+        !snapshot(source,"different-filename.cg",changed) ||
+        !equal_except_guids(changed.data(),changed.size(),original)) return false;
+
+    // These edits preserve the resource layout and the old matcher's operation
+    // counts, but change the computation. A fixed whole-shader schedule ignored them.
+    const struct { const char *from; const char *to; } mutations[]={
+        {"1.998","1.25"},{"0.0602059935","0.125"},{rewire_from,rewire_to},
+    };
+    for (const auto &mutation:mutations) {
+        auto text=source;
+        const auto at=text.find(mutation.from);
+        if (at==std::string::npos) return false;
+        text.replace(at,std::strlen(mutation.from),mutation.to);
+        if (!snapshot(text,"arbitrary-input.cg",changed) ||
+            equal_except_guids(changed.data(),changed.size(),original)) return false;
+    }
+
+    // Identifier renaming may change reflection strings, but not USSE selection.
+    auto renamed=source;
+    for (const auto *identifier:{"a_pos","u_z_max"}) {
+        const std::string replacement=std::string("renamed_")+identifier;
+        size_t pos=0;
+        while ((pos=renamed.find(identifier,pos))!=std::string::npos) {
+            renamed.replace(pos,std::strlen(identifier),replacement);
+            pos+=replacement.size();
+        }
+    }
+    if (!snapshot(renamed,"unrelated.cg",changed)) return false;
+    vsc::gxp::ProgramView a(original.data(),original.size()),b(changed.data(),changed.size());
+    auto same=[](vsc::gxp::ByteRange lhs,vsc::gxp::ByteRange rhs) {
+        return lhs.size==rhs.size && (!lhs.size || std::memcmp(lhs.data,rhs.data,lhs.size)==0);
+    };
+    return same(a.primary_program(),b.primary_program()) && same(a.secondary_program(),b.secondary_program());
 }
 
 bool compile_geometrizer_tm2_fast_fragment(const std::string &source) {
@@ -1495,12 +1539,16 @@ int test_cg_frontend() {
     {
         const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/vp-geometrizer-poly.cg");
         if (source.empty() || !compile_geometrizer_poly_vertex(source))
-            failures += fail("Geometrizer POLY_VS integration profile did not reproduce SDK 3.0 output");
+            failures += fail("Geometrizer POLY_VS integration profile did not compile through generic vertex Machine IR");
+        if (source.empty() || !vertex_mutations_follow_source(source,"a_pos.x/u_screen_size.x","a_pos.y/u_screen_size.x"))
+            failures += fail("POLY constant/operand mutations or renames did not follow source semantics");
     }
     {
         const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/vp-geometrizer-poly3d.cg");
         if (source.empty() || !compile_geometrizer_poly3d_vertex(source))
             failures += fail("Geometrizer POLY3D_VS integration profile did not compile through generic vertex Machine IR");
+        if (source.empty() || !vertex_mutations_follow_source(source,"ax*vz+bx*vx","ax*vx+bx*vz"))
+            failures += fail("POLY3D constant/operand mutations or renames did not follow source semantics");
     }
     {
         const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/fp-geometrizer-cmp.cg");

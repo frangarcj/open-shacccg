@@ -394,6 +394,56 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         return true;
     };
 
+    // Compose only moves bits. Group compatible lane writes at this definition,
+    // without matching shader resources, moving work across labels or fusing ALU.
+    auto emit_float_components = [&](MachineOperand dst, const auto &components) -> bool {
+        std::array<MachineOperand,4> sources{};
+        for (size_t lane=0;lane<components.size();++lane) {
+            sources[lane]=lower_value(typed,components[lane],values,literals,machine);
+            if (sources[lane].kind()==MachineOperandKind::None || sources[lane].type()!=MachineType::F32) {
+                error="failed to lower float compose scalar component";
+                return false;
+            }
+        }
+        auto component=[](MachineOperand source) -> uint8_t {
+            const auto lane=source.kind()==MachineOperandKind::PhysicalValue ? source.physical_component() : 0xff;
+            return lane==0xff ? 0 : lane;
+        };
+        auto same_base=[](MachineOperand a,MachineOperand b) -> bool {
+            if (a.kind()!=MachineOperandKind::PhysicalValue || b.kind()!=MachineOperandKind::PhysicalValue)
+                return a.bits==b.bits;
+            const auto ar=a.physical_register(),br=b.physical_register();
+            return ar.bank==br.bank && ar.num==br.num;
+        };
+        uint8_t written=0;
+        for (uint8_t lane=0;lane<components.size();++lane) {
+            if (written & (1u<<lane)) continue;
+            const auto source=sources[lane];
+            uint8_t swizzle=component(source),mask=0,identity_mask=0;
+            unsigned broadcast_count=0,identity_count=0;
+            for (uint8_t other=lane;other<components.size();++other) {
+                if ((written & (1u<<other)) || !same_base(source,sources[other])) continue;
+                if (component(sources[other])==swizzle) {
+                    mask |= static_cast<uint8_t>(1u<<other);
+                    ++broadcast_count;
+                }
+                if (source.kind()==MachineOperandKind::PhysicalValue && swizzle==lane &&
+                    component(sources[other])==other) {
+                    identity_mask |= static_cast<uint8_t>(1u<<other);
+                    ++identity_count;
+                }
+            }
+            if (identity_count>broadcast_count) { mask=identity_mask; swizzle=4; }
+            const auto config=machine_move_config(mask,swizzle);
+            const bool emitted=written==0 ?
+                machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),config,dst,source) :
+                machine.emit_config<MachineOpcode::MoveUpdate>(static_cast<uint8_t>(usse::DataType::F32),config,dst,source);
+            if (!emitted) { error="failed to materialize float compose lanes"; return false; }
+            written |= mask;
+        }
+        return true;
+    };
+
     for (uint32_t instruction_index=0; instruction_index<typed.instructions().size(); ++instruction_index) {
         if (!bind_labels_at(instruction_index)) return false;
         const auto &instruction = typed.instructions()[instruction_index];
@@ -949,24 +999,7 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                     error="failed to allocate materialized float4 compose";
                     return false;
                 }
-                for (uint8_t lane=0;lane<4;++lane) {
-                    const auto src=lower_value(typed,components[lane],values,literals,machine);
-                    if (src.kind()==MachineOperandKind::None || src.type()!=MachineType::F32) {
-                        error="failed to lower float4 compose scalar component";
-                        return false;
-                    }
-                    uint8_t swizzle=0;
-                    if (src.kind()==MachineOperandKind::PhysicalValue && src.physical_component()!=0xff)
-                        swizzle=src.physical_component();
-                    const uint16_t config=machine_move_config(static_cast<uint8_t>(1u<<lane),swizzle);
-                    const bool emitted=lane==0 ?
-                        machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),config,dst,src) :
-                        machine.emit_config<MachineOpcode::MoveUpdate>(static_cast<uint8_t>(usse::DataType::F32),config,dst,src);
-                    if (!emitted) {
-                        error="failed to materialize float4 compose component";
-                        return false;
-                    }
-                }
+                if (!emit_float_components(dst,components)) return false;
                 values[instruction.dst.id()]=dst;
             }
             value_types[instruction.dst.id()]=TypedType::F32x4;
@@ -991,24 +1024,7 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                 error="failed to allocate float3 compose destination";
                 return false;
             }
-            for (uint8_t lane=0;lane<3;++lane) {
-                const auto src=lower_value(typed,components[lane],values,literals,machine);
-                if (src.kind()==MachineOperandKind::None || src.type()!=MachineType::F32) {
-                    error="failed to lower float3 compose component";
-                    return false;
-                }
-                uint8_t swizzle=0;
-                if (src.kind()==MachineOperandKind::PhysicalValue && src.physical_component()!=0xff)
-                    swizzle=src.physical_component();
-                const uint16_t config=machine_move_config(static_cast<uint8_t>(1u<<lane),swizzle);
-                const bool emitted=lane==0 ?
-                    machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),config,dst,src) :
-                    machine.emit_config<MachineOpcode::MoveUpdate>(static_cast<uint8_t>(usse::DataType::F32),config,dst,src);
-                if (!emitted) {
-                    error="failed to materialize float3 compose component";
-                    return false;
-                }
-            }
+            if (!emit_float_components(dst,components)) return false;
             values[instruction.dst.id()]=dst;
             value_types[instruction.dst.id()]=TypedType::F32x3;
             value_defined[instruction.dst.id()]=true;
@@ -1449,54 +1465,6 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             const uint16_t resource_id = static_cast<uint16_t>(resource - resources.data());
             matrix_for_resource[resource_id] = static_cast<uint32_t>(vertex_matrices.size());
             vertex_matrices.push_back({shader.resource_name(*resource), resource->index});
-        }
-
-        // Geometrizer POLY vertex shape: 2D screen normalization plus logarithmic
-        // depth from float3 position, with direct COLOR passthrough. Match the
-        // Typed dataflow rather than fixture/source names before generic lowering
-        // expands Sony's compact VMAD2 schedule.
-        if (vertex_attributes.size()==2 && matrices.empty() && matrices3.empty() &&
-            vertex_uniforms.size()==2 && program.labels().empty() &&
-            vertex_attributes[0].components==3 && vertex_attributes[0].resource_index==0 &&
-            vertex_attributes[1].components==4 && vertex_attributes[1].resource_index==4 &&
-            vertex_uniforms[0]->type==TypedType::F32x2 && vertex_uniforms[0]->index==0 &&
-            vertex_uniforms[1]->type==TypedType::F32 && vertex_uniforms[1]->index==2) {
-            unsigned stores=0,divisions=0,logs=0,mins=0,maxs=0;
-            TypedValue position{},color{};
-            bool shape=true;
-            for (const auto &instruction:instructions) {
-                if (instruction.opcode()==TypedOpcode::FloatBinary) {
-                    if (instruction.subop()==static_cast<uint8_t>(TypedFloatOp::Div)) ++divisions;
-                    else if (instruction.subop()==static_cast<uint8_t>(TypedFloatOp::Min)) ++mins;
-                    else if (instruction.subop()==static_cast<uint8_t>(TypedFloatOp::Max)) ++maxs;
-                } else if (instruction.opcode()==TypedOpcode::FloatUnary &&
-                           instruction.subop()==static_cast<uint8_t>(TypedFloatUnaryOp::Log2)) {
-                    ++logs;
-                }
-                if (instruction.opcode()!=TypedOpcode::StoreOutput) continue;
-                if (instruction.aux>=resources.size()) { shape=false; break; }
-                ++stores;
-                const auto &output=resources[instruction.aux];
-                auto semantic=output.semantic;
-                if (semantic==TypedSemantic::None) semantic=infer_semantic(shader.resource_name(output));
-                if (semantic==TypedSemantic::Position && position.kind()==TypedValueKind::None)
-                    position=instruction.src0;
-                else if (semantic==TypedSemantic::Color && color.kind()==TypedValueKind::None)
-                    color=instruction.src0;
-                else { shape=false; break; }
-            }
-            const auto color_it=color.kind()==TypedValueKind::Value ?
-                attribute_for_value.find(color.id()) : attribute_for_value.end();
-            const auto *position_def=shape?definition(position):nullptr;
-            shape = shape && stores==2 && divisions==2 && logs==1 && mins>=1 && maxs>=1 &&
-                position_def && position_def->opcode()==TypedOpcode::FloatCompose &&
-                color_it!=attribute_for_value.end() && color_it->second==1;
-            if (shape) {
-                std::vector<IrUniformFloat> uniform_meta;
-                for (const auto *uniform:vertex_uniforms)
-                    uniform_meta.push_back({shader.resource_name(*uniform),typed_component_count(uniform->type),uniform->index});
-                return compile_vertex_geometrizer_poly_sdk300(vertex_attributes,uniform_meta,0,0,out);
-            }
         }
 
         // Fixed 16.16 vitaGL vertex shape. The source values are ordinary float

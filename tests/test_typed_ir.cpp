@@ -622,13 +622,98 @@ int test_typed_ir() {
             program.emit<TypedOpcode::FloatBinary>(static_cast<uint8_t>(TypedFloatOp::Dot),dot,lhs,composite);
         MachineCompileResult result;
         usse::V32NmadSemantic dot_op{};
-        if (!built || !compile_typed_program(program,result) || result.words.size()!=5 ||
+        if (!built || !compile_typed_program(program,result) || result.words.size()!=2 ||
             usse::classify_major(result.words[0])!=usse::MajorClass::Vmov ||
-            usse::classify_major(result.words[1])!=usse::MajorClass::Vmov ||
-            usse::classify_major(result.words[2])!=usse::MajorClass::Vmov ||
-            usse::classify_major(result.words[3])!=usse::MajorClass::Vmov ||
-            !usse::decode_v32nmad_semantic(result.words[4],&dot_op) || dot_op.op!=usse::VectorOp::Dot)
+            !usse::decode_v32nmad_semantic(result.words[1],&dot_op) || dot_op.op!=usse::VectorOp::Dot)
             failures += fail("typed intermediate float4 compose did not materialize for dot consumption");
+    }
+
+    {
+        // Execute the emitted compose moves on bit patterns, not just instruction
+        // counts. Equal register numbers in different banks must not be merged.
+        const uint8_t patterns[][4]={
+            {0,1,2,3},{0,1,2,7},{0,5,2,7},{2,2,2,2},
+            {3,2,1,0},{1,1,6,6},{0,1,1,3},{0,4,0,4},
+        };
+        const uint32_t bits[2][4]={
+            {0x80000000u,0x7fc12345u,0x3f800000u,0x7f800000u},
+            {0x00000000u,0xff800000u,0xbf800000u,0x00000001u},
+        };
+        for (unsigned storage=0;storage<3;++storage) for (unsigned width:{3u,4u}) {
+            for (const auto &pattern:patterns) {
+                TypedProgram program;
+                const auto first=storage==1 ? program.uniform<TypedType::F32x4>(8) :
+                                              program.input<TypedType::F32x4>(2);
+                const auto second=storage==0 ? program.input<TypedType::F32x4>(5) :
+                                               program.uniform<TypedType::F32x4>(storage==1 ? 20 : 8);
+                const usse::RegisterRef registers[]={
+                    {storage==1 ? usse::RegisterBank::SecondaryAttribute : usse::RegisterBank::PrimaryAttribute,4},
+                    {storage==0 ? usse::RegisterBank::PrimaryAttribute : usse::RegisterBank::SecondaryAttribute,
+                     static_cast<uint8_t>(storage==2 ? 4 : 10)},
+                };
+                std::array<TypedValue,4> lanes{};
+                bool ok=true;
+                for (uint8_t lane=0;lane<width;++lane) {
+                    lanes[lane]=program.make_value<TypedType::F32>();
+                    ok=ok && program.emit<TypedOpcode::FloatExtract>(pattern[lane]%4,lanes[lane],
+                                                                     pattern[lane]<4 ? first : second);
+                }
+                const auto composite=width==4 ? program.compose_f32x4(lanes) :
+                    program.compose_f32x3({lanes[0],lanes[1],lanes[2]});
+                const auto lhs=program.input(width==4 ? TypedType::F32x4 : TypedType::F32x3,8);
+                const auto product=program.make_value(width==4 ? TypedType::F32x4 : TypedType::F32x3);
+                ok=ok && program.emit<TypedOpcode::FloatBinary>(static_cast<uint8_t>(TypedFloatOp::Mul),product,lhs,composite);
+                MachineCompileResult result;
+                ok=ok && compile_typed_program(program,result) && !result.words.empty();
+                uint32_t actual[4]{};
+                uint8_t written=0;
+                usse::RegisterRef destination{};
+                for (size_t index=0;ok && index+1<result.words.size();++index) {
+                    usse::VmovSemantic move{};
+                    ok=usse::decode_vmov_semantic(result.words[index],&move) &&
+                       move.data_type==usse::DataType::F32 && move.swizzle<=4 && move.repeat_count==0 &&
+                       move.predicate==usse::Predicate::Always && !(written & move.dest_mask);
+                    if (!ok) break;
+                    if (!index) destination=move.dst;
+                    ok=move.dst.bank==destination.bank && move.dst.num==destination.num;
+                    unsigned source=0;
+                    while (source<2 && (registers[source].bank!=move.src.bank || registers[source].num!=move.src.num)) ++source;
+                    if (source==2) { ok=false; break; }
+                    for (uint8_t lane=0;lane<width;++lane)
+                        if (move.dest_mask & (1u<<lane)) actual[lane]=bits[source][move.swizzle==4 ? lane : move.swizzle];
+                    written |= move.dest_mask;
+                }
+                ok=ok && written==(1u<<width)-1u;
+                for (uint8_t lane=0;lane<width;++lane)
+                    ok=ok && actual[lane]==bits[pattern[lane]/4][pattern[lane]%4];
+                if (pattern[0]==0 && pattern[1]==1 && pattern[2]==2)
+                    ok=ok && result.words.size()==(width==3 || pattern[3]==3 ? 2u : 3u);
+                if (!ok) {
+                    std::fprintf(stderr,"compose storage=%u width=%u pattern=%u%u%u%u words=%zu mask=%u error=%s\n",
+                        storage,width,pattern[0],pattern[1],pattern[2],pattern[3],result.words.size(),written,result.error.c_str());
+                    failures += fail("generic float compose changed lane bits or failed to coalesce compatible writes");
+                }
+            }
+        }
+    }
+
+    {
+        TypedProgram program;
+        const auto scalar=program.input<TypedType::F32>(0);
+        const auto vector=program.input<TypedType::F32x4>(2);
+        const auto computed=program.make_value<TypedType::F32>();
+        bool ok=program.emit<TypedOpcode::FloatBinary>(static_cast<uint8_t>(TypedFloatOp::Mul),computed,scalar,scalar);
+        const auto composite=program.compose_f32x4({computed,computed,computed,computed});
+        const auto product=program.make_value<TypedType::F32x4>();
+        ok=ok && program.emit<TypedOpcode::FloatBinary>(static_cast<uint8_t>(TypedFloatOp::Mul),product,vector,composite);
+        MachineCompileResult result;
+        usse::V32NmadSemantic calculation{};
+        usse::VmovSemantic move{};
+        if (!ok || !compile_typed_program(program,result) || result.words.size()!=3 ||
+            !usse::decode_v32nmad_semantic(result.words[0],&calculation) ||
+            !usse::decode_vmov_semantic(result.words[1],&move) || move.dest_mask!=0xf || move.swizzle!=0 ||
+            move.src.bank!=calculation.dst.bank || move.src.num!=calculation.dst.num)
+            failures += fail("generic compose did not broadcast the computed scalar from its allocated register");
     }
 
     {

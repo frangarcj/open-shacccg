@@ -231,6 +231,12 @@ for `clip_wvp`. Those reductions are oracle-isolation tools only; the OpenShaccC
 corpus inputs remain the original vitaGL sources. Real-Vita `sceGxmProgramCheck`
 and render validation remains the separate hardware gate.
 
+Several large vitaGL profiles select complete fixed schedules, not a generic
+scheduler result. Their guards still require a source-mutation audit; do not
+interpret the captured byte-equality result as proof that changing an expression
+or constant is compiled correctly. New work uses subexpression optimizations and
+mutation tests rather than adding more whole-shader profiles.
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.
@@ -558,13 +564,16 @@ observed five/eight-word int4 streams, though int4 lowering remains closed).
 The first production-shaped integration target is a Cg translation of Geometrizer's
 `POLY_VS` semantics: float3 position + float4 color inputs, packed float2/scalar
 uniforms, two scalar divisions, dynamic `clamp`, `log2`, depth scaling and a
-composed POSITION + COLOR output. Sony compiles the probe to 14 primary + 4
-secondary instructions. Open now compiles the same source through generic
+composed POSITION + COLOR output. Sony 1.6.5 compiles the probe to 14 primary + 4
+secondary instructions; the SDK 3.0 reference is 13+4 / 476 bytes. Open compiles
+the same source through generic
 Typed/Machine vertex lowering using field-level reciprocal/Log2 VCOMP, V32NMAD and
-VMOV. Its current schedule is 21 primary instructions and no secondary program;
-reflection, flags and the vertex interface match, while secondary-register and
-literal counts differ because Open does not yet hoist reciprocals or materialize
-Sony's otherwise-unused `-1` literal.
+VMOV. Its current schedule is 19 primary + 2 secondary instructions / 496 bytes,
+including denominator-only reciprocal hoisting. It is not byte-identical to SDK
+3.0. The removed whole-shader POLY schedule ignored live constant/operand changes;
+the unpublished POLY3D experiment had the same defect. The new regression tests
+change both depth constants and operand edges, and check filename/identifier
+independence. ISA evidence is retained, but neither shader has a runtime matcher.
 
 Reaching this shader generalized nested uniform component access chains, F32
 component extraction, scalar F32 literals backed by the GXP literal table, dynamic
@@ -576,10 +585,15 @@ same generic path. It expands the interface to five float4 attributes and five
 float uniforms, materializes the intermediate `float4(a_pos.xyz,1)` only because
 the value feeds three dot products, and preserves Sony's observable resource
 metadata: program flags `0x00090004`, PA=20, TEXCOORD0..3 + COLOR0 semantics and
-uniform word offsets 0/2/4/6/8. Sony emits 20 primary + 10 secondary instructions;
-Open now hoists denominator-only screen reciprocals and emits 39 primary + 2
-secondary instructions (41 total, down from the original 43-word primary-only
-baseline). Code-size/scheduling differences are tracked separately in
+uniform word offsets 0/2/4/6/8. Sony 1.6.5 emits 20 primary + 10 secondary
+instructions; SDK 3.0 emits 18+11 / 700 bytes. Open hoists denominator-only screen
+reciprocals and emits 37 primary + 2 secondary instructions / 768 bytes, down from
+39+2 / 784 bytes. The improvement is a generic FloatCompose3/4 rule grouping
+compatible lane moves at the compose definition; no arithmetic reassociation or
+whole-shader recognition is involved. Forty-eight PA/SA/mixed-bank cases check the
+emitted moves against exact lane bits (including signed zero, NaN and infinity),
+with a separate computed-scalar broadcast regression. Code-size/scheduling
+differences are tracked separately in
 `research/OPTIMIZATION_BACKLOG.md` so they do not obscure correctness coverage.
 
 `CMP_FS` is the first production fragment target and is exact outside GUIDs. Its
