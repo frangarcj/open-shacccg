@@ -183,6 +183,10 @@ The same local-plan analysis drives literal binding: fully absorbed `1/65536`
 uses are dead and no longer reserve a literal/SA slot, while any independent
 live use retains the constant. The current fixed16 image is therefore 740 bytes,
 46 primary instructions and PA=12/SA=36.
+Component-selected packed F32 attributes also avoid scalar staging: the selected
+float lane is translated directly to the containing PA register and U16/S16
+halfword selectors. This removes six VMOVs from the vitaGL case, leaving 40
+primary instructions / 692 bytes with PA=12/SA=36.
 The validated U16/S16 VPCK and VDUAL encoders remain available for further local
 selection; no full fixed16 shader schedule has been restored.
 

@@ -908,23 +908,25 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
                     error="fixed16 local optimization could not lower packed F32 source";
                     return false;
                 }
+                uint8_t low_component=0,high_component=1;
                 if (packed.kind()==MachineOperandKind::PhysicalValue && packed.physical_component()!=0xff) {
-                    const auto staged=machine.make_value<MachineType::F32>();
-                    if (staged.kind()==MachineOperandKind::None ||
-                        !machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
-                            machine_move_config(1,packed.physical_component()),staged,packed)) {
-                        error="fixed16 local optimization failed to stage packed component";
+                    const auto reg=packed.physical_register();
+                    const uint8_t lane=packed.physical_component();
+                    if (reg.num>=127 || lane>=4) {
+                        error="fixed16 local optimization source component is out of register range";
                         return false;
                     }
-                    packed=staged;
+                    packed=machine.physical(reg.bank,static_cast<uint8_t>(reg.num+lane/2u),MachineType::F32);
+                    low_component=static_cast<uint8_t>((lane&1u)*2u);
+                    high_component=static_cast<uint8_t>(low_component+1u);
                 }
                 const auto low=machine.make_value<MachineType::F32>();
                 const auto high=machine.make_value<MachineType::F32>();
                 const auto dst=machine.make_value<MachineType::F32>();
                 if (low.kind()==MachineOperandKind::None || high.kind()==MachineOperandKind::None ||
                     dst.kind()==MachineOperandKind::None ||
-                    !machine.emit_config<MachineOpcode::Narrow16ToF32>(0,machine_narrow16_config(0,true),low,packed) ||
-                    !machine.emit_config<MachineOpcode::Narrow16ToF32>(1,machine_narrow16_config(1,false),high,packed) ||
+                    !machine.emit_config<MachineOpcode::Narrow16ToF32>(0,machine_narrow16_config(low_component,true),low,packed) ||
+                    !machine.emit_config<MachineOpcode::Narrow16ToF32>(1,machine_narrow16_config(high_component,false),high,packed) ||
                     !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Add),
                         machine_vector_config(1),dst,high,low)) {
                     error="failed to lower canonical fixed16 unpack locally";

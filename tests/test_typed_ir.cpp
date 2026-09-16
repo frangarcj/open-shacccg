@@ -624,9 +624,10 @@ int test_typed_ir() {
     }
 
     {
-        auto build_fixed16=[](bool dynamic_scale,MachineCompileResult &result) {
+        auto build_fixed16=[](bool dynamic_scale,int source_component,MachineCompileResult &result) {
             TypedProgram program;
-            const auto packed=program.input<TypedType::F32>(0);
+            const auto packed=source_component<0 ? program.input<TypedType::F32>(0) :
+                program.input_component_f32(2,static_cast<uint8_t>(source_component));
 
             const auto signed_bits=program.make_value<TypedType::S32>();
             const auto shifted=program.make_value<TypedType::S32>();
@@ -657,15 +658,28 @@ int test_typed_ir() {
         MachineCompileResult canonical,dynamic;
         usse::Vpck16ToF32Semantic low{},high{};
         usse::V32NmadSemantic add{};
-        if (!build_fixed16(false,canonical) || canonical.words.size()!=3 ||
+        if (!build_fixed16(false,-1,canonical) || canonical.words.size()!=3 ||
             !usse::decode_vpck16_to_f32_semantic(canonical.words[0],&low) ||
             low.src_format!=usse::PackFormat::U16 || low.component!=0 || !low.scale ||
             !usse::decode_vpck16_to_f32_semantic(canonical.words[1],&high) ||
             high.src_format!=usse::PackFormat::S16 || high.component!=1 || high.scale ||
             !usse::decode_v32nmad_semantic(canonical.words[2],&add) || add.op!=usse::VectorOp::Add)
             failures += fail("canonical fixed16 scalar sub-DAG did not lower to local unpack+add");
-        if (!build_fixed16(true,dynamic) || dynamic.words.size()<=canonical.words.size())
+        if (!build_fixed16(true,-1,dynamic) || dynamic.words.size()<=canonical.words.size())
             failures += fail("dynamic-scale fixed16 neighbor was incorrectly captured by local unpack optimization");
+        for (int component=0;component<4;++component) {
+            MachineCompileResult selected;
+            usse::Vpck16ToF32Semantic selected_low{},selected_high{};
+            if (!build_fixed16(false,component,selected) || selected.words.size()!=3 ||
+                !usse::decode_vpck16_to_f32_semantic(selected.words[0],&selected_low) ||
+                !usse::decode_vpck16_to_f32_semantic(selected.words[1],&selected_high) ||
+                selected_low.src.bank!=usse::RegisterBank::PrimaryAttribute ||
+                selected_high.src.bank!=usse::RegisterBank::PrimaryAttribute ||
+                selected_low.src.num!=2+component/2 || selected_high.src.num!=2+component/2 ||
+                selected_low.component!=(component&1)*2 || selected_high.component!=(component&1)*2+1 ||
+                !selected_low.scale || selected_high.scale)
+                failures += fail("fixed16 component selection did not map directly to packed PA halfwords");
+        }
     }
 
     {
