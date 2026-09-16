@@ -189,13 +189,12 @@ Decoder reuse also resets both extended-GPI flags instead of inheriting them
 from the preceding instruction. Regression probes cover both captured words,
 standard/extended transitions and rejected neighboring selectors.
 
-The production smooth-lighting path now uses that validated SDK 3.0 schedule
-directly instead of the older 250-word generic Typed/Machine expansion. The
-result is byte-identical to the captured one-light oracle image: 1824 bytes on
-disk (1823 logical), 123 primary + 6 secondary instructions, PA=28/SA=94,
-19 TEMP registers, six literal slots and flags `0x00190006`. Reflection is also
-repacked to Sony's SDK 3.0 default-uniform layout (88 words + six literals),
-including the observed light/matrix/point-size resource indices.
+The smooth-lighting SDK 3.0 image remains the optimization oracle: Sony emits
+123 primary + 6 secondary instructions in 1824 bytes with PA=28/SA=94. The
+production whole-shader schedule has been removed; the current path lowers the
+structured lighting CFG through generic Typed/Machine IR and then packages the
+validated POSITION/COLOR/TEXCOORD0/PSIZE interface. Its longer v1.4 stream is an
+intentional correctness baseline for future local VMAD/VDUAL/scheduling work.
 
 The one-light Phong fragment SDK 3.0 capture remains a fidelity oracle: Sony
 emits 71 primary + 16 secondary instructions in a 1240-byte v1.5 image, with

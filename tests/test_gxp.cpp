@@ -727,61 +727,6 @@ int test_gxp_writer() {
             failures += fail("unsupported vertex Machine profile was accepted");
     }
 
-    {
-        const std::vector<vsc::backend::IrAttribute> attributes={
-            {"Nposition",4,0},{"Otexcoord0",2,4},{"Pcolor",4,8},{"Qdiff",4,12},
-            {"Rspec",4,16},{"Semission",4,20},{"Tnormals",3,24},
-        };
-        const std::vector<vsc::backend::IrUniformFloat> uniforms={
-            {"Flight_global_ambient",4,0},{"Alights_ambients",4,4},{"Blights_diffuses",4,8},
-            {"Clights_speculars",4,12},{"Dlights_positions",4,16},{"Elights_attenuations",3,20},
-            {"Gshininess",1,24},{"Mpoint_size",1,74},
-        };
-        const std::vector<vsc::backend::IrMatrix4Uniform> matrices={
-            {"Imodelview",26},{"Jwvp",42},{"Ktexmat",58},
-        };
-        vsc::backend::IrCompileResult smooth;
-        if (!vsc::backend::compile_vertex_smooth_lighting_sdk300(
-                attributes,uniforms,matrices,{"Lnormal_mat",76},0,0,smooth)) {
-            std::fprintf(stderr,"test_gxp: smooth SDK 3.0 profile failed: %s\n",smooth.error.c_str());
-            ++failures;
-        } else {
-            ProgramView view(smooth.gxp.data(),smooth.gxp.size());
-            const uint8_t expected_interface[32]={
-                0x3f,0xf7,0x77,0x07,0,0,0,0,0,0,0,0,0,0,0,0,
-                0,0x19,0,0x0b,0x01,0,0,0,0,0,0,0,0,0,0,0,
-            };
-            const auto code=view.primary_program();
-            const auto secondary=view.secondary_program();
-            const auto varying=view.varyings();
-            ParameterView global{},modelview{},normal{};
-            uint64_t nop=0,branch=0,exp2=0,emit=0,secondary_first=0,secondary_last=0;
-            if (code.size>=123*8) {
-                std::memcpy(&nop,code.data+1*8,8);
-                std::memcpy(&branch,code.data+53*8,8);
-                std::memcpy(&exp2,code.data+63*8,8);
-                std::memcpy(&emit,code.data+122*8,8);
-            }
-            if (secondary.size>=6*8) {
-                std::memcpy(&secondary_first,secondary.data,8);
-                std::memcpy(&secondary_last,secondary.data+5*8,8);
-            }
-            if (!view.valid() || smooth.gxp.size()!=1824 || view.logical_size()!=1823 ||
-                view.minor_version()!=5 || view.sdk_version()!=0x0300 || view.flags()!=0x00190006 ||
-                view.primary_register_count()!=28 || view.secondary_register_count()!=94 ||
-                view.primary_instruction_count()!=123 || view.secondary_instruction_count()!=6 ||
-                view.container_count()!=2 || view.parameter_count()!=19 ||
-                view.compiler_version_raw()!=0x00033a90 || varying.size!=sizeof(expected_interface) ||
-                std::memcmp(varying.data,expected_interface,sizeof(expected_interface))!=0 ||
-                !view.parameter(7,global) || global.name!="Flight_global_ambient" || global.resource_index!=56 ||
-                !view.parameter(14,modelview) || modelview.name!="Imodelview" || modelview.resource_index!=0 ||
-                !view.parameter(18,normal) || normal.name!="Lnormal_mat" || normal.resource_index!=32 ||
-                nop!=0xf800094000000000ULL || branch!=0xfd0000400000000dULL ||
-                exp2!=0x30800e000f803e01ULL || emit!=0xfb275000a0200000ULL ||
-                secondary_first!=0x5081000aaa000000ULL || secondary_last!=0x3884050a819c0100ULL)
-                failures += fail("smooth-lighting profile does not match SDK 3.0.0 contract");
-        }
-    }
 
 
     return failures;
