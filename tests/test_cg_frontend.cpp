@@ -1090,7 +1090,7 @@ int test_cg_frontend() {
             }
             ok=ok && view.minor_version()==4 && view.sdk_version()==0x0165 &&
                 view.primary_register_count()==12 && view.parameter_count()==6 &&
-                view.primary_instruction_count()==48 && view.secondary_instruction_count()==0 &&
+                view.primary_instruction_count()==46 && view.secondary_instruction_count()==0 &&
                 scaled_low_unpack_count==6 && high_unpack_count==6 && point_write &&
                 interface.size==32 && interface.data[19]==11 && has_literal(original,0x37800000u);
             const uint32_t offsets[]={0,4,8,0,16,32};

@@ -43,10 +43,15 @@ correctness for nearby source variants.
   generic path. The vitaGL case falls from 72 to 48 primary words and from 956 to
   764 bytes without a whole-shader matcher. The now-dead `1/65536` literal still
   remains in metadata and is separate DCE work.
+- Generic `TransformMat4` now selects the already oracle-anchored VPCK + repeated
+  VMAD pair when the matrix starts at SA0. This is a local matrix-base decision,
+  not a fixed16 rule; non-SA0 matrices still use the four-DOT fallback. On the
+  fixed16 corpus case this removes two more primary words: 48 -> 46 and
+  764 -> 748 bytes.
 - Sony SDK 3.0 remains 21 primary + 3 secondary instructions, 568 bytes,
-  PA=12/SA=36. Next optimizations are matrix lowering, cross-component unpack
-  batching/VDUAL, literal DCE and point-size hoisting, retaining actual operands
-  and constants.
+  PA=12/SA=36. Next optimizations are validating non-SA0 matrix VMAD selection,
+  cross-component unpack batching/VDUAL, literal DCE and point-size hoisting,
+  retaining actual operands and constants.
   Do not restore the complete schedule to recover byte equality.
 - Continue numeric validation of mixed integer/F32 register addressing, register
   allocation and TEMP accounting; mutation tests alone are not execution tests.

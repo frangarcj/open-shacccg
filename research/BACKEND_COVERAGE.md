@@ -174,6 +174,11 @@ operand-checked fixed16 peephole folds each canonical `hi + lo/65536` scalar cha
 into staged U16/S16 VPCKs plus VADD, reducing the current output from 72 to 48
 primary instructions and from 956 to 764 bytes while keeping v1.4 PA=12/SA=37.
 Changing the scale or replacing it with a dynamic value bypasses the peephole.
+Generic `TransformMat4` additionally selects the independently validated
+VPCK + repeated-VMAD form for matrices rooted at SA0; other matrix bases remain
+on the generic four-DOT path. The fixed16 case therefore currently emits 46
+primary instructions / 748 bytes. This selection is keyed only by the resolved
+matrix register base and operands, not by shader/interface identity.
 The validated U16/S16 VPCK and VDUAL encoders remain available for further local
 selection; no full fixed16 shader schedule has been restored.
 

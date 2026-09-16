@@ -711,6 +711,8 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
         }
         if (instruction.opcode() == MachineOpcode::LoopIncrement)
             reserved_temps[1] = true;
+        if (instruction.opcode() == MachineOpcode::TransformMat4)
+            reserved_temps[124] = true;
     }
 
     std::array<bool, 4> no_reserved_predicates{};
@@ -1372,6 +1374,44 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 matrix.bank!=usse::RegisterBank::SecondaryAttribute || matrix.num>120) {
                 out.error="mat4 transform requires F32 vector operands and an SA matrix base";
                 return false;
+            }
+            if (matrix.num==0) {
+                if (src.num>=127) {
+                    out.error="SA0 mat4 VMAD source pair exceeds register bank";
+                    return false;
+                }
+                usse::VpckSemantic stage{};
+                stage.dst={usse::RegisterBank::Temp,124};
+                stage.src1=src;
+                stage.src2={src.bank,static_cast<uint8_t>(src.num+1u)};
+                stage.src_format=usse::PackFormat::F32;
+                stage.dst_format=usse::PackFormat::F32;
+                stage.dest_mask=0xF;
+                stage.skip_invalid=true;
+                stage.no_schedule=false;
+                usse::VmadSemantic mad{};
+                mad.dst=dst;
+                mad.src1=matrix;
+                mad.gpi0=0;
+                mad.gpi1=2;
+                mad.write_mask=1;
+                mad.gpi0_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                                   usse::SwizzleChannel::Z,usse::SwizzleChannel::W}};
+                mad.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                                   usse::SwizzleChannel::X,usse::SwizzleChannel::Y}};
+                mad.gpi1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                                   usse::SwizzleChannel::Z,usse::SwizzleChannel::Z}};
+                mad.vec4=true;
+                mad.control_bit_53=false;
+                mad.repeat_mode=usse::RepeatMode::External;
+                mad.repeat_count=3;
+                mad.skip_invalid=true;
+                mad.no_schedule=false;
+                if (!builder.instruction(stage) || !builder.instruction(mad)) {
+                    out.error="failed to encode SA0 mat4 VPCK/VMAD selection";
+                    return false;
+                }
+                break;
             }
             for (uint8_t lane=0;lane<4;++lane) {
                 usse::V32NmadSemantic dot{};

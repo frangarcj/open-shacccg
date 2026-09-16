@@ -222,6 +222,34 @@ int test_machine_ir() {
 
     {
         MachineProgram program;
+        if (!program.emit<MachineOpcode::TransformMat4>(0,
+                program.physical(machine_vertex_output(0),MachineType::F32),
+                program.physical(machine_primary(0),MachineType::F32),
+                program.physical(machine_secondary(0),MachineType::F32))) {
+            failures += fail("could not construct local SA0 mat4 Machine transform");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(program,result) || result.words.size()!=2 ||
+                result.words[0]!=0x40800dbcaf998002ULL ||
+                result.words[1]!=0x18903081c011a200ULL)
+                failures += fail("local SA0 TransformMat4 did not select oracle VPCK/VMAD pair");
+        }
+
+        MachineProgram neighbor;
+        if (!neighbor.emit<MachineOpcode::TransformMat4>(0,
+                neighbor.physical(machine_vertex_output(0),MachineType::F32),
+                neighbor.physical(machine_primary(0),MachineType::F32),
+                neighbor.physical(machine_secondary(2),MachineType::F32))) {
+            failures += fail("could not construct non-SA0 mat4 neighbor");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(neighbor,result) || result.words.size()!=4)
+                failures += fail("non-SA0 mat4 neighbor was incorrectly captured by SA0 VMAD selection");
+        }
+    }
+
+    {
+        MachineProgram program;
         if (!program.emit<MachineOpcode::TransformMat3>(0,
                 program.physical(usse::RegisterBank::Temp,40,MachineType::F32),
                 program.physical(machine_primary(0),MachineType::F32),
