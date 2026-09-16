@@ -1070,14 +1070,17 @@ int test_cg_frontend() {
         if (ok) {
             vsc::gxp::ProgramView view(original.data(),original.size());
             const auto code=view.primary_program(),interface=view.varyings();
-            bool signed_unpack=false,unsigned_unpack=false,point_write=false;
+            bool point_write=false;
+            unsigned scaled_low_unpack_count=0,high_unpack_count=0;
             for (size_t offset=0;offset+8<=code.size;offset+=8) {
                 uint64_t word=0; std::memcpy(&word,code.data+offset,8);
-                vsc::usse::VpckSemantic pack{};
+                vsc::usse::Vpck16ToF32Semantic unpack{};
                 vsc::usse::VmovSemantic move{};
-                if (vsc::usse::decode_vpck_semantic(word,&pack) && pack.dst_format==vsc::usse::PackFormat::F32) {
-                    signed_unpack |= pack.src_format==vsc::usse::PackFormat::S16;
-                    unsigned_unpack |= pack.src_format==vsc::usse::PackFormat::U16;
+                if (vsc::usse::decode_vpck16_to_f32_semantic(word,&unpack)) {
+                    scaled_low_unpack_count += unpack.src_format==vsc::usse::PackFormat::U16 &&
+                        unpack.component==0 && unpack.scale;
+                    high_unpack_count += unpack.src_format==vsc::usse::PackFormat::S16 &&
+                        unpack.component==1 && !unpack.scale;
                 }
                 if (vsc::usse::decode_vmov_semantic(word,&move) && move.dst.bank==vsc::usse::RegisterBank::Output) {
                     point_write |= move.dst.num==5 && move.dest_mask==1;
@@ -1087,7 +1090,8 @@ int test_cg_frontend() {
             }
             ok=ok && view.minor_version()==4 && view.sdk_version()==0x0165 &&
                 view.primary_register_count()==12 && view.parameter_count()==6 &&
-                view.secondary_instruction_count()==0 && signed_unpack && unsigned_unpack && point_write &&
+                view.primary_instruction_count()==48 && view.secondary_instruction_count()==0 &&
+                scaled_low_unpack_count==6 && high_unpack_count==6 && point_write &&
                 interface.size==32 && interface.data[19]==11 && has_literal(original,0x37800000u);
             const uint32_t offsets[]={0,4,8,0,16,32};
             for (uint32_t i=0;ok && i<6;++i) {

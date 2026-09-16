@@ -624,6 +624,51 @@ int test_typed_ir() {
     }
 
     {
+        auto build_fixed16=[](bool dynamic_scale,MachineCompileResult &result) {
+            TypedProgram program;
+            const auto packed=program.input<TypedType::F32>(0);
+
+            const auto signed_bits=program.make_value<TypedType::S32>();
+            const auto shifted=program.make_value<TypedType::S32>();
+            const auto high=program.make_value<TypedType::F32>();
+            const auto shift=program.literal_s32(16);
+            bool ok=program.emit<TypedOpcode::Bitcast>(0,signed_bits,packed) &&
+                program.emit<TypedOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::ArithmeticShiftRight),
+                    shifted,signed_bits,shift) &&
+                program.emit<TypedOpcode::Narrow16ToFloat>(1,high,shifted);
+
+            const auto unsigned_bits=program.make_value<TypedType::U32>();
+            const auto masked=program.make_value<TypedType::U32>();
+            const auto low=program.make_value<TypedType::F32>();
+            const auto mask=program.literal_u32(0xffffu);
+            ok=ok && program.emit<TypedOpcode::Bitcast>(0,unsigned_bits,packed) &&
+                program.emit<TypedOpcode::Bitwise>(static_cast<uint8_t>(usse::BitwiseOp::And),
+                    masked,unsigned_bits,mask) &&
+                program.emit<TypedOpcode::Narrow16ToFloat>(0,low,masked);
+
+            const auto scale=dynamic_scale ? program.input<TypedType::F32>(2) : program.literal_f32(0x37800000u);
+            const auto scaled=program.make_value<TypedType::F32>();
+            const auto combined=program.make_value<TypedType::F32>();
+            ok=ok && program.emit<TypedOpcode::FloatBinary>(static_cast<uint8_t>(TypedFloatOp::Mul),scaled,low,scale) &&
+                program.emit<TypedOpcode::FloatBinary>(static_cast<uint8_t>(TypedFloatOp::Add),combined,high,scaled);
+            return ok && compile_typed_program(program,result);
+        };
+
+        MachineCompileResult canonical,dynamic;
+        usse::Vpck16ToF32Semantic low{},high{};
+        usse::V32NmadSemantic add{};
+        if (!build_fixed16(false,canonical) || canonical.words.size()!=3 ||
+            !usse::decode_vpck16_to_f32_semantic(canonical.words[0],&low) ||
+            low.src_format!=usse::PackFormat::U16 || low.component!=0 || !low.scale ||
+            !usse::decode_vpck16_to_f32_semantic(canonical.words[1],&high) ||
+            high.src_format!=usse::PackFormat::S16 || high.component!=1 || high.scale ||
+            !usse::decode_v32nmad_semantic(canonical.words[2],&add) || add.op!=usse::VectorOp::Add)
+            failures += fail("canonical fixed16 scalar sub-DAG did not lower to local unpack+add");
+        if (!build_fixed16(true,dynamic) || dynamic.words.size()<=canonical.words.size())
+            failures += fail("dynamic-scale fixed16 neighbor was incorrectly captured by local unpack optimization");
+    }
+
+    {
         TypedProgram program;
         const auto source=program.input<TypedType::F32x4>(0);
         const auto lhs=program.input<TypedType::F32x4>(1);

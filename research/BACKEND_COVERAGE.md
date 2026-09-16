@@ -169,9 +169,13 @@ The fixed-point halfword SDK 3.0 capture remains a reference: with SceShaccCgExt
 enabled, Sony emits 21 primary + 3 secondary instructions in a 568-byte v1.5
 image, PA=12/SA=36. The whole-shader fixed16 template has been removed: it emitted
 the same GXP after changing the live scale from `1/65536` to `1/32768`.
-The captured vitaGL source now lowers through generic Typed/Machine IR, producing
-72 primary instructions, no secondary stream and a 956-byte v1.4 GXP, PA=12/SA=37.
-The validated U16/S16 VPCK and VDUAL encoders remain available for local selection.
+The captured vitaGL source now lowers through generic Typed/Machine IR. A local,
+operand-checked fixed16 peephole folds each canonical `hi + lo/65536` scalar chain
+into staged U16/S16 VPCKs plus VADD, reducing the current output from 72 to 48
+primary instructions and from 956 to 764 bytes while keeping v1.4 PA=12/SA=37.
+Changing the scale or replacing it with a dynamic value bypasses the peephole.
+The validated U16/S16 VPCK and VDUAL encoders remain available for further local
+selection; no full fixed16 shader schedule has been restored.
 
 Fixed16 and smooth lighting share an output-ABI packer for POSITION, COLOR0,
 float2 TEXCOORD0 and PSIZE. It does not require conversion or lighting operations,

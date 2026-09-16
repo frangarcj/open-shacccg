@@ -370,6 +370,128 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
     std::vector<bool> value_defined(typed.value_count(), false);
     std::vector<bool> predicate_defined(typed.predicate_count(), false);
 
+    const auto &typed_instructions=typed.instructions();
+    const uint32_t no_definition=std::numeric_limits<uint32_t>::max();
+    std::vector<uint32_t> definition_index(typed.value_count(),no_definition);
+    std::vector<uint32_t> use_count(typed.value_count(),0);
+    for (uint32_t index=0;index<typed_instructions.size();++index) {
+        const auto &candidate=typed_instructions[index];
+        const auto *candidate_desc=descriptor(candidate.opcode());
+        if (candidate_desc && candidate_desc->roles[0]==TypedRole::ValueDef &&
+            candidate.dst.kind()==TypedValueKind::Value && candidate.dst.id()<definition_index.size())
+            definition_index[candidate.dst.id()]=index;
+        if (candidate.src0.kind()==TypedValueKind::Value && candidate.src0.id()<use_count.size())
+            ++use_count[candidate.src0.id()];
+        if (candidate.src1.kind()==TypedValueKind::Value && candidate.src1.id()<use_count.size())
+            ++use_count[candidate.src1.id()];
+    }
+    for (const auto &composite:typed.float3_composites())
+        for (const auto value:composite)
+            if (value.kind()==TypedValueKind::Value && value.id()<use_count.size()) ++use_count[value.id()];
+    for (const auto &composite:typed.float4_composites())
+        for (const auto value:composite)
+            if (value.kind()==TypedValueKind::Value && value.id()<use_count.size()) ++use_count[value.id()];
+    for (const auto &select:typed.float_selects()) {
+        for (const auto value:{select.true_value,select.false_value})
+            if (value.kind()==TypedValueKind::Value && value.id()<use_count.size()) ++use_count[value.id()];
+    }
+
+    std::vector<bool> skip_instruction(typed_instructions.size(),false);
+    std::vector<TypedValue> fixed16_source(typed_instructions.size());
+    if (typed.labels().empty()) {
+        auto definition_of=[&](TypedValue value) -> const TypedInstruction * {
+            if (value.kind()!=TypedValueKind::Value || value.id()>=definition_index.size()) return nullptr;
+            const uint32_t index=definition_index[value.id()];
+            return index<typed_instructions.size()?&typed_instructions[index]:nullptr;
+        };
+        auto definition_position=[&](TypedValue value) -> uint32_t {
+            return value.kind()==TypedValueKind::Value && value.id()<definition_index.size() ?
+                definition_index[value.id()] : no_definition;
+        };
+        auto single_use=[&](TypedValue value) {
+            return value.kind()==TypedValueKind::Value && value.id()<use_count.size() && use_count[value.id()]==1;
+        };
+        auto literal_is=[&](TypedValue value,TypedType type,uint32_t bits) {
+            return value.kind()==TypedValueKind::Literal && value.type()==type &&
+                value.id()<typed.literals().size() && typed.literals()[value.id()]==bits;
+        };
+        for (uint32_t root_index=0;root_index<typed_instructions.size();++root_index) {
+            const auto &root=typed_instructions[root_index];
+            if (root.opcode()!=TypedOpcode::FloatBinary ||
+                root.subop()!=static_cast<uint8_t>(TypedFloatOp::Add) || root.dst.type()!=TypedType::F32)
+                continue;
+
+            TypedValue signed_value{},scaled_value{};
+            auto split_add=[&](TypedValue a,TypedValue b) {
+                const auto *signed_def=definition_of(a);
+                const auto *scaled_def=definition_of(b);
+                if (signed_def && signed_def->opcode()==TypedOpcode::Narrow16ToFloat && signed_def->subop()==1 &&
+                    scaled_def && scaled_def->opcode()==TypedOpcode::FloatBinary &&
+                    scaled_def->subop()==static_cast<uint8_t>(TypedFloatOp::Mul)) {
+                    signed_value=a;
+                    scaled_value=b;
+                    return true;
+                }
+                return false;
+            };
+            if (!split_add(root.src0,root.src1) && !split_add(root.src1,root.src0)) continue;
+
+            const auto *signed_narrow=definition_of(signed_value);
+            const auto *scaled=definition_of(scaled_value);
+            TypedValue unsigned_value{},scale{};
+            const auto *scaled0=definition_of(scaled->src0);
+            const auto *scaled1=definition_of(scaled->src1);
+            if (scaled0 && scaled0->opcode()==TypedOpcode::Narrow16ToFloat && scaled0->subop()==0 &&
+                literal_is(scaled->src1,TypedType::F32,0x37800000u)) {
+                unsigned_value=scaled->src0; scale=scaled->src1;
+            } else if (scaled1 && scaled1->opcode()==TypedOpcode::Narrow16ToFloat && scaled1->subop()==0 &&
+                       literal_is(scaled->src0,TypedType::F32,0x37800000u)) {
+                unsigned_value=scaled->src1; scale=scaled->src0;
+            } else continue;
+            (void)scale;
+
+            const auto *unsigned_narrow=definition_of(unsigned_value);
+            const auto *signed_bits=definition_of(signed_narrow->src0);
+            const auto *unsigned_bits=definition_of(unsigned_narrow->src0);
+            if (!signed_bits || signed_bits->opcode()!=TypedOpcode::Bitwise ||
+                signed_bits->subop()!=static_cast<uint8_t>(usse::BitwiseOp::ArithmeticShiftRight) ||
+                !literal_is(signed_bits->src1,TypedType::S32,16u) ||
+                !unsigned_bits || unsigned_bits->opcode()!=TypedOpcode::Bitwise ||
+                unsigned_bits->subop()!=static_cast<uint8_t>(usse::BitwiseOp::And))
+                continue;
+
+            TypedValue unsigned_bitcast_value{};
+            if (literal_is(unsigned_bits->src0,TypedType::U32,0xffffu)) unsigned_bitcast_value=unsigned_bits->src1;
+            else if (literal_is(unsigned_bits->src1,TypedType::U32,0xffffu)) unsigned_bitcast_value=unsigned_bits->src0;
+            else continue;
+            const auto *signed_bitcast=definition_of(signed_bits->src0);
+            const auto *unsigned_bitcast=definition_of(unsigned_bitcast_value);
+            if (!signed_bitcast || signed_bitcast->opcode()!=TypedOpcode::Bitcast ||
+                signed_bitcast->dst.type()!=TypedType::S32 || signed_bitcast->src0.type()!=TypedType::F32 ||
+                !unsigned_bitcast || unsigned_bitcast->opcode()!=TypedOpcode::Bitcast ||
+                unsigned_bitcast->dst.type()!=TypedType::U32 || unsigned_bitcast->src0.type()!=TypedType::F32 ||
+                signed_bitcast->src0.bits!=unsigned_bitcast->src0.bits)
+                continue;
+
+            const TypedValue feeder_values[]={signed_value,scaled_value,unsigned_value,signed_narrow->src0,
+                                              unsigned_narrow->src0,signed_bits->src0,unsigned_bitcast_value};
+            bool isolated=true;
+            for (const auto value:feeder_values) isolated = isolated && single_use(value);
+            if (!isolated) continue;
+
+            const uint32_t feeder_indices[]={definition_position(signed_value),definition_position(scaled_value),
+                definition_position(unsigned_value),definition_position(signed_narrow->src0),
+                definition_position(unsigned_narrow->src0),definition_position(signed_bits->src0),
+                definition_position(unsigned_bitcast_value)};
+            bool valid=true;
+            for (uint32_t index:feeder_indices)
+                valid=valid && index<root_index && index<skip_instruction.size() && !skip_instruction[index];
+            if (!valid) continue;
+            for (uint32_t index:feeder_indices) skip_instruction[index]=true;
+            fixed16_source[root_index]=signed_bitcast->src0;
+        }
+    }
+
     std::vector<MachineOperand> machine_labels;
     machine_labels.reserve(typed.labels().size());
     for (uint32_t position : typed.labels()) {
@@ -448,6 +570,13 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
     for (uint32_t instruction_index=0; instruction_index<typed.instructions().size(); ++instruction_index) {
         if (!bind_labels_at(instruction_index)) return false;
         const auto &instruction = typed.instructions()[instruction_index];
+        if (skip_instruction[instruction_index]) {
+            if (instruction.dst.kind()==TypedValueKind::Value && instruction.dst.id()<value_defined.size()) {
+                value_types[instruction.dst.id()]=instruction.dst.type();
+                value_defined[instruction.dst.id()]=true;
+            }
+            continue;
+        }
         const auto *desc = descriptor(instruction.opcode());
         if (!desc) { error = "unknown typed opcode"; return false; }
         const TypedValue operands[] = {instruction.dst, instruction.src0, instruction.src1};
@@ -772,6 +901,39 @@ static bool lower_typed_program_impl(const TypedProgram &typed, MachineProgram &
         }
         case TypedOpcode::FloatBinary: {
             const auto float_op = static_cast<TypedFloatOp>(instruction.subop());
+            if (fixed16_source[instruction_index].kind()!=TypedValueKind::None) {
+                auto packed=lower_value(typed,fixed16_source[instruction_index],values,literals,machine);
+                if (packed.kind()==MachineOperandKind::None || packed.type()!=MachineType::F32) {
+                    error="fixed16 local optimization could not lower packed F32 source";
+                    return false;
+                }
+                if (packed.kind()==MachineOperandKind::PhysicalValue && packed.physical_component()!=0xff) {
+                    const auto staged=machine.make_value<MachineType::F32>();
+                    if (staged.kind()==MachineOperandKind::None ||
+                        !machine.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                            machine_move_config(1,packed.physical_component()),staged,packed)) {
+                        error="fixed16 local optimization failed to stage packed component";
+                        return false;
+                    }
+                    packed=staged;
+                }
+                const auto low=machine.make_value<MachineType::F32>();
+                const auto high=machine.make_value<MachineType::F32>();
+                const auto dst=machine.make_value<MachineType::F32>();
+                if (low.kind()==MachineOperandKind::None || high.kind()==MachineOperandKind::None ||
+                    dst.kind()==MachineOperandKind::None ||
+                    !machine.emit_config<MachineOpcode::Narrow16ToF32>(0,machine_narrow16_config(0,true),low,packed) ||
+                    !machine.emit_config<MachineOpcode::Narrow16ToF32>(1,machine_narrow16_config(1,false),high,packed) ||
+                    !machine.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Add),
+                        machine_vector_config(1),dst,high,low)) {
+                    error="failed to lower canonical fixed16 unpack locally";
+                    return false;
+                }
+                values[instruction.dst.id()]=dst;
+                value_types[instruction.dst.id()]=TypedType::F32;
+                value_defined[instruction.dst.id()]=true;
+                break;
+            }
             const uint8_t components=typed_component_count(instruction.dst.type());
             const bool scalar=instruction.dst.type()==TypedType::F32 &&
                 instruction.src0.type()==TypedType::F32 && instruction.src1.type()==TypedType::F32;

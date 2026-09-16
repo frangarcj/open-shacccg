@@ -350,6 +350,7 @@ bool uses_instruction_config(MachineOpcode opcode) {
         opcode == MachineOpcode::PredicatedMove || opcode == MachineOpcode::PredicatedMoveUpdate ||
         opcode == MachineOpcode::PackSwizzle || opcode == MachineOpcode::PackValue || opcode == MachineOpcode::Vector ||
         opcode == MachineOpcode::ComplexF32 || opcode == MachineOpcode::Bitwise ||
+        opcode == MachineOpcode::Narrow16ToF32 ||
         opcode == MachineOpcode::Vmad || opcode == MachineOpcode::VmadUniformMat4 ||
         opcode == MachineOpcode::TransformTexcoordMat4XY;
 }
@@ -1728,16 +1729,39 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
             break;
         }
         case MachineOpcode::Narrow16ToF32: {
+            const uint16_t config=instruction.config();
             if (instruction.subop()>1 || guard!=usse::Predicate::Always ||
-                instruction.dst.type()!=MachineType::F32 ||
-                instruction.src0.type()!=(instruction.subop()?MachineType::S32:MachineType::U32)) {
-                out.error="machine narrow16 conversion requires matching U32/S32 source";
+                instruction.dst.type()!=MachineType::F32 || (config&~0x000fu)) {
+                out.error="machine narrow16 conversion has invalid type/config";
                 return false;
             }
             usse::RegisterRef dst{},src{};
-            if (!resolve_register_value(instruction.dst,MachineType::F32,out.value_registers,&dst) ||
-                !resolve_register_value(instruction.src0,instruction.src0.type(),out.value_registers,&src)) {
-                out.error="machine narrow16 conversion requires register-backed operands";
+            if (!resolve_register_value(instruction.dst,MachineType::F32,out.value_registers,&dst)) {
+                out.error="machine narrow16 destination is not register-backed";
+                return false;
+            }
+            if (instruction.src0.type()==MachineType::F32) {
+                if (!resolve_register_value(instruction.src0,MachineType::F32,out.value_registers,&src)) {
+                    out.error="machine packed16 source is not register-backed F32 bits";
+                    return false;
+                }
+                usse::Vpck16ToF32Semantic pack{};
+                pack.dst=dst;
+                pack.src=src;
+                pack.src_format=instruction.subop()?usse::PackFormat::S16:usse::PackFormat::U16;
+                pack.component=static_cast<uint8_t>(config&0x03u);
+                pack.scale=(config&0x0004u)!=0;
+                pack.no_schedule=(config&0x0008u)!=0;
+                if (!builder.instruction(pack)) {
+                    out.error="failed to encode packed16-to-F32 VPCK";
+                    return false;
+                }
+                break;
+            }
+            const MachineType expected=instruction.subop()?MachineType::S32:MachineType::U32;
+            if (instruction.src0.type()!=expected || config!=0 ||
+                !resolve_register_value(instruction.src0,expected,out.value_registers,&src)) {
+                out.error="machine narrow16 conversion requires matching U32/S32 source";
                 return false;
             }
             usse::VpckSemantic pack{};

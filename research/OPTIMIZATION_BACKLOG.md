@@ -36,10 +36,17 @@ correctness for nearby source variants.
   added/removed uniform and matrix resources, and renamed identifiers. It also
   replaces smooth lighting's named-resource guard; unsupported output layouts or
   stores outside the unconditional final block remain fail-closed.
-- Current fixed16 corpus output: 72 primary + 0 secondary instructions, 956 bytes,
-  PA=12/SA=37. Sony SDK 3.0 reference: 21+3, 568 bytes, PA=12/SA=36.
-- Next optimizations must target local bitcast/extract/unpack chains, matrix
-  lowering and point-size hoisting, retaining actual operands and constants.
+- The first local fixed16 peephole is now active. It recognizes only the isolated
+  scalar sub-DAG `S16(high) + U16(low) * (1/65536)` with matching source bits,
+  single-use feeders and the exact scale constant. It emits one component stage,
+  scaled U16 VPCK, S16 VPCK and VADD; a dynamic or changed scale stays on the
+  generic path. The vitaGL case falls from 72 to 48 primary words and from 956 to
+  764 bytes without a whole-shader matcher. The now-dead `1/65536` literal still
+  remains in metadata and is separate DCE work.
+- Sony SDK 3.0 remains 21 primary + 3 secondary instructions, 568 bytes,
+  PA=12/SA=36. Next optimizations are matrix lowering, cross-component unpack
+  batching/VDUAL, literal DCE and point-size hoisting, retaining actual operands
+  and constants.
   Do not restore the complete schedule to recover byte equality.
 - Continue numeric validation of mixed integer/F32 register addressing, register
   allocation and TEMP accounting; mutation tests alone are not execution tests.
