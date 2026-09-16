@@ -70,8 +70,9 @@ struct ProgramImage {
     size_t interface_block_size = 0;
 
     // Some fragment programs without a secondary stream use the reserved
-    // 8-byte slot after the 32-byte interface record for dependent-sampler
-    // metadata. Null means the canonical all-zero slot.
+    // 8-byte anchor after the interface records for dependent-sampler metadata.
+    // With additional fragment inputs the anchor follows their 16-byte records.
+    // Null means the canonical all-zero slot.
     const uint8_t *fragment_interface_extension = nullptr;
     size_t fragment_interface_extension_size = 0;
 

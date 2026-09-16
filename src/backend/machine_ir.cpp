@@ -1294,7 +1294,7 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
         case MachineOpcode::Vmad: {
             if (instruction.subop() > 3) { out.error = "invalid machine VMAD lane profile"; return false; }
             const uint16_t config = instruction.config();
-            if (config & ~0x001fu) { out.error = "invalid machine VMAD config"; return false; }
+            if (config & ~0x007fu) { out.error = "invalid machine VMAD config"; return false; }
             usse::VmadSemantic mad{};
             usse::RegisterRef gpi0_reg{}, gpi1_reg{};
             if (!resolve_register_value(instruction.dst, MachineType::F32, out.value_registers, &mad.dst) ||
@@ -1310,7 +1310,8 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 out.error = "machine VMAD pair was not allocated to GPI aliases";
                 return false;
             }
-            mad.vec4 = true;
+            mad.vec4 = (config & 0x0020u)==0;
+            mad.gpi0_one3_extended = (config & 0x0040u)!=0;
             mad.repeat_mode = usse::RepeatMode::Slmsi;
             mad.skip_invalid = true;
             mad.write_mask = static_cast<uint8_t>(config & 0x0f);

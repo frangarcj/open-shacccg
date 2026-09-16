@@ -616,6 +616,19 @@ int test_usse() {
             decoded.dst.bank!=RegisterBank::Temp || decoded.dst.num!=60)
             failures += fail("SDK 3.0 exp2-fog extended VMAD3 mismatch");
     }
+    {
+        VmadSemantic add_rgb{};
+        add_rgb.dst={RegisterBank::Temp,60}; add_rgb.src1={RegisterBank::PrimaryAttribute,0};
+        add_rgb.gpi0=0; add_rgb.gpi1=0; add_rgb.write_mask=7; add_rgb.vec4=false;
+        add_rgb.gpi0_one3_extended=true; add_rgb.no_schedule=true;
+        uint64_t word=0;
+        VmadSemantic decoded{};
+        if (!encode_vmad_semantic(add_rgb,&word) || word!=0x18a18b848f1d0100ULL ||
+            !decode_vmad_semantic(word,&decoded) || !decoded.gpi0_one3_extended || decoded.vec4 ||
+            decoded.dst.bank!=RegisterBank::Temp || decoded.dst.num!=60 ||
+            decoded.src1.bank!=RegisterBank::PrimaryAttribute || decoded.src1.num!=0)
+            failures += fail("SDK 3.0 texture-combine GPI0=111 VMAD3 mismatch");
+    }
 
     // Semantic VMAD: reconstruct the complete four-instruction matrix path.
     const uint64_t matrix_words[] = {

@@ -273,6 +273,10 @@ struct VmadSemantic {
     // hardware meaning of this control bit is intentionally left unnamed.
     bool control_bit_53 = true;
     bool src1_negative = false;
+    // SDK 3.0 VMAD3 extended GPI0 swizzle code 7 = 111. This turns the
+    // validated texture-combine VMAD into src1 + gpi1 while keeping the
+    // underlying extended-swizzle encoding out of Machine/profile code.
+    bool gpi0_one3_extended = false;
     // Validated VMAD3 extended GPI1 swizzle code 6 = 000 (fourth lane unused).
     bool gpi1_zero3_extended = false;
     RepeatMode repeat_mode = RepeatMode::Slmsi;

@@ -864,7 +864,12 @@ bool encode_vmad_semantic(const VmadSemantic &i, uint64_t *word) {
     VmadFields f{};
     if (!encode_dest_bank(i.dst.bank,&f.dest_bank,&f.dest_bank_ext) || !encode_src1_bank(i.src1.bank,&f.src1_bank,&f.src1_bank_ext)) return false;
     uint8_t g0=0,g1=0,s1=0;
-    if (!encode_std_swizzle(i.gpi0_swizzle,&g0) || !encode_std_swizzle(i.src1_swizzle,&s1)) return false;
+    if (i.gpi0_one3_extended) {
+        if (i.vec4) return false;
+        g0=7;
+        f.gpi0_swizzle_ext=true;
+    } else if (!encode_std_swizzle(i.gpi0_swizzle,&g0)) return false;
+    if (!encode_std_swizzle(i.src1_swizzle,&s1)) return false;
     if (i.gpi1_zero3_extended) {
         if (i.vec4) return false;
         g1=6;
@@ -882,12 +887,16 @@ bool decode_vmad_semantic(uint64_t word, VmadSemantic *i) {
     if (!i) return false; VmadFields f{}; if (!decode_vmad(word,&f)) return false;
     // Semantic v1 deliberately supports the non-extended forms used by the
     // validated matrix/fog profiles plus SDK 3.0's single VMAD3 GPI1=000 form.
-    if (f.gpi0_swizzle_ext || f.src1_swizzle_ext || f.gpi0_abs ||
-        f.gpi0_neg || f.gpi1_abs || f.gpi1_neg || f.src1_abs) return false;
+    if (f.src1_swizzle_ext || f.gpi0_abs || f.gpi0_neg ||
+        f.gpi1_abs || f.gpi1_neg || f.src1_abs) return false;
+    if (f.gpi0_swizzle_ext && (f.opcode2 || f.gpi0_swizzle!=7)) return false;
     if (f.gpi1_swizzle_ext && (f.opcode2 || f.gpi1_swizzle!=6)) return false;
     if (!decode_dest_bank(f.dest_bank,f.dest_bank_ext,&i->dst.bank) || !decode_src1_bank(f.src1_bank,f.src1_bank_ext,&i->src1.bank)) return false;
     i->dst.num=f.dest_num; i->src1.num=f.src1_num; i->predicate=static_cast<Predicate>(f.pred); i->gpi0=f.gpi0_num; i->gpi1=f.gpi1_num; i->write_mask=f.write_mask;
-    i->gpi0_swizzle=decode_std_swizzle(f.gpi0_swizzle);
+    if (f.gpi0_swizzle_ext) {
+        i->gpi0_one3_extended=true;
+        i->gpi0_swizzle={{SwizzleChannel::One,SwizzleChannel::One,SwizzleChannel::One,SwizzleChannel::X}};
+    } else i->gpi0_swizzle=decode_std_swizzle(f.gpi0_swizzle);
     if (f.gpi1_swizzle_ext) {
         i->gpi1_zero3_extended=true;
         i->gpi1_swizzle={{SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::X}};

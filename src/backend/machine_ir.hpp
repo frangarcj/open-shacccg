@@ -184,8 +184,10 @@ constexpr uint16_t machine_bitwise_config(bool no_schedule = false, bool end = f
     return (no_schedule ? 0x0001u : 0u) | (end ? 0x0002u : 0u);
 }
 
-constexpr uint16_t machine_vmad_config(uint8_t write_mask, bool no_schedule = false) {
-    return (write_mask & 0x0f) | (no_schedule ? 0x0010 : 0);
+constexpr uint16_t machine_vmad_config(uint8_t write_mask, bool no_schedule = false,
+                                       bool vec3 = false, bool gpi0_one3_extended = false) {
+    return (write_mask & 0x0f) | (no_schedule ? 0x0010 : 0) |
+        (vec3 ? 0x0020 : 0) | (gpi0_one3_extended ? 0x0040 : 0);
 }
 
 constexpr uint16_t machine_vmad_uniform_mat4_config(bool no_schedule = false) {

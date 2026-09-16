@@ -157,6 +157,14 @@ The two- and three-texture vertex profiles require no ISA change at all: their
 matched SDK 3.0.0. Migrating only the v1.5 header/compiler fields makes the full
 images byte-identical as well (536 and 596 bytes on disk).
 
+The extended three-texture fragment tail needs a real SDK 3.0 ISA update. After
+pass1 replaces the earlier color, only TEXUNIT1/2 remain live; scalarizing just
+the unsupported `sampler2D[3]` declaration in the private oracle preserves the
+FFP DAG and reveals an 8-word combine. Open now matches it exactly: VPCK stages
+texture2 RGB, a VMAD3 with extended GPI0=`111` folds the RGB add, MIN/MAX clamp
+in place, alpha multiplies into T60.w, and one final VPCK writes COLOR. Both
+sampler-query slots are `0x0301`, including the v1.5 `0x30` iterator anchor.
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.

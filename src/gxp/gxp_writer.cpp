@@ -115,7 +115,8 @@ bool valid_desc(const ProgramImage &image) {
         (image.fragment_additional_inputs &&
          (image.type != ProgramType::Fragment ||
           (image.secondary_instruction_count && !v15_secondary_inputs) ||
-          image.fragment_interface_extension || image.fragment_primary_overlaps_interface)))
+          (image.fragment_interface_extension && image.secondary_instruction_count) ||
+          image.fragment_primary_overlaps_interface)))
         return false;
     if ((image.fragment_additional_input_records &&
          image.fragment_additional_input_records_size!=static_cast<size_t>(image.fragment_additional_inputs)*16u) ||
@@ -351,7 +352,8 @@ bool write_program(const ProgramImage &image, uint8_t *output, size_t capacity,
     if (image.fragment_secondary_prefix_word)
         binary::store<uint32_t>(output,l.interface_off+kInterfaceSize,image.fragment_secondary_prefix_word);
     if (image.fragment_interface_extension)
-        std::memcpy(output + l.interface_off + kInterfaceSize,
+        std::memcpy(output + l.interface_off + kInterfaceSize+
+                        static_cast<size_t>(image.fragment_additional_inputs)*16u,
                     image.fragment_interface_extension, 8);
     if (image.fragment_primary_prefix_word) {
         const size_t prefix=l.interface_off+kInterfaceSize+

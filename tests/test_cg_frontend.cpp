@@ -1177,10 +1177,27 @@ int test_cg_frontend() {
         } else {
             vsc::gxp::ProgramView view(combined.gxp.data(),combined.gxp.size());
             vsc::gxp::ParameterView tex1{},tex2{};
-            if (!view.valid() || view.flags()!=0x00080801 || view.primary_register_count()!=8 ||
-                view.secondary_register_count()!=0 || view.primary_instruction_count()!=9 ||
+            const uint64_t words[]={
+                0xfa44070000000000ULL,0xf800094000000000ULL,0x40c00d9caf818206ULL,
+                0x18a18b848f1d0100ULL,0x08a51b841f045f01ULL,0x08a50b841f046f00ULL,
+                0x08841400af2480c1ULL,0x40810d7e2019bc00ULL,
+            };
+            const auto primary=view.primary_program();
+            const auto query=view.sampler_query_info();
+            uint16_t query1=0,query2=0;
+            if (query.size>=6) {
+                std::memcpy(&query1,query.data+2,sizeof(query1));
+                std::memcpy(&query2,query.data+4,sizeof(query2));
+            }
+            if (!view.valid() || combined.gxp.size()!=352 || view.logical_size()!=350 ||
+                view.minor_version()!=5 || view.sdk_version()!=0x0300 || view.flags()!=0x00180801 ||
+                view.compiler_version_raw()!=0x00033a90 || view.primary_register_count()!=8 ||
+                view.secondary_register_count()!=0 || view.primary_instruction_count()!=8 ||
                 view.parameter_count()!=2 || !view.parameter(0,tex1) || !view.parameter(1,tex2) ||
-                tex1.category!=2 || tex1.resource_index!=1 || tex2.category!=2 || tex2.resource_index!=2)
+                tex1.category!=2 || tex1.resource_index!=1 || tex2.category!=2 || tex2.resource_index!=2 ||
+                query.size!=32 || query1!=0x0301 || query2!=0x0301 ||
+                primary.size!=sizeof(words) || std::memcmp(primary.data,words,sizeof(words))!=0 ||
+                combined.gxp.size()<=0xcc || combined.gxp[0xcc]!=0x30)
                 failures += fail("TEXUNIT1/2 semantic combine metadata mismatch");
         }
     }
