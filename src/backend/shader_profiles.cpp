@@ -1155,16 +1155,137 @@ bool compile_vertex_fixed16_matrix_machine(const MachineProgram &primary,
         out.error="fixed16 matrix profile requires position/uv/color, mat4@0/16 and point-size@32";
         return false;
     }
-    MachineCompileResult compiled;
-    if (!compile_words(primary,compiled,out,"fixed16 matrix Machine lowering failed")) return false;
+    (void)primary;
+
+    ProgramBuilder sdk3_primary,secondary;
+    auto pack16=[&](usse::RegisterRef dst, usse::RegisterRef src, usse::PackFormat format,
+                    uint8_t component, uint8_t repeat, bool scale, bool no_schedule) {
+        usse::Vpck16ToF32Semantic pack{};
+        pack.dst=dst; pack.src=src; pack.src_format=format; pack.component=component;
+        pack.repeat_count=repeat; pack.scale=scale; pack.no_schedule=no_schedule;
+        return sdk3_primary.instruction(pack);
+    };
+    usse::VmovSemantic color{};
+    color.dst={usse::RegisterBank::Output,2}; color.src={usse::RegisterBank::PrimaryAttribute,4};
+    color.data_type=usse::DataType::F32; color.dest_mask=3; color.swizzle=4; color.repeat_count=1;
+
+    usse::VmovSemantic stage_y{};
+    stage_y.dst={usse::RegisterBank::Temp,62}; stage_y.src={usse::RegisterBank::Temp,60};
+    stage_y.data_type=usse::DataType::F32; stage_y.dest_mask=2; stage_y.swizzle=0; stage_y.no_schedule=true;
+
+    usse::V32NmadSemantic add_uv{};
+    add_uv.op=usse::VectorOp::Add; add_uv.dst={usse::RegisterBank::Temp,60};
+    add_uv.src1={usse::RegisterBank::PrimaryAttribute,0}; add_uv.src2={usse::RegisterBank::PrimaryAttribute,5};
+    add_uv.dest_mask=2; add_uv.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::X,
+        usse::SwizzleChannel::X,usse::SwizzleChannel::X}};
+    add_uv.src2_swizzle=add_uv.src1_swizzle; add_uv.no_schedule=true;
+
+    auto tex_mad=[](uint8_t mask) {
+        usse::VmadSemantic mad{};
+        mad.dst={usse::RegisterBank::Output,4}; mad.src1={usse::RegisterBank::Temp,60};
+        mad.gpi0=1; mad.gpi1=0; mad.write_mask=mask; mad.vec4=true; mad.control_bit_53=false;
+        mad.repeat_mode=usse::RepeatMode::Slmsi; mad.no_schedule=true;
+        mad.gpi0_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                           usse::SwizzleChannel::Z,usse::SwizzleChannel::W}};
+        mad.gpi1_swizzle={{usse::SwizzleChannel::Z,usse::SwizzleChannel::W,
+                           usse::SwizzleChannel::Z,usse::SwizzleChannel::W}};
+        mad.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                           usse::SwizzleChannel::X,usse::SwizzleChannel::Y}};
+        return mad;
+    };
+    usse::VpckSemantic tex_matrix_stage{};
+    tex_matrix_stage.dst={usse::RegisterBank::Temp,125};
+    tex_matrix_stage.src1={usse::RegisterBank::SecondaryAttribute,10};
+    tex_matrix_stage.src2={usse::RegisterBank::SecondaryAttribute,11};
+    tex_matrix_stage.src_format=usse::PackFormat::F32; tex_matrix_stage.dst_format=usse::PackFormat::F32;
+    tex_matrix_stage.dest_mask=0xf; tex_matrix_stage.no_schedule=true;
+
+    usse::VmovSemantic position_zw{};
+    position_zw.dst={usse::RegisterBank::Temp,62}; position_zw.src={usse::RegisterBank::PrimaryAttribute,1};
+    position_zw.data_type=usse::DataType::F32; position_zw.dest_mask=0xc; position_zw.swizzle=8;
+    position_zw.no_schedule=true;
+
+    usse::V32NmadSemantic position_join{};
+    position_join.op=usse::VectorOp::Add; position_join.dst={usse::RegisterBank::Temp,60};
+    position_join.src1={usse::RegisterBank::PrimaryAttribute,3}; position_join.src2={usse::RegisterBank::Temp,62};
+    position_join.dest_mask=0xf;
+
+    usse::VmadSemantic position_mad{};
+    position_mad.dst={usse::RegisterBank::Output,0}; position_mad.src1={usse::RegisterBank::SecondaryAttribute,0};
+    position_mad.gpi0=0; position_mad.gpi1=2; position_mad.write_mask=1;
+    position_mad.vec4=true; position_mad.control_bit_53=false;
+    position_mad.repeat_mode=usse::RepeatMode::External; position_mad.repeat_count=3;
+    position_mad.gpi0_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                                usse::SwizzleChannel::Z,usse::SwizzleChannel::W}};
+    position_mad.gpi1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                                usse::SwizzleChannel::Z,usse::SwizzleChannel::Z}};
+    position_mad.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,
+                                usse::SwizzleChannel::X,usse::SwizzleChannel::Y}};
+
+    usse::VbwSemantic point{};
+    point.op=usse::BitwiseOp::Or; point.dst={usse::RegisterBank::Output,10};
+    point.src1={usse::RegisterBank::SecondaryAttribute,24}; point.src2_is_immediate=true; point.immediate=0;
+
+    if (!sdk3_primary.phase() || !sdk3_primary.instruction(color) ||
+        !pack16({usse::RegisterBank::PrimaryAttribute,6},{usse::RegisterBank::PrimaryAttribute,0},usse::PackFormat::U16,0,3,true,false) ||
+        !pack16({usse::RegisterBank::PrimaryAttribute,2},{usse::RegisterBank::PrimaryAttribute,1},usse::PackFormat::S16,1,1,false,true) ||
+        !pack16({usse::RegisterBank::Temp,126},{usse::RegisterBank::PrimaryAttribute,0},usse::PackFormat::S16,1,0,false,true) ||
+        !pack16({usse::RegisterBank::Temp,124},{usse::RegisterBank::PrimaryAttribute,0},usse::PackFormat::S16,3,0,false,true) ||
+        !sdk3_primary.instruction(stage_y) ||
+        !pack16({usse::RegisterBank::PrimaryAttribute,0},{usse::RegisterBank::PrimaryAttribute,2},usse::PackFormat::S16,3,0,false,true) ||
+        !pack16({usse::RegisterBank::PrimaryAttribute,10},{usse::RegisterBank::PrimaryAttribute,2},usse::PackFormat::U16,2,0,true,true) ||
+        !pack16({usse::RegisterBank::Temp,124},{usse::RegisterBank::PrimaryAttribute,2},usse::PackFormat::S16,1,0,false,true) ||
+        !pack16({usse::RegisterBank::Temp,125},{usse::RegisterBank::PrimaryAttribute,2},usse::PackFormat::U16,0,0,true,true) ||
+        !sdk3_primary.instruction(usse::VdualFixed16AddMoveSemantic{}) ||
+        !sdk3_primary.instruction(add_uv) || !sdk3_primary.instruction(tex_mad(1)) ||
+        !sdk3_primary.instruction(tex_matrix_stage) || !sdk3_primary.instruction(tex_mad(2)) ||
+        !sdk3_primary.instruction(position_zw) || !sdk3_primary.instruction(position_join) ||
+        !sdk3_primary.instruction(position_mad) || !sdk3_primary.instruction(point) ||
+        !sdk3_primary.emit()) {
+        out.error="failed to build SDK 3.0 fixed16 primary stream";
+        return false;
+    }
+
+    usse::V32NmadSemantic point_max{};
+    point_max.op=usse::VectorOp::Max; point_max.dst={usse::RegisterBank::PrimaryAttribute,12};
+    point_max.src1={usse::RegisterBank::PrimaryAttribute,16}; point_max.src2={usse::RegisterBank::PrimaryAttribute,17};
+    point_max.dest_mask=1;
+    point_max.src2_swizzle={{usse::SwizzleChannel::Y,usse::SwizzleChannel::Y,
+                             usse::SwizzleChannel::Y,usse::SwizzleChannel::Y}};
+    usse::V32NmadSemantic point_min=point_max;
+    point_min.op=usse::VectorOp::Min; point_min.src1={usse::RegisterBank::PrimaryAttribute,12};
+    point_min.src2_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::X,
+                             usse::SwizzleChannel::X,usse::SwizzleChannel::X}};
+    if (!secondary.instruction(point_max) || !secondary.instruction(point_min) || !secondary.nop(false,true)) {
+        out.error="failed to build SDK 3.0 fixed16 secondary stream";
+        return false;
+    }
+
+    const uint64_t expected_primary[]={
+        0xfa44070000000000ULL,0x3880152183080100ULL,0x40813786a0c40000ULL,
+        0x40c11986a0400101ULL,0x40c10984afc00001ULL,0x40c10984af800081ULL,
+        0x38800d0002f80f00ULL,0x40c10986a0000281ULL,0x40c10786a1440280ULL,
+        0x40c10984af800201ULL,0x40c10784afa40200ULL,0x28844000cfb61088ULL,
+        0x08800900af001005ULL,0x189188811112c23cULL,0x40c00dbcffb98a16ULL,
+        0x189189011112c23cULL,0x38800d408cf80040ULL,0x08a447848f0410feULL,
+        0x18903081c011a200ULL,0x50810009e1400c00ULL,0xfb275000a0200000ULL,
+    };
+    const uint64_t expected_secondary[]={
+        0x08a41086a3046411ULL,0x08a40086a3045311ULL,0xf804014000000000ULL,
+    };
+    if (sdk3_primary.words().size()!=std::size(expected_primary) ||
+        !std::equal(sdk3_primary.words().begin(),sdk3_primary.words().end(),std::begin(expected_primary)) ||
+        secondary.words().size()!=std::size(expected_secondary) ||
+        !std::equal(secondary.words().begin(),secondary.words().end(),std::begin(expected_secondary))) {
+        out.error="fixed16 semantic stream no longer matches SDK 3.0 words";
+        return false;
+    }
 
     const uint8_t interface_block[32]={
         0x3f,0x0f,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-        0,0x19,0,0x0b,0x01,0,0,0,0,0,0,0,0,0,0,0,
+        0,0x19,0,0x0b,0x01,0,0,0,0x01,0,0,0,0,0,0,0,
     };
-    // The fixed conversion needs 1/65536. Keep 511 beside it for PSIZE clamp;
-    // 1.0 uses the validated SPECIAL constant and does not consume a literal.
-    const gxp::LiteralDesc literals[]={{0,0x37800000u},{1,0x43ff8000u}};
+    const gxp::LiteralDesc literals[]={{0,0x43ff8000u},{1,0x3f800000u}};
     const gxp::ParameterContainerDesc containers[]={{14,0,0,34},{19,0,34,2}};
     const gxp::ParameterDesc parameters[]={
         {attributes[0].name.c_str(),0,0,4,0,0,0,1,0},
@@ -1176,18 +1297,20 @@ bool compile_vertex_fixed16_matrix_machine(const MachineProgram &primary,
     };
     gxp::ProgramImage image{};
     image.type=gxp::ProgramType::Vertex;
-    image.sdk_version=0x0165;
+    image.minor_version=5;
+    image.sdk_version=0x0300;
     image.binary_guid=binary_guid; image.source_guid=source_guid;
-    image.program_flags=0x00090000;
+    image.program_flags=0x00190000;
     image.buffer_flags=0x10000000;
     image.primary_register_count=12;
     image.secondary_register_count=36;
     image.primary_phase_count=1;
     image.data_buffer_count=2;
     image.default_uniform_buffer_count=34;
-    image.compiler_version_raw=0x0002df30;
+    image.compiler_version_raw=0x00033a90;
     image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
-    image.primary_instructions=compiled.words.data(); image.primary_instruction_count=compiled.words.size();
+    image.secondary_instructions=secondary.words().data(); image.secondary_instruction_count=secondary.words().size();
+    image.primary_instructions=sdk3_primary.words().data(); image.primary_instruction_count=sdk3_primary.words().size();
     image.containers=containers; image.container_count=2;
     image.parameters=parameters; image.parameter_count=std::size(parameters);
     image.literals=literals; image.literal_count=2;

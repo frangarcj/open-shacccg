@@ -165,6 +165,13 @@ texture2 RGB, a VMAD3 with extended GPI0=`111` folds the RGB add, MIN/MAX clamp
 in place, alpha multiplies into T60.w, and one final VPCK writes COLOR. Both
 sampler-query slots are `0x0301`, including the v1.5 `0x30` iterator anchor.
 
+The fixed-point halfword vertex path is also byte-identical to SDK 3.0.0 when
+the oracle is run with the exact SceShaccCgExt extension hook required for Cg
+`bit_cast`. Sony collapses the old 72-word generic bitcast/narrow expansion to
+21 primary instructions: repeated/scaled U16/S16->F32 VPCK unpack, one VADD+VMOV
+VDUAL, the existing matrix VMAD forms, and PSIZE output. The resulting real
+vitaGL image is 568 bytes with PA=12/SA=36 and compiler `0x00033a90`.
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.

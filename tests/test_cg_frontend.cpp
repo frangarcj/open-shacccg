@@ -947,15 +947,49 @@ int test_cg_frontend() {
         failures += fail("Cg unsigned int spelling did not normalize to glslang HLSL");
     if (!compile("float main(float a:TEXCOORD0):COLOR0{unsigned int x=bit_cast<unsigned int>(a);return (float)x;}", VSC_STAGE_FRAGMENT))
         failures += fail("Cg scalar bit_cast<unsigned int> did not normalize to HLSL asuint");
-    if (!compile_vertex_gxp(
+    {
+        static constexpr const char *source=
             "float fx(float v){return float(bit_cast<short2>(v).y)+"
             "float(bit_cast<unsigned short2>(v).x)*(1.0f/65536.0f);}"
             "void main(float4 p,float2 uv,float4 c,float2 out tc:TEXCOORD0,float4 out pos:POSITION,"
             "float4 out col:COLOR,float out ps:PSIZE,uniform float4x4 mvp,uniform float4x4 texmat[1],"
             "uniform float point_size){p=float4(fx(p.x),fx(p.y),fx(p.z),fx(p.w));"
             "uv=float2(fx(uv.x),fx(uv.y));pos=mul(mvp,p);tc=mul(texmat[0],float4(uv,0.f,1.f)).xy;"
-            "col=c;ps=point_size;}","fixed16-matrix-texcoord-color-psize"))
-        failures += fail("Cg packed fixed16 bit_cast vertex profile did not compile end to end");
+            "col=c;ps=point_size;}";
+        VscCompileRequest request{};
+        request.source_name="fixed16-matrix-texcoord-color-psize";
+        request.source=source; request.source_size=std::strlen(source);
+        request.entrypoint="main"; request.stage=VSC_STAGE_VERTEX;
+        VscCompileResult result{};
+        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.diagnostic_count==0;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            const uint64_t primary_words[]={
+                0xfa44070000000000ULL,0x3880152183080100ULL,0x40813786a0c40000ULL,
+                0x40c11986a0400101ULL,0x40c10984afc00001ULL,0x40c10984af800081ULL,
+                0x38800d0002f80f00ULL,0x40c10986a0000281ULL,0x40c10786a1440280ULL,
+                0x40c10984af800201ULL,0x40c10784afa40200ULL,0x28844000cfb61088ULL,
+                0x08800900af001005ULL,0x189188811112c23cULL,0x40c00dbcffb98a16ULL,
+                0x189189011112c23cULL,0x38800d408cf80040ULL,0x08a447848f0410feULL,
+                0x18903081c011a200ULL,0x50810009e1400c00ULL,0xfb275000a0200000ULL,
+            };
+            const uint64_t secondary_words[]={
+                0x08a41086a3046411ULL,0x08a40086a3045311ULL,0xf804014000000000ULL,
+            };
+            const auto primary=view.primary_program(),secondary=view.secondary_program();
+            ok=view.valid() && view.minor_version()==5 && view.sdk_version()==0x0300 &&
+                view.flags()==0x00190000 && view.primary_register_count()==12 &&
+                view.secondary_register_count()==36 && view.primary_instruction_count()==21 &&
+                view.secondary_instruction_count()==3 && view.literal_count()==2 &&
+                view.container_count()==2 && view.parameter_count()==6 &&
+                view.compiler_version_raw()==0x00033a90 &&
+                primary.size==sizeof(primary_words) && secondary.size==sizeof(secondary_words) &&
+                std::memcmp(primary.data,primary_words,sizeof(primary_words))==0 &&
+                std::memcmp(secondary.data,secondary_words,sizeof(secondary_words))==0;
+        }
+        if (!ok) failures += fail("Cg packed fixed16 bit_cast vertex profile did not reproduce SDK 3.0 codegen");
+        vsc_destroy_result(&request.allocator,&result);
+    }
     if (!compile("void f(float4 inout a){a+=1.f;} float4 main(float4 a:TEXCOORD0):COLOR0{f(a);return a;}", VSC_STAGE_FRAGMENT))
         failures += fail("Cg post-type inout qualifier normalization did not compile");
     if (!compile("float4 main(float4 p:POSITION,uniform float4x4 model,uniform float4x4 mvp):POSITION{"
