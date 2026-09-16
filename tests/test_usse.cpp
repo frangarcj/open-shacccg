@@ -869,6 +869,18 @@ int test_usse() {
         if (encode_vmad_semantic(clip,&word))
             failures += fail("unvalidated clip VMAD4 extended GPI1 neighbor was accepted");
     }
+    {
+        VmadSemantic decoded{};
+        uint64_t word=0;
+        if (!decode_vmad_semantic(0x18e3818540558041ULL,&decoded) ||
+            !decoded.gpi0_x10_extended || decoded.gpi0_one3_extended ||
+            !decoded.gpi1_zero3_extended || decoded.vec4 ||
+            !encode_vmad_semantic(decoded,&word) || word!=0x18e3818540558041ULL)
+            failures += fail("SDK 3.0 POLY VMAD3 x10/000 extended swizzle mismatch");
+        decoded.gpi0_x10_extended=false;
+        if (encode_vmad_semantic(decoded,&word))
+            failures += fail("POLY VMAD3 accepted missing x10 extended selector");
+    }
 
     // Semantic VMAD: reconstruct the complete four-instruction matrix path.
     const uint64_t matrix_words[] = {

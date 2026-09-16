@@ -330,6 +330,9 @@ struct VmadSemantic {
     // validated texture-combine VMAD into src1 + gpi1 while keeping the
     // underlying extended-swizzle encoding out of Machine/profile code.
     bool gpi0_one3_extended = false;
+    // SDK 3.0 POLY vertex uses VMAD3 extended GPI0 selector 5 = x10.
+    // The fourth semantic lane is unused by VMAD3 and canonicalized to X.
+    bool gpi0_x10_extended = false;
     // Validated VMAD3 extended GPI1 swizzle code 6 = 000 (fourth lane unused).
     bool gpi1_zero3_extended = false;
     // SDK 3.0 clip vertex independently uses the same extended selector 6 in
