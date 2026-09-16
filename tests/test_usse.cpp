@@ -617,6 +617,53 @@ int test_usse() {
             failures += fail("SDK 3.0 exp2-fog extended VMAD3 mismatch");
     }
     {
+        struct Probe {
+            uint64_t word;
+            RegisterBank dst_bank;
+            uint8_t dst;
+            RegisterBank src_bank;
+            uint8_t src;
+            PackFormat format;
+            uint8_t component;
+            uint8_t repeat;
+            bool scale;
+            bool no_schedule;
+        };
+        const Probe probes[]={
+            {0x40813786a0c40000ULL,RegisterBank::PrimaryAttribute,6,RegisterBank::PrimaryAttribute,0,PackFormat::U16,0,3,true,false},
+            {0x40c11986a0400101ULL,RegisterBank::PrimaryAttribute,2,RegisterBank::PrimaryAttribute,1,PackFormat::S16,1,1,false,true},
+            {0x40c10984afc00001ULL,RegisterBank::Temp,126,RegisterBank::PrimaryAttribute,0,PackFormat::S16,1,0,false,true},
+            {0x40c10984af800081ULL,RegisterBank::Temp,124,RegisterBank::PrimaryAttribute,0,PackFormat::S16,3,0,false,true},
+            {0x40c10986a0000281ULL,RegisterBank::PrimaryAttribute,0,RegisterBank::PrimaryAttribute,2,PackFormat::S16,3,0,false,true},
+            {0x40c10786a1440280ULL,RegisterBank::PrimaryAttribute,10,RegisterBank::PrimaryAttribute,2,PackFormat::U16,2,0,true,true},
+            {0x40c10984af800201ULL,RegisterBank::Temp,124,RegisterBank::PrimaryAttribute,2,PackFormat::S16,1,0,false,true},
+            {0x40c10784afa40200ULL,RegisterBank::Temp,125,RegisterBank::PrimaryAttribute,2,PackFormat::U16,0,0,true,true},
+        };
+        for (const auto &probe:probes) {
+            Vpck16ToF32Semantic pack{};
+            pack.dst={probe.dst_bank,probe.dst}; pack.src={probe.src_bank,probe.src};
+            pack.src_format=probe.format; pack.component=probe.component;
+            pack.repeat_count=probe.repeat; pack.scale=probe.scale; pack.no_schedule=probe.no_schedule;
+            uint64_t word=0;
+            Vpck16ToF32Semantic decoded{};
+            if (!encode_vpck16_to_f32_semantic(pack,&word) || word!=probe.word ||
+                !decode_vpck16_to_f32_semantic(word,&decoded) ||
+                decoded.dst.bank!=pack.dst.bank || decoded.dst.num!=pack.dst.num ||
+                decoded.src.bank!=pack.src.bank || decoded.src.num!=pack.src.num ||
+                decoded.src_format!=pack.src_format || decoded.component!=pack.component ||
+                decoded.repeat_count!=pack.repeat_count || decoded.scale!=pack.scale ||
+                decoded.no_schedule!=pack.no_schedule)
+                failures += fail("SDK 3.0 fixed16 VPCK semantic roundtrip mismatch");
+        }
+    }
+    {
+        uint64_t word=0;
+        VdualFixed16AddMoveSemantic decoded{};
+        if (!encode_vdual_fixed16_add_move_semantic({},&word) || word!=0x28844000cfb61088ULL ||
+            !decode_vdual_fixed16_add_move_semantic(word,&decoded))
+            failures += fail("SDK 3.0 fixed16 VADD/VMOV VDUAL mismatch");
+    }
+    {
         VmadSemantic add_rgb{};
         add_rgb.dst={RegisterBank::Temp,60}; add_rgb.src1={RegisterBank::PrimaryAttribute,0};
         add_rgb.gpi0=0; add_rgb.gpi1=0; add_rgb.write_mask=7; add_rgb.vec4=false;

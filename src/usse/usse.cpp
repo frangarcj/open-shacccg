@@ -391,6 +391,57 @@ bool decode_vpck_semantic(uint64_t word, VpckSemantic *i) {
     return true;
 }
 
+bool encode_vpck16_to_f32_semantic(const Vpck16ToF32Semantic &i, uint64_t *word) {
+    if (!word || (i.src_format!=PackFormat::U16 && i.src_format!=PackFormat::S16) ||
+        i.component>=4 || i.repeat_count>3 || i.dst.num>=128 || i.src.num>=64)
+        return false;
+    VpckFields f{};
+    if (!encode_dest_bank(i.dst.bank,&f.dest_bank,&f.dest_bank_ext) ||
+        !encode_src1_bank(i.src.bank,&f.src1_bank,&f.src1_bank_ext) ||
+        !encode_src1_bank(RegisterBank::Immediate,&f.src2_bank,&f.src2_bank_ext))
+        return false;
+    f.pred=static_cast<uint8_t>(Predicate::Always);
+    f.skip_invalid=i.skip_invalid;
+    f.no_schedule=i.no_schedule;
+    f.repeat_count=i.repeat_count;
+    f.src_format=static_cast<uint8_t>(i.src_format);
+    f.dest_format=static_cast<uint8_t>(PackFormat::F32);
+    f.dest_mask=1;
+    f.dest_num=i.dst.num;
+    f.scale=i.scale;
+    f.src1_num=i.src.num;
+    f.src2_num=0;
+    f.component0_bit0=(i.component&1u)!=0;
+    f.component0_bit1=(i.component&2u)!=0;
+    return encode_vpck(f,word);
+}
+
+bool decode_vpck16_to_f32_semantic(uint64_t word, Vpck16ToF32Semantic *i) {
+    if (!i) return false;
+    VpckFields f{};
+    if (!decode_vpck(word,&f) || f.pred!=static_cast<uint8_t>(Predicate::Always) ||
+        !f.skip_invalid || f.unknown || f.sync_start || f.end || f.repeat_count>3 ||
+        (f.src_format!=static_cast<uint8_t>(PackFormat::U16) &&
+         f.src_format!=static_cast<uint8_t>(PackFormat::S16)) ||
+        f.dest_format!=static_cast<uint8_t>(PackFormat::F32) || f.dest_mask!=1 ||
+        f.component1 || f.component2 || f.component3 || f.src2_num!=0)
+        return false;
+    RegisterBank src2{};
+    if (!decode_dest_bank(f.dest_bank,f.dest_bank_ext,&i->dst.bank) ||
+        !decode_src1_bank(f.src1_bank,f.src1_bank_ext,&i->src.bank) ||
+        !decode_src1_bank(f.src2_bank,f.src2_bank_ext,&src2) || src2!=RegisterBank::Immediate)
+        return false;
+    i->dst.num=f.dest_num;
+    i->src.num=f.src1_num;
+    i->src_format=static_cast<PackFormat>(f.src_format);
+    i->component=static_cast<uint8_t>((f.component0_bit1?2u:0u)|(f.component0_bit0?1u:0u));
+    i->repeat_count=f.repeat_count;
+    i->scale=f.scale;
+    i->skip_invalid=f.skip_invalid;
+    i->no_schedule=f.no_schedule;
+    return true;
+}
+
 
 namespace {
 uint16_t pack_swizzle(const Swizzle4 &s) {
@@ -857,6 +908,16 @@ bool encode_vdual_f32_exp_move_semantic(const VdualF32ExpMoveSemantic &, uint64_
 
 bool decode_vdual_f32_exp_move_semantic(uint64_t word, VdualF32ExpMoveSemantic *i) {
     return i && word==0x20c54000a0150480ULL;
+}
+
+bool encode_vdual_fixed16_add_move_semantic(const VdualFixed16AddMoveSemantic &, uint64_t *word) {
+    if (!word) return false;
+    *word=0x28844000cfb61088ULL;
+    return true;
+}
+
+bool decode_vdual_fixed16_add_move_semantic(uint64_t word, VdualFixed16AddMoveSemantic *i) {
+    return i && word==0x28844000cfb61088ULL;
 }
 
 bool encode_vmad_semantic(const VmadSemantic &i, uint64_t *word) {

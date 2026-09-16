@@ -99,6 +99,21 @@ struct VpckSemantic {
     bool end = false;
 };
 
+// SDK 3.0 fixed-point vertex unpack. Sony lowers packed 16.16 inputs through
+// repeated/scaled U16/S16 -> F32 VPCK forms before the ordinary matrix path.
+// Keep this separate from generic VPCK until broader integer-pack component
+// aliasing is independently characterized.
+struct Vpck16ToF32Semantic {
+    RegisterRef dst{};
+    RegisterRef src{};
+    PackFormat src_format = PackFormat::S16;
+    uint8_t component = 0;
+    uint8_t repeat_count = 0;
+    bool scale = false;
+    bool skip_invalid = true;
+    bool no_schedule = true;
+};
+
 
 // F32 vector arithmetic operation encoded by V32NMAD.
 enum class VectorOp : uint8_t { Mul = 0, Add = 1, Frac = 2, Ddx = 3, Ddy = 4, Min = 5, Max = 6, Dot = 7 };
@@ -251,6 +266,11 @@ struct VdualF32MulMoveSemantic {};
 // SDK 3.0.0 sRGB dual issue: the validated scalar FEXP plus vector VMOV form.
 // Kept narrow until another VDUAL configuration is independently captured.
 struct VdualF32ExpMoveSemantic {};
+
+// SDK 3.0 fixed 16.16 conversion dual issue. Vita3K's public decoder identifies
+// this encoding as an F32 VADD paired with a VMOV. The exact operand layout is
+// intentionally kept narrow until another use of this dual form is observed.
+struct VdualFixed16AddMoveSemantic {};
 
 enum class RepeatMode : uint8_t { External=0, Internal=1, Both=2, Slmsi=3 };
 
@@ -710,6 +730,8 @@ bool encode_nop_semantic(const NopSemantic &instruction, uint64_t *word);
 bool decode_nop_semantic(uint64_t word, NopSemantic *instruction);
 bool encode_vpck_semantic(const VpckSemantic &instruction, uint64_t *word);
 bool decode_vpck_semantic(uint64_t word, VpckSemantic *instruction);
+bool encode_vpck16_to_f32_semantic(const Vpck16ToF32Semantic &instruction, uint64_t *word);
+bool decode_vpck16_to_f32_semantic(uint64_t word, Vpck16ToF32Semantic *instruction);
 bool encode_v32nmad_semantic(const V32NmadSemantic &instruction, uint64_t *word);
 bool decode_v32nmad_semantic(uint64_t word, V32NmadSemantic *instruction);
 bool encode_vcomp_rcp_f32_semantic(const VcompRcpF32Semantic &instruction, uint64_t *word);
@@ -740,6 +762,8 @@ bool encode_vdual_f32_mul_move_semantic(const VdualF32MulMoveSemantic &, uint64_
 bool decode_vdual_f32_mul_move_semantic(uint64_t word, VdualF32MulMoveSemantic *instruction);
 bool encode_vdual_f32_exp_move_semantic(const VdualF32ExpMoveSemantic &, uint64_t *word);
 bool decode_vdual_f32_exp_move_semantic(uint64_t word, VdualF32ExpMoveSemantic *instruction);
+bool encode_vdual_fixed16_add_move_semantic(const VdualFixed16AddMoveSemantic &, uint64_t *word);
+bool decode_vdual_fixed16_add_move_semantic(uint64_t word, VdualFixed16AddMoveSemantic *instruction);
 bool encode_vmad_semantic(const VmadSemantic &instruction, uint64_t *word);
 bool decode_vmad_semantic(uint64_t word, VmadSemantic *instruction);
 bool encode_vtst_semantic(const VtstSemantic &instruction, uint64_t *word);
@@ -764,6 +788,7 @@ inline bool encode_semantic(const VmovcF32LtZeroSemantic &i, uint64_t *word) { r
 inline bool encode_semantic(const PhaseSemantic &i, uint64_t *word) { return encode_phase_semantic(i, word); }
 inline bool encode_semantic(const NopSemantic &i, uint64_t *word) { return encode_nop_semantic(i, word); }
 inline bool encode_semantic(const VpckSemantic &i, uint64_t *word) { return encode_vpck_semantic(i, word); }
+inline bool encode_semantic(const Vpck16ToF32Semantic &i, uint64_t *word) { return encode_vpck16_to_f32_semantic(i, word); }
 inline bool encode_semantic(const V32NmadSemantic &i, uint64_t *word) { return encode_v32nmad_semantic(i, word); }
 inline bool encode_semantic(const VcompRcpF32Semantic &i, uint64_t *word) { return encode_vcomp_rcp_f32_semantic(i, word); }
 inline bool encode_semantic(const VcompRcpScalarF32Semantic &i, uint64_t *word) { return encode_vcomp_rcp_scalar_f32_semantic(i, word); }
@@ -779,6 +804,7 @@ inline bool encode_semantic(const Vmad2F32ScalarMadSemantic &i, uint64_t *word) 
 inline bool encode_semantic(const Vmad2F32Semantic &i, uint64_t *word) { return encode_vmad2_f32_semantic(i, word); }
 inline bool encode_semantic(const VdualF32MulMoveSemantic &i, uint64_t *word) { return encode_vdual_f32_mul_move_semantic(i, word); }
 inline bool encode_semantic(const VdualF32ExpMoveSemantic &i, uint64_t *word) { return encode_vdual_f32_exp_move_semantic(i, word); }
+inline bool encode_semantic(const VdualFixed16AddMoveSemantic &i, uint64_t *word) { return encode_vdual_fixed16_add_move_semantic(i, word); }
 inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return encode_vmad_semantic(i, word); }
 inline bool encode_semantic(const VtstSemantic &i, uint64_t *word) { return encode_vtst_semantic(i, word); }
 inline bool encode_semantic(const VtstF32Semantic &i, uint64_t *word) { return encode_vtst_f32_semantic(i, word); }
