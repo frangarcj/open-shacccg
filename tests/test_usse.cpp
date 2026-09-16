@@ -710,6 +710,17 @@ int test_usse() {
             failures += fail("SDK 3.0 Phong FRCP/VMOV VDUAL mismatch");
     }
     {
+        uint64_t word=0;
+        VdualSmoothF32DotMoveSemantic dot_decoded{};
+        VdualSmoothF32ReciprocalMulSemantic rcp_decoded{};
+        if (!encode_vdual_smooth_f32_dot_move_semantic({},&word) || word!=0x2084111210140088ULL ||
+            !decode_vdual_smooth_f32_dot_move_semantic(word,&dot_decoded))
+            failures += fail("SDK 3.0 smooth VDP/VMOV VDUAL mismatch");
+        if (!encode_vdual_smooth_f32_reciprocal_mul_semantic({},&word) || word!=0x208071002f8c10fdULL ||
+            !decode_vdual_smooth_f32_reciprocal_mul_semantic(word,&rcp_decoded))
+            failures += fail("SDK 3.0 smooth FRCP/VMUL VDUAL mismatch");
+    }
+    {
         SmlsiSemantic swizzled{};
         swizzled.src1_inc_mode=true; swizzled.src2_inc_mode=true;
         swizzled.src1_inc=2; swizzled.src2_inc=2;
