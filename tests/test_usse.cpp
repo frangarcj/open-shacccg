@@ -793,6 +793,15 @@ int test_usse() {
     KillSemantic kill_dec{};
     if (!decode_kill_semantic(kill_words[0],&kill_dec) || kill_dec.predicate!=Predicate::P1)
         failures += fail("semantic KILL decode mismatch");
+    KillSemantic kill30{};
+    kill30.predicate=Predicate::P1;
+    kill30.control_payload=0x306;
+    uint64_t kill30_word=0;
+    KillSemantic kill30_dec{};
+    if (!encode_kill_semantic(kill30,&kill30_word) || kill30_word!=0xf9300406f0000306ULL ||
+        !decode_kill_semantic(kill30_word,&kill30_dec) || kill30_dec.predicate!=Predicate::P1 ||
+        kill30_dec.control_payload!=0x306)
+        failures += fail("SDK 3.0 KILL control payload mismatch");
     kill.predicate=Predicate::P2;
     if (encode_kill_semantic(kill,&kill_word))
         failures += fail("KILL accepted predicate unavailable in short form");

@@ -116,6 +116,13 @@ metadata and USSE. The preserved public v1.4 binaries remain historical decoder
 and compatibility fixtures. Sony GUID generation remains unknown and open-shacccg
 currently emits zero there.
 
+The vitaGL FFP fidelity sweep uses the same SDK 3.0.0 oracle. Direct texture,
+texture-tint, point-sprite and alpha-test fragment shapes are byte-identical to
+their oracle equivalents. The private Unicorn runner still hits Sony diagnostic
+403 on `sampler2D[N]` parameters; scalarizing a constant sampler element to its
+equivalent TEXUNIT binding produces the same GXP and is used only to isolate
+oracle behavior, not as an OpenShaccCg source rewrite.
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.

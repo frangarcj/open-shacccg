@@ -1893,6 +1893,7 @@ bool compile_fragment_texture_tint_alpha_discard(const IrUniformFloat &cut,
     alpha_test.lane=1;
     usse::KillSemantic kill{};
     kill.predicate=usse::Predicate::P1;
+    kill.control_payload=0x306;
     usse::NopSemantic barrier{};
     barrier.no_schedule=false;
     barrier.end=true;
@@ -1914,7 +1915,7 @@ bool compile_fragment_texture_tint_alpha_discard(const IrUniformFloat &cut,
     }
     const uint64_t expected_primary[]={
         0xfa44010000000000ULL,0x08a44186e0040040ULL,0x08c0418ae0440081ULL,
-        0x4888c915b0038080ULL,0xf9300406f0000000ULL,0xf804014000000000ULL,
+        0x4888c915b0038080ULL,0xf9300406f0000306ULL,0xf804014000000000ULL,
         0xfa44070000000000ULL,0x40800d7ea0198002ULL,
     };
     if (primary.words().size()!=std::size(expected_primary) ||
@@ -1928,6 +1929,7 @@ bool compile_fragment_texture_tint_alpha_discard(const IrUniformFloat &cut,
         4,0,0,0,0,0xf9,0,0,0,0,0,0,0xc0,0,0,0,
     };
     const uint8_t extension[8]={0x30,0,0,0,0,0,0,0};
+    const uint16_t sampler_query_info[16]={0x0301};
     const gxp::ParameterContainerDesc containers[]={{14,0,0,6},{19,0,6,1}};
     const gxp::LiteralDesc literals[]={{0,0x0000e000u}};
     const gxp::ParameterDesc parameters[]={
@@ -1937,10 +1939,11 @@ bool compile_fragment_texture_tint_alpha_discard(const IrUniformFloat &cut,
     };
     gxp::ProgramImage image{};
     image.type=gxp::ProgramType::Fragment;
-    image.sdk_version=0x0165;
+    image.minor_version=5;
+    image.sdk_version=0x0300;
     image.binary_guid=binary_guid;
     image.source_guid=source_guid;
-    image.program_flags=0x00080809;
+    image.program_flags=0x00180809;
     image.buffer_flags=0x10000000;
     image.texunit_flags[0]=1;
     image.primary_register_count=4;
@@ -1948,12 +1951,14 @@ bool compile_fragment_texture_tint_alpha_discard(const IrUniformFloat &cut,
     image.primary_phase_count=2;
     image.data_buffer_count=1;
     image.default_uniform_buffer_count=6;
-    image.compiler_version_raw=0x0002df30;
+    image.compiler_version_raw=0x00033a90;
     image.interface_block=interface_block;
     image.interface_block_size=sizeof(interface_block);
     image.fragment_interface_extension=extension;
     image.fragment_interface_extension_size=sizeof(extension);
     image.fragment_primary_prefix_word=6;
+    image.sampler_query_info=sampler_query_info;
+    image.sampler_query_info_count=16;
     image.primary_instructions=primary.words().data();
     image.primary_instruction_count=primary.words().size();
     image.containers=containers;

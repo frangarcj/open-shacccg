@@ -91,7 +91,11 @@ Related texture cleanup:
 2. `TextureTint2D` and its `SPRITECOORD` variant now also follow SDK 3.0.0
    byte-for-byte: sampler query `0x0301`, SA=4, one uniform container, and the
    VPCK/VPCK/V16NMAD multiply-pack stream selected by the newer compiler.
-3. Generalize predicated scalar/component selection only when another real
+3. The alpha-test texture/tint profile now follows SDK 3.0.0 as well. The
+   control stream is unchanged except for Sony's opaque KILL payload `0x306`;
+   v1.5 metadata adds the `0x0301` sampler-query table and compiler version
+   `0x00033a90`.
+4. Generalize predicated scalar/component selection only when another real
    shader needs it; do not replace the exact CMP shape with branch-heavy generic
    select lowering.
 

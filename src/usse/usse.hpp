@@ -308,6 +308,9 @@ struct VbwSemantic {
 
 struct KillSemantic {
     Predicate predicate = Predicate::Always;
+    // Opaque low control payload. SDK 1.6.5 emits zero for the validated KILL
+    // form; SDK 3.0.0 emits 0x306 with the same predicate semantics.
+    uint32_t control_payload = 0;
 };
 
 // Evidence-backed control BR form captured from the original SceShaccCg 1.6.5

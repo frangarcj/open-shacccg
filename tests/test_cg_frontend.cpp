@@ -255,21 +255,25 @@ bool compile_texture_tint_alpha_discard_profile() {
     request.stage=VSC_STAGE_FRAGMENT;
     VscCompileResult result{};
     const int rc=vsc_compile(&request,&result);
-    bool ok=rc==0 && result.gxp_data && result.gxp_size==348 && result.diagnostic_count==0;
+    bool ok=rc==0 && result.gxp_data && result.gxp_size==384 && result.diagnostic_count==0;
     if (ok) {
         const uint64_t words[]={
             0xfa44010000000000ULL,0x08a44186e0040040ULL,0x08c0418ae0440081ULL,
-            0x4888c915b0038080ULL,0xf9300406f0000000ULL,0xf804014000000000ULL,
+            0x4888c915b0038080ULL,0xf9300406f0000306ULL,0xf804014000000000ULL,
             0xfa44070000000000ULL,0x40800d7ea0198002ULL,
         };
         vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
         vsc::gxp::ParameterView cut{},tint{},tex{};
         const auto primary=view.primary_program();
-        ok=view.valid() && view.logical_size()==345 && view.sdk_version()==0x0165 &&
-            view.flags()==0x00080809 && view.primary_register_count()==4 &&
+        const auto query=view.sampler_query_info();
+        uint16_t query0=0;
+        if (query.size>=sizeof(query0)) std::memcpy(&query0,query.data,sizeof(query0));
+        ok=view.valid() && view.logical_size()==381 && view.minor_version()==5 && view.sdk_version()==0x0300 &&
+            view.flags()==0x00180809 && view.primary_register_count()==4 &&
             view.secondary_register_count()==7 && view.primary_instruction_count()==8 &&
             view.secondary_instruction_count()==0 && view.literal_count()==1 &&
             view.container_count()==2 && view.parameter_count()==3 &&
+            view.compiler_version_raw()==0x00033a90 && query.size==32 && query0==0x0301 &&
             primary.size==sizeof(words) && std::memcmp(primary.data,words,sizeof(words))==0 &&
             view.parameter(0,cut) && cut.name=="cut" && cut.category==1 && cut.component_count==1 &&
             cut.container_index==14 && cut.resource_index==0 &&

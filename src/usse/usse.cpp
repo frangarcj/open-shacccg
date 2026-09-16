@@ -1062,8 +1062,10 @@ bool decode_short_predicate(uint8_t short_predicate, Predicate *predicate) {
 } // namespace
 
 bool encode_kill_semantic(const KillSemantic &i, uint64_t *word) {
+    if (!word || i.control_payload > 0x0fffffffu) return false;
     KillFields f{};
     if (!encode_short_predicate(i.predicate,&f.short_predicate)) return false;
+    f.dontcare_payload=i.control_payload;
     return encode_kill(f,word);
 }
 
@@ -1071,7 +1073,9 @@ bool decode_kill_semantic(uint64_t word, KillSemantic *i) {
     if (!i) return false;
     KillFields f{};
     if (!decode_kill(word,&f)) return false;
-    return decode_short_predicate(f.short_predicate,&i->predicate);
+    if (!decode_short_predicate(f.short_predicate,&i->predicate)) return false;
+    i->control_payload=f.dontcare_payload;
+    return true;
 }
 
 namespace {
