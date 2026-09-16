@@ -698,6 +698,16 @@ bool decode_v16nmad_mul_pack_f32_semantic(uint64_t word, V16NmadMulPackF32Semant
     return i && word==0x10a4478600040f7cULL;
 }
 
+bool encode_v16nmad_phong_fragment_max_semantic(const V16NmadPhongFragmentMaxSemantic &, uint64_t *word) {
+    if (!word) return false;
+    *word=0x10a4078600046f3dULL;
+    return true;
+}
+
+bool decode_v16nmad_phong_fragment_max_semantic(uint64_t word, V16NmadPhongFragmentMaxSemantic *i) {
+    return i && word==0x10a4078600046f3dULL;
+}
+
 bool encode_v16nmad_dot_splat_f32_semantic(const V16NmadDotSplatF32Semantic &i, uint64_t *word) {
     if (!word) return false;
     if (i.components==2) *word=0x10c0418a00047f7cULL;
