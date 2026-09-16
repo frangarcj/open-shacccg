@@ -664,6 +664,34 @@ int test_usse() {
             failures += fail("SDK 3.0 fixed16 VADD/VMOV VDUAL mismatch");
     }
     {
+        uint64_t word=0;
+        VdualF32DotMoveSemantic dot_decoded{};
+        VdualF32ReciprocalMoveSemantic rcp_decoded{};
+        if (!encode_vdual_f32_dot_move_semantic({},&word) || word!=0x28c41511e0160b8cULL ||
+            !decode_vdual_f32_dot_move_semantic(word,&dot_decoded))
+            failures += fail("SDK 3.0 Phong VDP/VMOV VDUAL mismatch");
+        if (!encode_vdual_f32_reciprocal_move_semantic({},&word) || word!=0x28847000ef950096ULL ||
+            !decode_vdual_f32_reciprocal_move_semantic(word,&rcp_decoded))
+            failures += fail("SDK 3.0 Phong FRCP/VMOV VDUAL mismatch");
+    }
+    {
+        SmlsiSemantic swizzled{};
+        swizzled.src1_inc_mode=true; swizzled.src2_inc_mode=true;
+        swizzled.src1_inc=2; swizzled.src2_inc=2;
+        SmlsiSemantic linear{};
+        uint64_t word=0;
+        SmlsiSemantic decoded{};
+        if (!encode_smlsi_semantic(swizzled,&word) || word!=0xfa14000301010202ULL ||
+            !decode_smlsi_semantic(word,&decoded) || !decoded.no_schedule ||
+            decoded.src1_inc_mode!=true || decoded.src2_inc_mode!=true ||
+            decoded.dest_inc!=1 || decoded.src0_inc!=1 || decoded.src1_inc!=2 || decoded.src2_inc!=2)
+            failures += fail("SDK 3.0 Phong SMLSI swizzled increment mismatch");
+        if (!encode_smlsi_semantic(linear,&word) || word!=0xfa14000001010101ULL ||
+            !decode_smlsi_semantic(word,&decoded) || decoded.src1_inc_mode || decoded.src2_inc_mode ||
+            decoded.dest_inc!=1 || decoded.src0_inc!=1 || decoded.src1_inc!=1 || decoded.src2_inc!=1)
+            failures += fail("SDK 3.0 Phong SMLSI linear increment mismatch");
+    }
+    {
         VmadSemantic add_rgb{};
         add_rgb.dst={RegisterBank::Temp,60}; add_rgb.src1={RegisterBank::PrimaryAttribute,0};
         add_rgb.gpi0=0; add_rgb.gpi1=0; add_rgb.write_mask=7; add_rgb.vec4=false;

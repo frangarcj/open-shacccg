@@ -272,6 +272,30 @@ struct VdualF32ExpMoveSemantic {};
 // intentionally kept narrow until another use of this dual form is observed.
 struct VdualFixed16AddMoveSemantic {};
 
+// SDK 3.0 Phong-lighting dual issue forms. Public Vita3K decoding identifies
+// these as VDP+VMOV and FRCP+VMOV respectively. Keep the exact source layout
+// narrow until another shader proves a broader dual encoding.
+struct VdualF32DotMoveSemantic {};
+struct VdualF32ReciprocalMoveSemantic {};
+
+// SMLSI controls repeat-register increments for later vector instructions.
+// These fields follow the public USSE bit layout directly while keeping raw
+// bit positions out of shader profiles.
+struct SmlsiSemantic {
+    bool no_schedule = true;
+    uint8_t temp_limit = 0;
+    uint8_t primary_limit = 0;
+    uint8_t secondary_limit = 0;
+    bool dest_inc_mode = false;
+    bool src0_inc_mode = false;
+    bool src1_inc_mode = false;
+    bool src2_inc_mode = false;
+    uint8_t dest_inc = 1;
+    uint8_t src0_inc = 1;
+    uint8_t src1_inc = 1;
+    uint8_t src2_inc = 1;
+};
+
 enum class RepeatMode : uint8_t { External=0, Internal=1, Both=2, Slmsi=3 };
 
 // VMAD is a three-input FMA where two inputs are GPI/FP-internal registers.
@@ -764,6 +788,12 @@ bool encode_vdual_f32_exp_move_semantic(const VdualF32ExpMoveSemantic &, uint64_
 bool decode_vdual_f32_exp_move_semantic(uint64_t word, VdualF32ExpMoveSemantic *instruction);
 bool encode_vdual_fixed16_add_move_semantic(const VdualFixed16AddMoveSemantic &, uint64_t *word);
 bool decode_vdual_fixed16_add_move_semantic(uint64_t word, VdualFixed16AddMoveSemantic *instruction);
+bool encode_vdual_f32_dot_move_semantic(const VdualF32DotMoveSemantic &, uint64_t *word);
+bool decode_vdual_f32_dot_move_semantic(uint64_t word, VdualF32DotMoveSemantic *instruction);
+bool encode_vdual_f32_reciprocal_move_semantic(const VdualF32ReciprocalMoveSemantic &, uint64_t *word);
+bool decode_vdual_f32_reciprocal_move_semantic(uint64_t word, VdualF32ReciprocalMoveSemantic *instruction);
+bool encode_smlsi_semantic(const SmlsiSemantic &, uint64_t *word);
+bool decode_smlsi_semantic(uint64_t word, SmlsiSemantic *instruction);
 bool encode_vmad_semantic(const VmadSemantic &instruction, uint64_t *word);
 bool decode_vmad_semantic(uint64_t word, VmadSemantic *instruction);
 bool encode_vtst_semantic(const VtstSemantic &instruction, uint64_t *word);
@@ -805,6 +835,9 @@ inline bool encode_semantic(const Vmad2F32Semantic &i, uint64_t *word) { return 
 inline bool encode_semantic(const VdualF32MulMoveSemantic &i, uint64_t *word) { return encode_vdual_f32_mul_move_semantic(i, word); }
 inline bool encode_semantic(const VdualF32ExpMoveSemantic &i, uint64_t *word) { return encode_vdual_f32_exp_move_semantic(i, word); }
 inline bool encode_semantic(const VdualFixed16AddMoveSemantic &i, uint64_t *word) { return encode_vdual_fixed16_add_move_semantic(i, word); }
+inline bool encode_semantic(const VdualF32DotMoveSemantic &i, uint64_t *word) { return encode_vdual_f32_dot_move_semantic(i, word); }
+inline bool encode_semantic(const VdualF32ReciprocalMoveSemantic &i, uint64_t *word) { return encode_vdual_f32_reciprocal_move_semantic(i, word); }
+inline bool encode_semantic(const SmlsiSemantic &i, uint64_t *word) { return encode_smlsi_semantic(i, word); }
 inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return encode_vmad_semantic(i, word); }
 inline bool encode_semantic(const VtstSemantic &i, uint64_t *word) { return encode_vtst_semantic(i, word); }
 inline bool encode_semantic(const VtstF32Semantic &i, uint64_t *word) { return encode_vtst_f32_semantic(i, word); }

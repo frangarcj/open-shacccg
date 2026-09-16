@@ -920,6 +920,64 @@ bool decode_vdual_fixed16_add_move_semantic(uint64_t word, VdualFixed16AddMoveSe
     return i && word==0x28844000cfb61088ULL;
 }
 
+bool encode_vdual_f32_dot_move_semantic(const VdualF32DotMoveSemantic &, uint64_t *word) {
+    if (!word) return false;
+    *word=0x28c41511e0160b8cULL;
+    return true;
+}
+
+bool decode_vdual_f32_dot_move_semantic(uint64_t word, VdualF32DotMoveSemantic *i) {
+    return i && word==0x28c41511e0160b8cULL;
+}
+
+bool encode_vdual_f32_reciprocal_move_semantic(const VdualF32ReciprocalMoveSemantic &, uint64_t *word) {
+    if (!word) return false;
+    *word=0x28847000ef950096ULL;
+    return true;
+}
+
+bool decode_vdual_f32_reciprocal_move_semantic(uint64_t word, VdualF32ReciprocalMoveSemantic *i) {
+    return i && word==0x28847000ef950096ULL;
+}
+
+bool encode_smlsi_semantic(const SmlsiSemantic &i, uint64_t *word) {
+    if (!word || i.temp_limit>=16 || i.primary_limit>=16 || i.secondary_limit>=16)
+        return false;
+    uint64_t v=0xfa10000000000000ULL;
+    v|=static_cast<uint64_t>(i.no_schedule)<<50;
+    v|=static_cast<uint64_t>(i.temp_limit)<<44;
+    v|=static_cast<uint64_t>(i.primary_limit)<<40;
+    v|=static_cast<uint64_t>(i.secondary_limit)<<36;
+    v|=static_cast<uint64_t>(i.dest_inc_mode)<<35;
+    v|=static_cast<uint64_t>(i.src0_inc_mode)<<34;
+    v|=static_cast<uint64_t>(i.src1_inc_mode)<<33;
+    v|=static_cast<uint64_t>(i.src2_inc_mode)<<32;
+    v|=static_cast<uint64_t>(i.dest_inc)<<24;
+    v|=static_cast<uint64_t>(i.src0_inc)<<16;
+    v|=static_cast<uint64_t>(i.src1_inc)<<8;
+    v|=static_cast<uint64_t>(i.src2_inc);
+    *word=v;
+    return true;
+}
+
+bool decode_smlsi_semantic(uint64_t word, SmlsiSemantic *i) {
+    if (!i || (word&~0x0004ffffffffffffULL)!=0xfa10000000000000ULL)
+        return false;
+    i->no_schedule=((word>>50)&1u)!=0;
+    i->temp_limit=static_cast<uint8_t>((word>>44)&0xfu);
+    i->primary_limit=static_cast<uint8_t>((word>>40)&0xfu);
+    i->secondary_limit=static_cast<uint8_t>((word>>36)&0xfu);
+    i->dest_inc_mode=((word>>35)&1u)!=0;
+    i->src0_inc_mode=((word>>34)&1u)!=0;
+    i->src1_inc_mode=((word>>33)&1u)!=0;
+    i->src2_inc_mode=((word>>32)&1u)!=0;
+    i->dest_inc=static_cast<uint8_t>((word>>24)&0xffu);
+    i->src0_inc=static_cast<uint8_t>((word>>16)&0xffu);
+    i->src1_inc=static_cast<uint8_t>((word>>8)&0xffu);
+    i->src2_inc=static_cast<uint8_t>(word&0xffu);
+    return true;
+}
+
 bool encode_vmad_semantic(const VmadSemantic &i, uint64_t *word) {
     if (!word || i.dst.num>=64 || i.src1.num>=64 || i.gpi0>=4 || i.gpi1>=4 || i.write_mask>=16 || i.repeat_count>=4) return false;
     VmadFields f{};
