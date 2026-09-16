@@ -93,6 +93,7 @@ using VmadEncoding = Encoding<0xf800000000000000ULL, 0x1800000000000000ULL,
 
 using VtstEncoding = Encoding<0xf800000000000000ULL, 0x4800000000000000ULL,
     VSC_FIELD(VtstFields, pred, 56, 3), VSC_FIELD(VtstFields, skip_invalid, 55, 1),
+    VSC_FIELD(VtstFields, control_bit_54, 54, 1),
     VSC_FIELD(VtstFields, once_only, 53, 1), VSC_FIELD(VtstFields, sync_start, 52, 1),
     VSC_FIELD(VtstFields, dest_ext, 51, 1), VSC_FIELD(VtstFields, src1_negative, 50, 1),
     VSC_FIELD(VtstFields, src1_ext, 49, 1), VSC_FIELD(VtstFields, src2_ext, 48, 1),

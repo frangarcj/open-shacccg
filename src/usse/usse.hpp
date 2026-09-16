@@ -370,9 +370,11 @@ struct VtstF32LaneLessScalarSemantic {
     RegisterRef vector_lane{};
     RegisterRef scalar{};
     Predicate predicate = Predicate::Always;
+    CompareOp op = CompareOp::Less;
     uint8_t predicate_destination = 0;
     uint8_t lane = 0; // x/y lane within `vector_lane`
     bool skip_invalid = true;
+    bool control_bit_54 = false;
 };
 
 // Oracle-validated signed-32 loop compare. The first supported form is the
@@ -577,6 +579,7 @@ struct VmadFields {
 struct VtstFields {
     uint8_t pred = 0;
     bool skip_invalid = false;
+    bool control_bit_54 = false;
     bool once_only = false;
     bool sync_start = false;
     bool dest_ext = false;

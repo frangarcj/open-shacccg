@@ -1163,20 +1163,29 @@ bool decode_vtst_f32_semantic(uint64_t word, VtstF32Semantic *i) {
 bool encode_vtst_f32_lane_less_scalar_semantic(const VtstF32LaneLessScalarSemantic &i,
                                                 uint64_t *word) {
     if (!word || i.vector_lane.num>=128 || i.scalar.num>=128 ||
-        i.predicate_destination>=4 || i.lane>=2) return false;
+        i.predicate_destination>=4 || i.lane>=2 ||
+        (i.op!=CompareOp::Less && i.op!=CompareOp::NotEqual)) return false;
     VtstFields f{};
     if (!encode_src1_bank(i.vector_lane.bank,&f.src1_bank,&f.src1_ext) ||
         !encode_src1_bank(i.scalar.bank,&f.src2_bank,&f.src2_ext)) return false;
     f.pred=static_cast<uint8_t>(i.predicate);
     f.skip_invalid=i.skip_invalid;
+    f.control_bit_54=i.control_bit_54;
     f.dest_ext=true;
     f.precision=true;
     f.src2_vector_scalar_component=true;
-    // The vector/scalar VTST profile implements logical `lane < scalar` with
-    // the observed reversed subtract test: zero=1/sign=2/crcomb=OR.
-    f.zero_test=1;
-    f.sign_test=2;
-    f.test_crcomb_and=false;
+    if (i.op==CompareOp::Less) {
+        // The vector/scalar less-than profile uses the observed reversed
+        // subtract test: zero=1/sign=2/crcomb=OR.
+        f.zero_test=1;
+        f.sign_test=2;
+        f.test_crcomb_and=false;
+    } else {
+        // Smooth-lighting SDK 3.0 uses vector/scalar VSUB != 0.
+        f.zero_test=2;
+        f.sign_test=0;
+        f.test_crcomb_and=true;
+    }
     f.channel=i.lane;
     f.predicate_destination=i.predicate_destination;
     f.dest_bank=1;
@@ -1196,8 +1205,12 @@ bool decode_vtst_f32_lane_less_scalar_semantic(uint64_t word,
     if (!decode_vtst(word,&f) || !f.dest_ext || f.dest_bank!=1 || f.dest_num!=0 ||
         f.test_write_enable || f.alu_select!=0 || f.alu_op!=14 || !f.precision ||
         f.src1_negative || !f.src2_vector_scalar_component || f.repeat_count!=0 ||
-        f.once_only || f.sync_start || f.channel>=2 || f.zero_test!=1 ||
-        f.sign_test!=2 || f.test_crcomb_and) return false;
+        f.once_only || f.sync_start || f.channel>=2) return false;
+    if (f.zero_test==1 && f.sign_test==2 && !f.test_crcomb_and)
+        i->op=CompareOp::Less;
+    else if (f.zero_test==2 && f.sign_test==0 && f.test_crcomb_and)
+        i->op=CompareOp::NotEqual;
+    else return false;
     if (!decode_src1_bank(f.src1_bank,f.src1_ext,&i->vector_lane.bank) ||
         !decode_src1_bank(f.src2_bank,f.src2_ext,&i->scalar.bank)) return false;
     i->vector_lane.num=f.src1_num;
@@ -1206,6 +1219,7 @@ bool decode_vtst_f32_lane_less_scalar_semantic(uint64_t word,
     i->predicate_destination=f.predicate_destination;
     i->lane=f.channel;
     i->skip_invalid=f.skip_invalid;
+    i->control_bit_54=f.control_bit_54;
     return true;
 }
 
@@ -1250,7 +1264,6 @@ bool decode_vtst_s32_semantic(uint64_t word, VtstS32Semantic *i) {
     i->rhs.num=f.src2_num;
     i->predicate=static_cast<Predicate>(f.pred);
     i->predicate_destination=f.predicate_destination;
-    i->op=CompareOp::Less;
     i->skip_invalid=f.skip_invalid;
     return true;
 }

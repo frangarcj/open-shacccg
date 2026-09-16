@@ -617,6 +617,23 @@ int test_usse() {
             failures += fail("SDK 3.0 exp2-fog extended VMAD3 mismatch");
     }
     {
+        VtstF32LaneLessScalarSemantic cmp{};
+        cmp.vector_lane={RegisterBank::SecondaryAttribute,31};
+        cmp.scalar={RegisterBank::Special,0};
+        cmp.op=CompareOp::NotEqual;
+        cmp.lane=1;
+        cmp.control_bit_54=true;
+        uint64_t word=0;
+        VtstF32LaneLessScalarSemantic decoded{};
+        if (!encode_vtst_f32_lane_less_scalar_semantic(cmp,&word) ||
+            word!=0x48c9c291d0038f80ULL ||
+            !decode_vtst_f32_lane_less_scalar_semantic(word,&decoded) ||
+            decoded.op!=CompareOp::NotEqual || decoded.vector_lane.bank!=RegisterBank::SecondaryAttribute ||
+            decoded.vector_lane.num!=31 || decoded.scalar.bank!=RegisterBank::Special ||
+            decoded.scalar.num!=0 || decoded.lane!=1 || !decoded.control_bit_54)
+            failures += fail("SDK 3.0 smooth-lighting vector/scalar != VTST mismatch");
+    }
+    {
         struct Probe {
             uint64_t word;
             RegisterBank dst_bank;
