@@ -207,6 +207,18 @@ issues, `skip_invalid=false` VMAX value-VTST, and the final V16NMAD VMAX output.
 Reflection matches Sony's reordered uniform layout, with global ambient at word
 12 and the light ambient/diffuse/specular vectors at words 0/4/8.
 
+The one-plane `clip_wvp` vertex path now uses the SDK 3.0 schedule as well. The
+private Unicorn oracle still reports diagnostic 403 on the original vitaGL form
+because it contains several one-element aggregates (`CLP0[1]`, clip-plane and
+texture-matrix arrays). Scalarizing only those size-1 aggregates while preserving
+the active DAG, names and resource footprint produces a stable SDK 3.0 reference:
+872-byte v1.5 GXP, 43 primary + 12 secondary instructions, PA=12/SA=64 and flags
+`0x00190004`. The unmodified vitaGL source in OpenShaccCg now emits a byte-identical
+image to that equivalent reference, including matrices at words 0/16/32, clip
+plane at 48, point size at 52 and the two observed literal slots. The final ISA
+gap was a fail-closed VMAD4 form writing CLP0 with extended GPI1 selector 6; its
+semantic encoder accepts only the captured OUT5.y/PA0 configuration.
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.

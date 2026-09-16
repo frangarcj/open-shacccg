@@ -1718,11 +1718,29 @@ void main(float4 Nposition, float2 Otexcoord0, float4 Pcolor,
                 0x01,0x19,0,0x0c,0x01,0,0,0,0,0,0,0,0,0,0,0,
             };
             const auto varying=view.varyings();
-            ok=view.valid() && view.flags()==0x00090002 && view.primary_register_count()==12 &&
-                view.parameter_count()==8 && varying.size==sizeof(expected_interface) &&
-                std::memcmp(varying.data,expected_interface,sizeof(expected_interface))==0;
+            const auto primary=view.primary_program();
+            const auto secondary=view.secondary_program();
+            vsc::gxp::ParameterView clip{},modelview{},point{};
+            uint64_t clip_mad=0,secondary_first=0,secondary_last=0;
+            if (primary.size>=43*8) std::memcpy(&clip_mad,primary.data+35*8,8);
+            if (secondary.size>=12*8) {
+                std::memcpy(&secondary_first,secondary.data,8);
+                std::memcpy(&secondary_last,secondary.data+11*8,8);
+            }
+            ok=view.valid() && result.gxp_size==872 && view.logical_size()==872 &&
+                view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00190004 &&
+                view.primary_register_count()==12 && view.secondary_register_count()==64 &&
+                view.primary_instruction_count()==43 && view.secondary_instruction_count()==12 &&
+                view.parameter_count()==8 && view.container_count()==2 &&
+                view.compiler_version_raw()==0x00033a90 && varying.size==sizeof(expected_interface) &&
+                std::memcmp(varying.data,expected_interface,sizeof(expected_interface))==0 &&
+                view.parameter(3,clip) && clip.name=="Hclip_planes_eq" && clip.resource_index==48 &&
+                view.parameter(4,modelview) && modelview.name=="Imodelview" && modelview.resource_index==0 &&
+                view.parameter(7,point) && point.name=="Mpoint_size" && point.resource_index==52 &&
+                clip_mad==0x18d189018151a200ULL && secondary_first==0x5081000aa7800000ULL &&
+                secondary_last==0x40840d8ea543050fULL;
         }
-        if (!ok) failures += fail("Cg CLP0 one-element array profile did not compile with validated interface");
+        if (!ok) failures += fail("Cg CLP0 one-element array profile did not reproduce SDK 3.0 clip contract");
         vsc_destroy_result(&request.allocator,&result);
     }
     {
