@@ -1321,196 +1321,112 @@ bool compile_vertex_fixed16_matrix(const std::vector<IrAttribute> &attributes,
     return true;
 }
 
-bool compile_vertex_matrix_normal_multivarying_point_size(
+bool compile_vertex_multivarying_machine(
+    const MachineProgram &primary,
     const std::vector<IrAttribute> &attributes,
-    const IrMatrix4Uniform &modelview, const IrMatrix4Uniform &projection,
-    const IrMatrix4Uniform &texcoord_matrix, const IrMatrix3Uniform &normal_matrix,
-    const IrUniformFloat &point_size,
+    const std::vector<IrUniformFloat> &uniforms,
+    const std::vector<IrMatrix4Uniform> &matrices,
+    const IrMatrix3Uniform &normal_matrix,
+    const std::vector<IrLiteralF32> &literal_values,
     uint32_t binary_guid, uint32_t source_guid, IrCompileResult &out) {
     out={};
-    if (attributes.size()!=7 || modelview.name.empty() || projection.name.empty() ||
-        texcoord_matrix.name.empty() || normal_matrix.name.empty() || point_size.name.empty() ||
-        point_size.components!=1) {
-        out.error="matrix-normal multivarying profile requires seven attributes and complete uniform metadata";
+    if (attributes.size()!=7 || matrices.size()!=3 || normal_matrix.name.empty()) {
+        out.error="multivarying vertex profile requires seven attributes, three mat4s and one mat3";
         return false;
     }
     const uint8_t expected_components[]={4,2,4,4,4,4,3};
+    uint32_t primary_words=0;
     for (size_t i=0;i<attributes.size();++i) {
         if (!valid_attribute(attributes[i]) || attributes[i].resource_index!=i*4u ||
             attributes[i].components!=expected_components[i]) {
-            out.error="matrix-normal multivarying attributes do not match the validated FFP layout";
+            out.error="multivarying vertex attributes do not match the validated interface layout";
             return false;
         }
+        primary_words=std::max(primary_words,attributes[i].resource_index+4u);
+    }
+    uint32_t uniform_words=normal_matrix.resource_index+12u;
+    for (const auto &matrix:matrices) {
+        if (matrix.name.empty() || (matrix.resource_index&1u)) {
+            out.error="multivarying mat4 metadata is invalid";
+            return false;
+        }
+        uniform_words=std::max(uniform_words,matrix.resource_index+16u);
+    }
+    for (const auto &uniform:uniforms) {
+        if (uniform.name.empty() || uniform.components<1 || uniform.components>4) {
+            out.error="multivarying uniform metadata is invalid";
+            return false;
+        }
+        uniform_words=std::max<uint32_t>(uniform_words,uniform.resource_index+uniform.components);
+    }
+    uniform_words=(uniform_words+1u)&~1u;
+    if (uniform_words>0xffffu || uniform_words+literal_values.size()>0xffffu) {
+        out.error="multivarying secondary-attribute footprint is too large";
+        return false;
     }
 
-    ProgramBuilder primary,secondary;
-    using namespace usse;
-    // primary 00 fa44070000000000
-    if(!primary.phase()) return false;
-    // primary 01 3880152183080100
-    { VmovSemantic x{}; x.dst={RegisterBank::Output,2}; x.src={RegisterBank::PrimaryAttribute,4}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x3; x.swizzle=4; x.repeat_count=1; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!primary.instruction(x)) return false; }
-    // primary 02 3880352183200180
-    { VmovSemantic x{}; x.dst={RegisterBank::Output,8}; x.src={RegisterBank::PrimaryAttribute,6}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x3; x.swizzle=4; x.repeat_count=3; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!primary.instruction(x)) return false; }
-    // primary 03 38801d2183300280
-    { VmovSemantic x{}; x.dst={RegisterBank::Output,12}; x.src={RegisterBank::PrimaryAttribute,10}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x3; x.swizzle=4; x.repeat_count=1; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
-    // primary 04 40c00d9caf818c1a
-    { VpckSemantic x{}; x.dst={RegisterBank::Temp,124}; x.src1={RegisterBank::PrimaryAttribute,12}; x.src2={RegisterBank::PrimaryAttribute,13}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0x7; x.components[0]=0; x.components[1]=1; x.components[2]=2; x.components[3]=0; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
-    // primary 05 18802880cf51a210
-    { VmadSemantic x{}; x.dst={RegisterBank::Temp,61}; x.src1={RegisterBank::SecondaryAttribute,16}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=false; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::External; x.repeat_count=2; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 06 fa14000301010202
-    { SmlsiSemantic x{}; x.no_schedule=true; x.temp_limit=0; x.primary_limit=0; x.secondary_limit=0; x.dest_inc_mode=false; x.src0_inc_mode=false; x.src1_inc_mode=true; x.src2_inc_mode=true; x.dest_inc=1; x.src0_inc=1; x.src1_inc=2; x.src2_inc=2; if(!primary.instruction(x)) return false; }
-    // primary 07 50c1000ae1801900
-    { VbwSemantic x{}; x.op=BitwiseOp::Or; x.dst={RegisterBank::PrimaryAttribute,12}; x.src1={RegisterBank::SecondaryAttribute,50}; x.src2={RegisterBank::Invalid,0}; x.predicate=Predicate::Always; x.src2_is_immediate=true; x.immediate=0x0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
-    // primary 08 38800d0ac2180140
-    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,6}; x.src={RegisterBank::SecondaryAttribute,5}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x2; x.swizzle=1; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
-    // primary 09 40c00dbcff998812
-    { VpckSemantic x{}; x.dst={RegisterBank::Temp,124}; x.src1={RegisterBank::SecondaryAttribute,8}; x.src2={RegisterBank::SecondaryAttribute,9}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0xf; x.components[0]=0; x.components[1]=1; x.components[2]=2; x.components[3]=3; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
-    // primary 10 18919882c0d1a220
-    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,3}; x.src1={RegisterBank::SecondaryAttribute,32}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=1; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 11 18918882c111a219
-    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,4}; x.src1={RegisterBank::SecondaryAttribute,25}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 12 38800d22c31406c0
-    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,5}; x.src={RegisterBank::SecondaryAttribute,27}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x3; x.swizzle=4; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
-    // primary 13 189189028111a203
-    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,4}; x.src1={RegisterBank::PrimaryAttribute,3}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 14 40c00dbcff99860e
-    { VpckSemantic x{}; x.dst={RegisterBank::Temp,124}; x.src1={RegisterBank::SecondaryAttribute,6}; x.src2={RegisterBank::SecondaryAttribute,7}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0xf; x.components[0]=0; x.components[1]=1; x.components[2]=2; x.components[3]=3; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
-    // primary 15 18919880cf91a220
-    { VmadSemantic x{}; x.dst={RegisterBank::Temp,62}; x.src1={RegisterBank::SecondaryAttribute,32}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=1; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 16 fa14000001010101
-    { SmlsiSemantic x{}; x.no_schedule=true; x.temp_limit=0; x.primary_limit=0; x.secondary_limit=0; x.dest_inc_mode=false; x.src0_inc_mode=false; x.src1_inc_mode=false; x.src2_inc_mode=false; x.dest_inc=1; x.src0_inc=1; x.src1_inc=1; x.src2_inc=1; if(!primary.instruction(x)) return false; }
-    // primary 17 18918a00cf91a21b
-    { VmadSemantic x{}; x.dst={RegisterBank::Temp,62}; x.src1={RegisterBank::SecondaryAttribute,27}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x4; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 18 18918c008f91a205
-    { VmadSemantic x{}; x.dst={RegisterBank::Temp,62}; x.src1={RegisterBank::PrimaryAttribute,5}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x8; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 19 40c00dbcaf998002
-    { VpckSemantic x{}; x.dst={RegisterBank::Temp,124}; x.src1={RegisterBank::PrimaryAttribute,0}; x.src2={RegisterBank::PrimaryAttribute,1}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0xf; x.components[0]=0; x.components[1]=1; x.components[2]=2; x.components[3]=3; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
-    // primary 20 28c41511e0160b8c
-    if(!primary.instruction(VdualF32DotMoveSemantic{})) return false;
-    // primary 21 189189018011a203
-    { VmadSemantic x{}; x.dst={RegisterBank::Output,0}; x.src1={RegisterBank::PrimaryAttribute,3}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 22 18918882e011a222
-    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,0}; x.src1={RegisterBank::SecondaryAttribute,34}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 23 18918902e011a220
-    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,0}; x.src1={RegisterBank::SecondaryAttribute,32}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 24 18918882e051a21b
-    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,1}; x.src1={RegisterBank::SecondaryAttribute,27}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 25 18918902a051a205
-    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,1}; x.src1={RegisterBank::PrimaryAttribute,5}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 26 189188818051a200
-    { VmadSemantic x{}; x.dst={RegisterBank::Output,1}; x.src1={RegisterBank::PrimaryAttribute,0}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 27 40c00dbcffd98e1e
-    { VpckSemantic x{}; x.dst={RegisterBank::Temp,126}; x.src1={RegisterBank::SecondaryAttribute,14}; x.src2={RegisterBank::SecondaryAttribute,15}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0xf; x.components[0]=0; x.components[1]=1; x.components[2]=2; x.components[3]=3; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
-    // primary 28 18918882e011a222
-    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,0}; x.src1={RegisterBank::SecondaryAttribute,34}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 29 18918902e011a220
-    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,0}; x.src1={RegisterBank::SecondaryAttribute,32}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 30 18918882e051a21b
-    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,1}; x.src1={RegisterBank::SecondaryAttribute,27}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 31 18918902a051a205
-    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,1}; x.src1={RegisterBank::PrimaryAttribute,5}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 32 189189018051a200
-    { VmadSemantic x{}; x.dst={RegisterBank::Output,1}; x.src1={RegisterBank::PrimaryAttribute,0}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 33 18902882c011a200
-    { VmadSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,0}; x.src1={RegisterBank::SecondaryAttribute,0}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::External; x.repeat_count=2; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 34 18918880cf11a206
-    { VmadSemantic x{}; x.dst={RegisterBank::Temp,60}; x.src1={RegisterBank::SecondaryAttribute,6}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 35 28847000ef950096
-    if(!primary.instruction(VdualF32ReciprocalMoveSemantic{})) return false;
-    // primary 36 18e18981a1c18140
-    { VmadSemantic x{}; x.dst={RegisterBank::Output,7}; x.src1={RegisterBank::PrimaryAttribute,0}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=0; x.write_mask=0x3; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}}; x.src1_swizzle={{SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W,SwizzleChannel::W}}; x.gpi1_swizzle={{SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::X}}; x.vec4=false; x.control_bit_53=true; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=true; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 37 18e18901a1818000
-    { VmadSemantic x{}; x.dst={RegisterBank::Output,6}; x.src1={RegisterBank::PrimaryAttribute,0}; x.predicate=Predicate::Always; x.gpi0=2; x.gpi1=0; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}}; x.gpi1_swizzle={{SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::X}}; x.vec4=false; x.control_bit_53=true; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=true; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 38 189188818112c202
-    { VmadSemantic x{}; x.dst={RegisterBank::Output,4}; x.src1={RegisterBank::PrimaryAttribute,2}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=0; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::Z,SwizzleChannel::W,SwizzleChannel::Z,SwizzleChannel::W}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 39 40c00dbcff999832
-    { VpckSemantic x{}; x.dst={RegisterBank::Temp,124}; x.src1={RegisterBank::SecondaryAttribute,24}; x.src2={RegisterBank::SecondaryAttribute,25}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0xf; x.components[0]=0; x.components[1]=1; x.components[2]=2; x.components[3]=3; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
-    // primary 40 189189018112c202
-    { VmadSemantic x{}; x.dst={RegisterBank::Output,4}; x.src1={RegisterBank::PrimaryAttribute,2}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=0; x.write_mask=0x2; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::Z,SwizzleChannel::W,SwizzleChannel::Z,SwizzleChannel::W}}; x.vec4=true; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 41 188188801f11a23d
-    { VmadSemantic x{}; x.dst={RegisterBank::Temp,60}; x.src1={RegisterBank::Temp,61}; x.predicate=Predicate::Always; x.gpi0=1; x.gpi1=2; x.write_mask=0x1; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::X,SwizzleChannel::Y}}; x.gpi1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}}; x.vec4=false; x.control_bit_53=false; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=false; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 42 30800a000f803e01
-    { VcompF32Semantic x{}; x.op=ComplexOp::Rsqrt; x.dst={RegisterBank::Temp,124}; x.src={RegisterBank::Temp,124}; x.src_component=0; x.dest_mask=0x1; x.skip_invalid=true; x.no_schedule=true; x.end=false; if(!primary.instruction(x)) return false; }
-    // primary 43 18e181810141813d
-    { VmadSemantic x{}; x.dst={RegisterBank::Output,5}; x.src1={RegisterBank::Temp,61}; x.predicate=Predicate::Always; x.gpi0=0; x.gpi1=0; x.write_mask=0x3; x.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}}; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.gpi1_swizzle={{SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::Zero,SwizzleChannel::X}}; x.vec4=false; x.control_bit_53=true; x.src1_negative=false; x.gpi0_one3_extended=false; x.gpi1_zero3_extended=true; x.repeat_mode=RepeatMode::Slmsi; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; if(!primary.instruction(x)) return false; }
-    // primary 44 08800881018d0f7c
-    { V32NmadSemantic x{}; x.op=VectorOp::Mul; x.dst={RegisterBank::Output,6}; x.src1={RegisterBank::Temp,61}; x.src2={RegisterBank::Temp,60}; x.dest_mask=0x1; x.src1_swizzle={{SwizzleChannel::Z,SwizzleChannel::W,SwizzleChannel::X,SwizzleChannel::X}}; x.src2_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}}; x.src1_negative=false; x.src1_absolute=false; x.src2_absolute=false; x.skip_invalid=true; x.no_schedule=true; if(!primary.instruction(x)) return false; }
-    // primary 45 08a41084ff04679f
-    { V32NmadSemantic x{}; x.op=VectorOp::Max; x.dst={RegisterBank::Temp,60}; x.src1={RegisterBank::SecondaryAttribute,30}; x.src2={RegisterBank::SecondaryAttribute,31}; x.dest_mask=0x1; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src2_swizzle={{SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y}}; x.src1_negative=false; x.src1_absolute=false; x.src2_absolute=false; x.skip_invalid=true; x.no_schedule=false; if(!primary.instruction(x)) return false; }
-    // primary 46 08a4008533845f1f
-    { V32NmadSemantic x{}; x.op=VectorOp::Min; x.dst={RegisterBank::Output,14}; x.src1={RegisterBank::Temp,60}; x.src2={RegisterBank::SecondaryAttribute,31}; x.dest_mask=0x1; x.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}}; x.src2_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}}; x.src1_negative=false; x.src1_absolute=false; x.src2_absolute=false; x.skip_invalid=true; x.no_schedule=false; if(!primary.instruction(x)) return false; }
-    // primary 47 fb275000a0200000
-    if(!primary.emit()) return false;
-    // secondary 00 5081000aa8800000
-    { VbwSemantic x{}; x.op=BitwiseOp::Or; x.dst={RegisterBank::PrimaryAttribute,68}; x.src1={RegisterBank::PrimaryAttribute,0}; x.src2={RegisterBank::Invalid,0}; x.predicate=Predicate::Always; x.src2_is_immediate=true; x.immediate=0x0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
-    // secondary 01 3880050282880080
-    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,34}; x.src={RegisterBank::PrimaryAttribute,2}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x2; x.swizzle=0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
-    // secondary 02 5081000aa8c00400
-    { VbwSemantic x{}; x.op=BitwiseOp::Or; x.dst={RegisterBank::PrimaryAttribute,70}; x.src1={RegisterBank::PrimaryAttribute,8}; x.src2={RegisterBank::Invalid,0}; x.predicate=Predicate::Always; x.src2_is_immediate=true; x.immediate=0x0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
-    // secondary 03 38800502828c0180
-    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,35}; x.src={RegisterBank::PrimaryAttribute,6}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x2; x.swizzle=0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
-    // secondary 04 40800d8ea8030005
-    { VpckSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,64}; x.src1={RegisterBank::PrimaryAttribute,0}; x.src2={RegisterBank::PrimaryAttribute,2}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0x3; x.components[0]=1; x.components[1]=3; x.components[2]=0; x.components[3]=0; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
-    // secondary 05 40800d8ea843040d
-    { VpckSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,66}; x.src1={RegisterBank::PrimaryAttribute,4}; x.src2={RegisterBank::PrimaryAttribute,6}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0x3; x.components[0]=1; x.components[1]=3; x.components[2]=0; x.components[3]=0; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
-    // secondary 06 5081000aa6c00100
-    { VbwSemantic x{}; x.op=BitwiseOp::Or; x.dst={RegisterBank::PrimaryAttribute,54}; x.src1={RegisterBank::PrimaryAttribute,2}; x.src2={RegisterBank::Invalid,0}; x.predicate=Predicate::Always; x.src2_is_immediate=true; x.immediate=0x0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
-    // secondary 07 38800502826c00c0
-    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,27}; x.src={RegisterBank::PrimaryAttribute,3}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x2; x.swizzle=0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
-    // secondary 08 5081000aa7000500
-    { VbwSemantic x{}; x.op=BitwiseOp::Or; x.dst={RegisterBank::PrimaryAttribute,56}; x.src1={RegisterBank::PrimaryAttribute,10}; x.src2={RegisterBank::Invalid,0}; x.predicate=Predicate::Always; x.src2_is_immediate=true; x.immediate=0x0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
-    // secondary 09 38800502827001c0
-    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,28}; x.src={RegisterBank::PrimaryAttribute,7}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x2; x.swizzle=0; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
-    // secondary 10 40800d8ea7430107
-    { VpckSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,58}; x.src1={RegisterBank::PrimaryAttribute,1}; x.src2={RegisterBank::PrimaryAttribute,3}; x.src_format=PackFormat::F32; x.dst_format=PackFormat::F32; x.dest_mask=0x3; x.components[0]=1; x.components[1]=3; x.components[2]=0; x.components[3]=0; x.repeat_count=0; x.scale=false; x.skip_invalid=true; x.no_schedule=false; x.end=false; if(!secondary.instruction(x)) return false; }
-    // secondary 11 3884050a81680140
-    { VmovSemantic x{}; x.dst={RegisterBank::PrimaryAttribute,26}; x.src={RegisterBank::PrimaryAttribute,5}; x.predicate=Predicate::Always; x.data_type=DataType::F32; x.dest_mask=0x1; x.swizzle=1; x.repeat_count=0; x.skip_invalid=true; x.no_schedule=false; x.end=true; if(!secondary.instruction(x)) return false; }
+    MachineCompileResult compiled;
+    if (!compile_words(primary,compiled,out,"multivarying vertex Machine IR lowering failed")) return false;
 
+    std::vector<gxp::ParameterDesc> parameters;
+    parameters.reserve(attributes.size()+matrices.size()+uniforms.size()+1);
+    for (const auto &attribute:attributes)
+        parameters.push_back({attribute.name.c_str(),0,0,4,0,attribute.semantic,
+                              attribute.semantic_index,1,attribute.resource_index});
+    for (const auto &matrix:matrices)
+        parameters.push_back({matrix.name.c_str(),1,0,4,14,0,0,4,matrix.resource_index});
+    parameters.push_back({normal_matrix.name.c_str(),1,0,3,14,0,0,3,normal_matrix.resource_index});
+    for (const auto &uniform:uniforms)
+        parameters.push_back({uniform.name.c_str(),1,0,uniform.components,14,0,0,1,uniform.resource_index});
+
+    std::vector<gxp::LiteralDesc> literals;
+    literals.reserve(literal_values.size());
+    for (const auto &literal:literal_values) {
+        if (literal.resource_index>=literal_values.size()) {
+            out.error="multivarying literal resource index is out of range";
+            return false;
+        }
+        literals.push_back({literal.resource_index,literal.value_bits});
+    }
+    std::vector<gxp::ParameterContainerDesc> containers={{14,0,0,static_cast<uint16_t>(uniform_words)}};
+    if (!literals.empty())
+        containers.push_back({19,0,static_cast<uint16_t>(uniform_words),static_cast<uint16_t>(literals.size())});
+
+    // POSITION + COLOR + TEXCOORD0/2/3/4/5/6 + PSIZE. This describes only
+    // interface packing; arithmetic and scheduling come from the generic Machine program.
     const uint8_t interface_block[32]={
         0x3f,0xff,0xff,0x07,0,0,0,0,0,0,0,0,0,0,0,0,
         0,0x19,0,0x1d,0xc1,0xf6,0x1f,0,0,0,0,0,0,0,0,0,
     };
-    const gxp::ParameterContainerDesc containers[]={{14,0,0,62},{19,0,62,2}};
-    const gxp::LiteralDesc literals[]={{0,0x43ff8000u},{1,0x3f800000u}};
-    const gxp::ParameterDesc parameters[]={
-        {attributes[0].name.c_str(),0,0,4,0,0,0,1,0},
-        {attributes[1].name.c_str(),0,0,4,0,0,0,1,4},
-        {attributes[2].name.c_str(),0,0,4,0,0,0,1,8},
-        {attributes[3].name.c_str(),0,0,4,0,0,0,1,12},
-        {attributes[4].name.c_str(),0,0,4,0,0,0,1,16},
-        {attributes[5].name.c_str(),0,0,4,0,0,0,1,20},
-        {attributes[6].name.c_str(),0,0,4,0,0,0,1,24},
-        {modelview.name.c_str(),1,0,4,14,0,0,4,0},
-        {projection.name.c_str(),1,0,4,14,0,0,4,16},
-        {texcoord_matrix.name.c_str(),1,0,4,14,0,0,4,44},
-        {point_size.name.c_str(),1,0,1,14,0,0,1,60},
-        {normal_matrix.name.c_str(),1,0,3,14,0,0,3,32},
-    };
+    uint16_t temp_count=0;
+    for (const auto &reg:compiled.value_registers)
+        if (reg.bank==usse::RegisterBank::Temp && reg.num<60)
+            temp_count=std::max<uint16_t>(temp_count,static_cast<uint16_t>(reg.num+1u));
+
     gxp::ProgramImage image{};
     image.type=gxp::ProgramType::Vertex;
-    image.minor_version=5;
-    image.sdk_version=0x0300;
+    image.sdk_version=0x0165;
     image.binary_guid=binary_guid; image.source_guid=source_guid;
-    image.program_flags=0x00190004;
+    image.program_flags=0x00090004;
     image.buffer_flags=0x10000000;
-    image.primary_register_count=28;
-    image.secondary_register_count=72;
+    image.primary_register_count=static_cast<uint16_t>(primary_words);
+    image.secondary_register_count=static_cast<uint16_t>(uniform_words+literals.size());
+    image.temp_register_count=temp_count;
     image.primary_phase_count=1;
-    image.data_buffer_count=2;
-    image.default_uniform_buffer_count=62;
-    image.compiler_version_raw=0x00033a90;
+    image.data_buffer_count=static_cast<uint32_t>(literals.size());
+    image.default_uniform_buffer_count=uniform_words;
+    image.compiler_version_raw=0x0002df30;
     image.interface_block=interface_block; image.interface_block_size=sizeof(interface_block);
-    image.secondary_instructions=secondary.words().data(); image.secondary_instruction_count=secondary.words().size();
-    image.primary_instructions=primary.words().data(); image.primary_instruction_count=primary.words().size();
-    image.containers=containers; image.container_count=2;
-    image.parameters=parameters; image.parameter_count=std::size(parameters);
-    image.literals=literals; image.literal_count=2;
+    image.primary_instructions=compiled.words.data(); image.primary_instruction_count=compiled.words.size();
+    image.containers=containers.data(); image.container_count=containers.size();
+    image.parameters=parameters.data(); image.parameter_count=parameters.size();
+    image.literals=literals.data(); image.literal_count=literals.size();
     image.vertex_primary_padding_word=true;
     const size_t needed=gxp::required_size(image);
-    if (!needed) { out.error="GXP writer rejected matrix-normal multivarying profile"; return false; }
+    if (!needed) { out.error="GXP writer rejected multivarying vertex Machine profile"; return false; }
     out.gxp.resize(needed);
     if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
-        out.gxp.clear(); out.error="GXP writer failed for matrix-normal multivarying profile"; return false;
+        out.gxp.clear(); out.error="GXP writer failed for multivarying vertex Machine profile"; return false;
     }
     return true;
 }

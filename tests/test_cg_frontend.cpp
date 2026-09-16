@@ -406,7 +406,7 @@ bool compile_matrix_texcoord_point_size_profile() {
 }
 
 bool compile_matrix_normal_multivarying_profile() {
-    static constexpr const char *source=
+    const std::string source=
         "void main(float4 Nposition,float2 Otexcoord0,float4 Pcolor,float4 Qdiff,float4 Rspec,"
         "float4 Semission,float3 Tnormals,float2 out vTexcoord:TEXCOORD0,"
         "float3 out vNormal:TEXCOORD2,float3 out vEcPosition:TEXCOORD3,"
@@ -420,71 +420,44 @@ bool compile_matrix_normal_multivarying_profile() {
         "vTexcoord=mul(Ktexmat[0],float4(Otexcoord0,0.f,1.f)).xy;vColor=Pcolor;"
         "vNormal=normal;vEcPosition=ecPosition;vDiffuse=Qdiff;vSpecular=Rspec;"
         "vEmission=Semission;psize=Mpoint_size;}";
-    VscCompileRequest request{};
-    request.source_name="matrix-normal-multivarying.cg";
-    request.source=source;
-    request.source_size=std::strlen(source);
-    request.entrypoint="main";
-    request.stage=VSC_STAGE_VERTEX;
-    VscCompileResult result{};
-    const int rc=vsc_compile(&request,&result);
-    bool ok=rc==0 && result.gxp_data && result.gxp_size==1004 && result.diagnostic_count==0;
-    if (ok) {
-        const uint8_t interface_block[]={
-            0x3f,0xff,0xff,0x07,0,0,0,0,0,0,0,0,0,0,0,0,
-            0,0x19,0,0x1d,0xc1,0xf6,0x1f,0,0,0,0,0,0,0,0,0,
-        };
-        const uint32_t resources[]={0,4,8,12,16,20,24,0,16,44,60,32};
-        const uint8_t components[]={4,4,4,4,4,4,4,4,4,4,1,3};
-        const uint64_t primary_words[]={
-            0xfa44070000000000ULL,0x3880152183080100ULL,0x3880352183200180ULL,
-            0x38801d2183300280ULL,0x40c00d9caf818c1aULL,0x18802880cf51a210ULL,
-            0xfa14000301010202ULL,0x50c1000ae1801900ULL,0x38800d0ac2180140ULL,
-            0x40c00dbcff998812ULL,0x18919882c0d1a220ULL,0x18918882c111a219ULL,
-            0x38800d22c31406c0ULL,0x189189028111a203ULL,0x40c00dbcff99860eULL,
-            0x18919880cf91a220ULL,0xfa14000001010101ULL,0x18918a00cf91a21bULL,
-            0x18918c008f91a205ULL,0x40c00dbcaf998002ULL,0x28c41511e0160b8cULL,
-            0x189189018011a203ULL,0x18918882e011a222ULL,0x18918902e011a220ULL,
-            0x18918882e051a21bULL,0x18918902a051a205ULL,0x189188818051a200ULL,
-            0x40c00dbcffd98e1eULL,0x18918882e011a222ULL,0x18918902e011a220ULL,
-            0x18918882e051a21bULL,0x18918902a051a205ULL,0x189189018051a200ULL,
-            0x18902882c011a200ULL,0x18918880cf11a206ULL,0x28847000ef950096ULL,
-            0x18e18981a1c18140ULL,0x18e18901a1818000ULL,0x189188818112c202ULL,
-            0x40c00dbcff999832ULL,0x189189018112c202ULL,0x188188801f11a23dULL,
-            0x30800a000f803e01ULL,0x18e181810141813dULL,0x08800881018d0f7cULL,
-            0x08a41084ff04679fULL,0x08a4008533845f1fULL,0xfb275000a0200000ULL,
-        };
-        const uint64_t secondary_words[]={
-            0x5081000aa8800000ULL,0x3880050282880080ULL,0x5081000aa8c00400ULL,
-            0x38800502828c0180ULL,0x40800d8ea8030005ULL,0x40800d8ea843040dULL,
-            0x5081000aa6c00100ULL,0x38800502826c00c0ULL,0x5081000aa7000500ULL,
-            0x38800502827001c0ULL,0x40800d8ea7430107ULL,0x3884050a81680140ULL,
-        };
-        vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
-        const auto interface=view.varyings();
-        const auto primary=view.primary_program(),secondary=view.secondary_program();
-        ok=view.valid() && view.logical_size()==1003 && view.minor_version()==5 &&
-            view.sdk_version()==0x0300 && view.flags()==0x00190004 &&
-            view.primary_register_count()==28 && view.secondary_register_count()==72 &&
-            view.primary_instruction_count()==48 && view.secondary_instruction_count()==12 &&
-            view.literal_count()==2 && view.container_count()==2 && view.parameter_count()==12 &&
-            view.compiler_version_raw()==0x00033a90 &&
-            interface.size==sizeof(interface_block) &&
-            std::memcmp(interface.data,interface_block,sizeof(interface_block))==0 &&
-            primary.size==sizeof(primary_words) && secondary.size==sizeof(secondary_words) &&
-            std::memcmp(primary.data,primary_words,sizeof(primary_words))==0 &&
-            std::memcmp(secondary.data,secondary_words,sizeof(secondary_words))==0;
-        for (size_t i=0;ok && i<12;++i) {
-            vsc::gxp::ParameterView parameter{};
-            ok=view.parameter(i,parameter) && parameter.resource_index==resources[i] &&
-                parameter.component_count==components[i];
+    auto snapshot=[](const std::string &text,std::vector<uint8_t> &gxp) -> bool {
+        VscCompileRequest request{};
+        request.source_name="matrix-normal-multivarying.cg";
+        request.source=text.data(); request.source_size=text.size();
+        request.entrypoint="main"; request.stage=VSC_STAGE_VERTEX;
+        VscCompileResult result{};
+        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.gxp_size && !result.diagnostic_count;
+        if (ok) {
+            const uint8_t interface_block[]={
+                0x3f,0xff,0xff,0x07,0,0,0,0,0,0,0,0,0,0,0,0,
+                0,0x19,0,0x1d,0xc1,0xf6,0x1f,0,0,0,0,0,0,0,0,0,
+            };
+            const uint32_t resources[]={0,4,8,12,16,20,24,0,16,32,50,48};
+            const uint8_t components[]={4,4,4,4,4,4,4,4,4,4,3,1};
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            const auto interface=view.varyings();
+            ok=view.valid() && view.sdk_version()==0x0165 && view.flags()==0x00090004 &&
+                view.primary_register_count()==28 && view.primary_instruction_count()>0 &&
+                view.parameter_count()==12 && interface.size==sizeof(interface_block) &&
+                std::memcmp(interface.data,interface_block,sizeof(interface_block))==0;
+            for (size_t i=0;ok && i<12;++i) {
+                vsc::gxp::ParameterView parameter{};
+                ok=view.parameter(i,parameter) && parameter.resource_index==resources[i] &&
+                    parameter.component_count==components[i];
+            }
+            if (ok) gxp.assign(result.gxp_data,result.gxp_data+result.gxp_size);
         }
-    }
-    if (!ok && result.diagnostic_count && result.diagnostics)
-        std::fprintf(stderr,"test_cg_frontend: matrix-normal multivarying diagnostic=%s\n",
-                     result.diagnostics[0].message ? result.diagnostics[0].message : "(null)");
-    vsc_destroy_result(&request.allocator,&result);
-    return ok;
+        vsc_destroy_result(&request.allocator,&result);
+        return ok;
+    };
+    std::vector<uint8_t> original,changed;
+    if (!snapshot(source,original)) return false;
+    auto mutated=source;
+    const std::string from="float3 ecPosition=modelpos.xyz/modelpos.w;";
+    const auto at=mutated.find(from);
+    if (at==std::string::npos) return false;
+    mutated.replace(at,from.size(),"float3 ecPosition=(modelpos.xyz/modelpos.w)*0.75f;");
+    return snapshot(mutated,changed) && !equal_except_guids(changed.data(),changed.size(),original);
 }
 
 bool compile_indexed_clear_vertex_profile() {

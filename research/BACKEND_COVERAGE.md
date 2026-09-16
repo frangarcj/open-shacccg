@@ -172,12 +172,13 @@ the oracle is run with the exact SceShaccCgExt extension hook required for Cg
 VDUAL, the existing matrix VMAD forms, and PSIZE output. The resulting real
 vitaGL image is 568 bytes with PA=12/SA=36 and compiler `0x00033a90`.
 
-The Phong vertex stage now matches SDK 3.0.0 byte-for-byte as well. The 1004-byte
-v1.5 image uses 48 primary + 12 secondary instructions, PA=28/SA=72 and flags
-`0x00190004`. The profile is assembled from semantic VMOV/VPCK/VMAD/VBW/VCOMP/
-V32NMAD operations plus two SMLSI repeat-control words and the observed
-VDP+VMOV / FRCP+VMOV VDUAL forms; no operand-bearing raw instruction is injected
-by the runtime profile.
+The Phong vertex SDK 3.0 capture remains the optimization oracle: 1004-byte
+v1.5, 48 primary + 12 secondary instructions, PA=28/SA=72. The production
+whole-shader schedule has been removed. Typed IR now lowers the matrix, normal,
+normalize, reciprocal and varying calculations generically, then a small interface
+packer assigns POSITION/COLOR/TEXCOORD0/2/3/4/5/6 and PSIZE to the validated
+output register layout. A mutation of the active `ecPosition` expression must
+change the generated GXP, preventing the old frozen-schedule failure mode.
 
 Smooth-lighting ISA readiness is now complete for the captured SDK 3.0.0
 one-light vertex: all 123 primary and 6 secondary words decode and re-encode

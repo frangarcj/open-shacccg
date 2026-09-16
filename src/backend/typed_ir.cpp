@@ -1682,10 +1682,8 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             }
         }
 
-        // vitaGL's Phong vertex FFP shape combines two position matrices, one
-        // texture matrix, a float3x3 normal matrix, dense material passthrough
-        // varyings and uniform point size. Match the semantic resource/output
-        // shape here before the older single-varying dispatcher rejects it.
+        // Dense multivarying vertex shape used by the Phong FFP branch. The
+        // interface packing is fixed, but all arithmetic is lowered from Typed IR.
         if (vertex_attributes.size()==7 && matrices.size()==3 && matrices3.size()==1 &&
             vertex_uniforms.size()==1 && vertex_uniforms[0]->type==TypedType::F32) {
             auto named_matrix4=[&](const char *name) -> const TypedResource * {
@@ -1699,11 +1697,11 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             const auto *texmat=named_matrix4("Ktexmat");
             const auto *normal=matrices3[0];
             const auto *point=vertex_uniforms[0];
+            TypedValue position{},color{},point_value{};
+            std::array<TypedValue,7> texcoords{};
             bool output_shape=modelview && projection && texmat &&
                 shader.resource_name(*normal)=="Lnormal_mat" && shader.resource_name(*point)=="Mpoint_size";
-            unsigned stores=0, transforms4=0, transforms3=0, divisions=0;
-            bool have_position=false,have_color=false,have_point=false;
-            bool texcoord_seen[7]{};
+            unsigned stores=0,transforms4=0,transforms3=0,divisions=0;
             for (const auto &instruction:instructions) {
                 if (instruction.opcode()==TypedOpcode::TransformPosition) ++transforms4;
                 else if (instruction.opcode()==TypedOpcode::TransformVector3) ++transforms3;
@@ -1714,22 +1712,128 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 const auto &r=resources[instruction.aux];
                 auto semantic=r.semantic;
                 if (semantic==TypedSemantic::None) semantic=infer_semantic(shader.resource_name(r));
-                if (semantic==TypedSemantic::Position) have_position=true;
-                else if (semantic==TypedSemantic::Color) have_color=true;
-                else if (semantic==TypedSemantic::PointSize) have_point=true;
-                else if (semantic==TypedSemantic::TexCoord && r.semantic_index<7) texcoord_seen[r.semantic_index]=true;
+                if (semantic==TypedSemantic::Position && position.kind()==TypedValueKind::None) position=instruction.src0;
+                else if (semantic==TypedSemantic::Color && color.kind()==TypedValueKind::None) color=instruction.src0;
+                else if (semantic==TypedSemantic::PointSize && point_value.kind()==TypedValueKind::None) point_value=instruction.src0;
+                else if (semantic==TypedSemantic::TexCoord && r.semantic_index<texcoords.size() &&
+                         texcoords[r.semantic_index].kind()==TypedValueKind::None)
+                    texcoords[r.semantic_index]=instruction.src0;
+                else { output_shape=false; break; }
             }
-            output_shape = output_shape && stores==9 && have_position && have_color && have_point &&
-                texcoord_seen[0] && texcoord_seen[2] && texcoord_seen[3] && texcoord_seen[4] &&
-                texcoord_seen[5] && texcoord_seen[6] && transforms4>=3 && transforms3==1 && divisions>=1;
+            output_shape = output_shape && stores==9 && transforms4>=3 && transforms3==1 && divisions>=1 &&
+                position.type()==TypedType::F32x4 && color.type()==TypedType::F32x4 &&
+                point_value.bits==point->value.bits && texcoords[0].type()==TypedType::F32x2 &&
+                texcoords[2].type()==TypedType::F32x3 && texcoords[3].type()==TypedType::F32x3 &&
+                texcoords[4].type()==TypedType::F32x4 && texcoords[5].type()==TypedType::F32x4 &&
+                texcoords[6].type()==TypedType::F32x4;
             if (output_shape) {
-                const IrMatrix4Uniform model_meta={shader.resource_name(*modelview),0};
-                const IrMatrix4Uniform projection_meta={shader.resource_name(*projection),16};
-                const IrMatrix4Uniform tex_meta={shader.resource_name(*texmat),44};
-                const IrMatrix3Uniform normal_meta={shader.resource_name(*normal),32};
-                const IrUniformFloat point_meta={shader.resource_name(*point),1,60};
-                return compile_vertex_matrix_normal_multivarying_point_size(
-                    vertex_attributes,model_meta,projection_meta,tex_meta,normal_meta,point_meta,0,0,out);
+                uint32_t uniform_words=0;
+                for (const auto &resource:resources) {
+                    uint32_t words=0;
+                    if (resource.kind==TypedResourceKind::Matrix4) words=16;
+                    else if (resource.kind==TypedResourceKind::Matrix3) words=12;
+                    else if (resource.kind==TypedResourceKind::Uniform) words=typed_component_count(resource.type);
+                    if (words) uniform_words=std::max<uint32_t>(uniform_words,resource.index+words);
+                }
+                uniform_words=(uniform_words+1u)&~1u;
+                if (uniform_words>=254) { out.error="multivarying uniform footprint exceeds compact SA subset"; return false; }
+
+                MachineProgram primary;
+                if (!primary.emit<MachineOpcode::Phase>()) {
+                    out.error="failed to start multivarying vertex Machine program";
+                    return false;
+                }
+                std::vector<MachineOperand> literal_bindings(program.literals().size());
+                std::vector<IrLiteralF32> literal_meta;
+                std::unordered_map<uint32_t,uint32_t> literal_index_by_bits;
+                auto bind_literal=[&](TypedValue value) -> bool {
+                    if (value.kind()!=TypedValueKind::Literal || value.id()>=program.literals().size()) return true;
+                    if (value.type()!=TypedType::F32) return true;
+                    if (literal_bindings[value.id()].kind()!=MachineOperandKind::None) return true;
+                    const uint32_t bits=program.literals()[value.id()];
+                    if (bits==0) {
+                        literal_bindings[value.id()]=primary.physical(machine_immediate(0),MachineType::F32);
+                        return true;
+                    }
+                    auto [it,inserted]=literal_index_by_bits.emplace(bits,static_cast<uint32_t>(literal_meta.size()));
+                    if (inserted) literal_meta.push_back({it->second,bits});
+                    const uint32_t word=uniform_words+it->second;
+                    if (word>=254) return false;
+                    literal_bindings[value.id()]=primary.physical(machine_secondary(static_cast<uint8_t>(word/2u)),
+                                                                  MachineType::F32,static_cast<uint8_t>(word&1u));
+                    return true;
+                };
+                for (const auto &instruction:instructions)
+                    if (!bind_literal(instruction.dst) || !bind_literal(instruction.src0) || !bind_literal(instruction.src1)) {
+                        out.error="multivarying literal table exceeds compact SA subset"; return false;
+                    }
+                for (const auto &composite:program.float3_composites())
+                    for (const auto component:composite)
+                        if (!bind_literal(component)) { out.error="multivarying float3 literal table overflow"; return false; }
+                for (const auto &composite:program.float4_composites())
+                    for (const auto component:composite)
+                        if (!bind_literal(component)) { out.error="multivarying float4 literal table overflow"; return false; }
+                auto [point_literal_it,point_literal_inserted]=literal_index_by_bits.emplace(
+                    0x43ff8000u,static_cast<uint32_t>(literal_meta.size()));
+                if (point_literal_inserted) literal_meta.push_back({point_literal_it->second,0x43ff8000u});
+                const uint32_t point_literal_word=uniform_words+point_literal_it->second;
+                if (point_literal_word>=254) { out.error="multivarying point-size literal is out of SA range"; return false; }
+
+                std::vector<uint16_t> matrix_bindings(resources.size(),std::numeric_limits<uint16_t>::max());
+                for (uint16_t id=0;id<resources.size();++id)
+                    if (resources[id].kind==TypedResourceKind::Matrix4 || resources[id].kind==TypedResourceKind::Matrix3)
+                        matrix_bindings[id]=resources[id].index;
+                std::vector<MachineOperand> lowered;
+                std::string machine_error;
+                if (!lower_typed_program_impl(program,primary,machine_error,false,nullptr,nullptr,nullptr,
+                        false,std::numeric_limits<uint16_t>::max(),&literal_bindings,&lowered,true,nullptr,&matrix_bindings)) {
+                    out.error="multivarying Typed->Machine lowering failed: "+machine_error;
+                    return false;
+                }
+                auto lowered_value=[&](TypedValue value) -> MachineOperand {
+                    if (value.kind()==TypedValueKind::Value)
+                        return value.id()<lowered.size()?lowered[value.id()]:MachineOperand{};
+                    if (value.kind()==TypedValueKind::Literal)
+                        return value.id()<literal_bindings.size()?literal_bindings[value.id()]:MachineOperand{};
+                    return {};
+                };
+                const auto p=lowered_value(position),c=lowered_value(color),uv0=lowered_value(texcoords[0]);
+                const auto n=lowered_value(texcoords[2]),ec=lowered_value(texcoords[3]);
+                const auto diff=lowered_value(texcoords[4]),spec=lowered_value(texcoords[5]),emission=lowered_value(texcoords[6]);
+                const auto ps=lowered_value(point_value);
+                auto move=[&](uint8_t out_reg,uint8_t mask,uint8_t swizzle,uint8_t repeat,MachineOperand src) {
+                    return src.kind()!=MachineOperandKind::None &&
+                        primary.emit_config<MachineOpcode::Move>(static_cast<uint8_t>(usse::DataType::F32),
+                            machine_move_config(mask,swizzle,repeat),
+                            primary.physical(machine_vertex_output(out_reg),MachineType::F32),src);
+                };
+                if (!move(0,3,4,1,p) || !move(2,3,4,1,c) || !move(4,3,4,0,uv0) ||
+                    !move(5,3,4,0,n) || !move(6,1,2,0,n) ||
+                    !move(6,2,0,0,ec) || !move(7,3,5,0,ec) ||
+                    !move(8,3,4,1,diff) || !move(10,3,4,1,spec) || !move(12,3,4,1,emission)) {
+                    out.error="failed to append multivarying vertex outputs";
+                    return false;
+                }
+                const auto point_low=primary.make_value<MachineType::F32>();
+                const auto point_clamped=primary.make_value<MachineType::F32>();
+                const auto max_point=primary.physical(machine_secondary(static_cast<uint8_t>(point_literal_word/2u)),
+                    MachineType::F32,static_cast<uint8_t>(point_literal_word&1u));
+                if (ps.kind()==MachineOperandKind::None || point_low.kind()==MachineOperandKind::None ||
+                    point_clamped.kind()==MachineOperandKind::None ||
+                    !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Max),
+                        machine_vector_config(1),point_low,ps,primary.physical(machine_special(2),MachineType::F32,0)) ||
+                    !primary.emit_config<MachineOpcode::Vector>(static_cast<uint8_t>(usse::VectorOp::Min),
+                        machine_vector_config(1),point_clamped,point_low,max_point) ||
+                    !move(14,1,0,0,point_clamped) || !primary.emit<MachineOpcode::Emit>()) {
+                    out.error="failed to append multivarying point-size/EMIT";
+                    return false;
+                }
+
+                std::vector<IrUniformFloat> uniform_meta={{shader.resource_name(*point),1,point->index}};
+                std::vector<IrMatrix4Uniform> matrix_meta;
+                for (const auto *matrix:matrices) matrix_meta.push_back({shader.resource_name(*matrix),matrix->index});
+                return compile_vertex_multivarying_machine(primary,vertex_attributes,uniform_meta,matrix_meta,
+                    {shader.resource_name(*normal),normal->index},literal_meta,0,0,out);
             }
         }
 
