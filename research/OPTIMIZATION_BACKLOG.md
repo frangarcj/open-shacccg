@@ -104,9 +104,10 @@ Related texture cleanup:
 - Linear fog now reproduces SDK 3.0.0 byte-for-byte: GXP v1.5, 11 primary +
   3 secondary instructions, PA=8/SA=7, one `1.0f` literal, WPOS additional-input
   metadata, and the compact VCOMP/VMAD2/VMAD mix sequence.
-- Exponential-squared fog remains the next fidelity target. SDK 3.0.0 emits
-  12 primary + 3 secondary instructions versus the current 20-primary generic
-  lowering, so keep it as a separate optimization/codegen cut.
+- Exponential-squared fog now reproduces SDK 3.0.0 byte-for-byte as a separate
+  structural profile: 12 primary + 3 secondary instructions, PA=8/SA=9, two
+  literals (`1.0f` and `LOG2E^2`), and the observed VMAD3 + VDUAL + base-selector
+  Exp2 sequence feeding the same clamp/mix tail as linear fog.
 
 ### `TM2_FAST_FS`
 

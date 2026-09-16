@@ -503,6 +503,39 @@ int test_usse() {
             !decoded.src1_negative || !decoded.no_schedule)
             failures += fail("SDK 3.0 F32 fog VMAD2 mismatch");
     }
+    {
+        uint64_t word=0;
+        VdualF32MulMoveSemantic decoded{};
+        if (!encode_vdual_f32_mul_move_semantic({},&word) || word!=0x20c42000cfb61080ULL ||
+            !decode_vdual_f32_mul_move_semantic(word,&decoded))
+            failures += fail("SDK 3.0 exp2-fog VDUAL mismatch");
+    }
+    {
+        VcompF32Semantic exp2{};
+        exp2.op=ComplexOp::Exp2;
+        exp2.dst={RegisterBank::Temp,124}; exp2.src={RegisterBank::Temp,124};
+        exp2.dest_mask=1; exp2.no_schedule=true; exp2.exp2_base_dest_type=true;
+        uint64_t word=0;
+        VcompF32Semantic decoded{};
+        if (!encode_vcomp_f32_semantic(exp2,&word) || word!=0x30800e000f803e01ULL ||
+            !decode_vcomp_f32_semantic(word,&decoded) || decoded.op!=ComplexOp::Exp2 ||
+            !decoded.exp2_base_dest_type || decoded.dst.bank!=RegisterBank::Temp || decoded.dst.num!=124)
+            failures += fail("SDK 3.0 exp2-fog VCOMP destination selector mismatch");
+    }
+    {
+        VmadSemantic exp2_mad{};
+        exp2_mad.dst={RegisterBank::Temp,60}; exp2_mad.src1={RegisterBank::SecondaryAttribute,2};
+        exp2_mad.gpi0=1; exp2_mad.gpi1=0; exp2_mad.write_mask=1; exp2_mad.vec4=false;
+        exp2_mad.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}};
+        exp2_mad.src1_swizzle=exp2_mad.gpi0_swizzle;
+        exp2_mad.gpi1_zero3_extended=true; exp2_mad.no_schedule=true;
+        uint64_t word=0;
+        VmadSemantic decoded{};
+        if (!encode_vmad_semantic(exp2_mad,&word) || word!=0x18e18880df018002ULL ||
+            !decode_vmad_semantic(word,&decoded) || !decoded.gpi1_zero3_extended || decoded.vec4 ||
+            decoded.dst.bank!=RegisterBank::Temp || decoded.dst.num!=60)
+            failures += fail("SDK 3.0 exp2-fog extended VMAD3 mismatch");
+    }
 
     // Semantic VMAD: reconstruct the complete four-instruction matrix path.
     const uint64_t matrix_words[] = {

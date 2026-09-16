@@ -1878,6 +1878,116 @@ bool compile_fragment_linear_fog(const IrUniformVec4 &fog_color,
     return true;
 }
 
+bool compile_fragment_exp2_fog(const IrUniformVec4 &fog_color,
+                               const IrUniformFloat &fog_density,
+                               uint32_t binary_guid, uint32_t source_guid,
+                               IrCompileResult &out) {
+    out={};
+    if (fog_color.name.empty() || fog_color.resource_index!=0 ||
+        fog_density.name.empty() || fog_density.components!=1 || fog_density.resource_index!=4) {
+        out.error="exp2 fog profile requires float4@0 plus scalar density@4";
+        return false;
+    }
+
+    ProgramBuilder secondary,primary;
+    usse::V32NmadSemantic sec0{};
+    sec0.op=usse::VectorOp::Mul; sec0.dst={usse::RegisterBank::PrimaryAttribute,4};
+    sec0.src1={usse::RegisterBank::PrimaryAttribute,2}; sec0.src2={usse::RegisterBank::PrimaryAttribute,3};
+    sec0.src2_swizzle={{usse::SwizzleChannel::Y,usse::SwizzleChannel::Y,usse::SwizzleChannel::Y,usse::SwizzleChannel::Y}};
+    sec0.dest_mask=1; sec0.src1_negative=true;
+    usse::V32NmadSemantic sec1{};
+    sec1.op=usse::VectorOp::Mul; sec1.dst={usse::RegisterBank::PrimaryAttribute,2};
+    sec1.src1={usse::RegisterBank::PrimaryAttribute,4}; sec1.src2={usse::RegisterBank::PrimaryAttribute,2};
+    sec1.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::X}};
+    sec1.src2_swizzle=sec1.src1_swizzle; sec1.dest_mask=1;
+    usse::NopSemantic sec_end{}; sec_end.no_schedule=false; sec_end.end=true;
+    if (!secondary.instruction(sec0) || !secondary.instruction(sec1) || !secondary.instruction(sec_end)) {
+        out.error="failed to build SDK 3.0 exp2-fog secondary stream"; return false;
+    }
+
+    usse::VcompF32Semantic dist_rcp{};
+    dist_rcp.dst={usse::RegisterBank::PrimaryAttribute,2}; dist_rcp.src={usse::RegisterBank::PrimaryAttribute,3};
+    dist_rcp.src_component=1; dist_rcp.dest_mask=1; dist_rcp.no_schedule=true;
+    usse::V32NmadSemantic dist_mul{};
+    dist_mul.op=usse::VectorOp::Mul; dist_mul.dst={usse::RegisterBank::Temp,61};
+    dist_mul.src1={usse::RegisterBank::PrimaryAttribute,2}; dist_mul.src2={usse::RegisterBank::PrimaryAttribute,3};
+    dist_mul.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::X}};
+    dist_mul.src2_swizzle=dist_mul.src1_swizzle; dist_mul.dest_mask=1; dist_mul.no_schedule=true;
+    usse::VmadSemantic density_mul{};
+    density_mul.dst={usse::RegisterBank::Temp,60}; density_mul.src1={usse::RegisterBank::SecondaryAttribute,2};
+    density_mul.gpi0=1; density_mul.gpi1=0; density_mul.write_mask=1; density_mul.vec4=false;
+    density_mul.gpi0_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::X}};
+    density_mul.src1_swizzle=density_mul.gpi0_swizzle; density_mul.gpi1_zero3_extended=true; density_mul.no_schedule=true;
+    usse::VdualF32MulMoveSemantic fused{};
+    usse::VcompF32Semantic exp2{};
+    exp2.op=usse::ComplexOp::Exp2; exp2.dst={usse::RegisterBank::Temp,124}; exp2.src={usse::RegisterBank::Temp,124};
+    exp2.dest_mask=1; exp2.no_schedule=true; exp2.exp2_base_dest_type=true;
+    usse::V32NmadSemantic clamp_min{};
+    clamp_min.op=usse::VectorOp::Min; clamp_min.dst={usse::RegisterBank::Temp,60};
+    clamp_min.src1={usse::RegisterBank::Temp,60}; clamp_min.src2={usse::RegisterBank::SecondaryAttribute,3};
+    clamp_min.dest_mask=1; clamp_min.no_schedule=true;
+    clamp_min.src2_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::X}};
+    usse::V32NmadSemantic clamp_max=clamp_min;
+    clamp_max.op=usse::VectorOp::Max; clamp_max.src2={usse::RegisterBank::Special,0};
+    clamp_max.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::W}};
+    usse::VmadSemantic blend0{};
+    blend0.dst={usse::RegisterBank::Temp,61}; blend0.src1={usse::RegisterBank::Temp,61};
+    blend0.gpi0=0; blend0.gpi1=1; blend0.write_mask=7; blend0.src1_negative=true; blend0.no_schedule=true;
+    blend0.gpi0_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::X}};
+    blend0.gpi1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::Y,usse::SwizzleChannel::Z,usse::SwizzleChannel::W}};
+    blend0.src1_swizzle=blend0.gpi1_swizzle;
+    usse::VmadSemantic blend1{};
+    blend1.dst={usse::RegisterBank::PrimaryAttribute,0}; blend1.src1={usse::RegisterBank::PrimaryAttribute,0};
+    blend1.gpi0=0; blend1.gpi1=1; blend1.write_mask=3; blend1.gpi0_swizzle=blend0.gpi0_swizzle;
+    blend1.gpi1_swizzle=blend0.gpi1_swizzle; blend1.src1_swizzle=blend0.gpi1_swizzle;
+    usse::VmadSemantic blend2{};
+    blend2.dst={usse::RegisterBank::PrimaryAttribute,1}; blend2.src1={usse::RegisterBank::PrimaryAttribute,1};
+    blend2.gpi0=0; blend2.gpi1=1; blend2.write_mask=1; blend2.gpi0_swizzle=blend0.gpi0_swizzle;
+    blend2.gpi1_swizzle={{usse::SwizzleChannel::Z,usse::SwizzleChannel::Z,usse::SwizzleChannel::Z,usse::SwizzleChannel::Z}};
+    blend2.src1_swizzle={{usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::X,usse::SwizzleChannel::X}};
+    usse::VpckSemantic output{};
+    output.dst={usse::RegisterBank::PrimaryAttribute,0}; output.src1={usse::RegisterBank::PrimaryAttribute,0};
+    output.src2={usse::RegisterBank::PrimaryAttribute,1}; output.src_format=usse::PackFormat::F32;
+    output.dst_format=usse::PackFormat::F16; output.dest_mask=0xf; output.no_schedule=false;
+    if (!primary.phase() || !primary.instruction(dist_rcp) || !primary.instruction(dist_mul) ||
+        !primary.instruction(density_mul) || !primary.instruction(fused) || !primary.instruction(exp2) ||
+        !primary.instruction(clamp_min) || !primary.instruction(clamp_max) || !primary.instruction(blend0) ||
+        !primary.instruction(blend1) || !primary.instruction(blend2) || !primary.instruction(output)) {
+        out.error="failed to build SDK 3.0 exp2-fog primary stream"; return false;
+    }
+
+    const uint8_t interface_block[32]={
+        0,0,0,0,0,0,0,0,0,0,1,4,2,0,0,0,
+        4,0,0,0,0x0f,0xa0,0xd0,0x0c,0,0,0,0,0x30,0,0,0,
+    };
+    const uint8_t wpos_input[16]={0,0,0,0,0x0f,0xd0,0xc0,0x0e,0,0,0,0,0x30,0,0,0};
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,6},{19,0,6,2}};
+    const gxp::ParameterDesc parameters[]={
+        {fog_color.name.c_str(),1,0,4,14,0,0,1,0},
+        {fog_density.name.c_str(),1,0,1,14,0,0,1,4},
+    };
+    const gxp::LiteralDesc literals[]={{0,0x3f800000u},{1,0x40053526u}};
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Fragment; image.minor_version=5; image.sdk_version=0x0300;
+    image.binary_guid=binary_guid; image.source_guid=source_guid; image.program_flags=0x00181000;
+    image.buffer_flags=0x10000000; image.primary_register_count=8; image.secondary_register_count=9;
+    image.primary_phase_count=1; image.data_buffer_count=2; image.default_uniform_buffer_count=6;
+    image.compiler_version_raw=0x00033a90; image.interface_block=interface_block; image.interface_block_size=32;
+    image.fragment_additional_inputs=1; image.fragment_input_components=4;
+    image.fragment_additional_input_records=wpos_input; image.fragment_additional_input_records_size=16;
+    image.secondary_instructions=secondary.words().data(); image.secondary_instruction_count=secondary.words().size();
+    image.primary_instructions=primary.words().data(); image.primary_instruction_count=primary.words().size();
+    image.containers=containers; image.container_count=2; image.parameters=parameters; image.parameter_count=2;
+    image.literals=literals; image.literal_count=2;
+    const size_t needed=gxp::required_size(image);
+    if (!needed) { out.error="GXP writer rejected SDK 3.0 exp2-fog profile"; return false; }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear(); out.error="GXP writer failed for SDK 3.0 exp2-fog profile"; return false;
+    }
+    return true;
+}
+
 bool compile_fragment_texture_alpha_select_machine(const IrUniformFloat &uniform,
                                                    const IrSampler2D &sampler,
                                                    uint32_t binary_guid, uint32_t source_guid,

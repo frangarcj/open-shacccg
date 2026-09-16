@@ -130,6 +130,13 @@ generic lowering to 11 words. The only newly exposed ISA shape is the validated
 F32 VMAD2 scalar MAD used by `(fog_far-distance)/fog_range`; all remaining words
 are built from existing VCOMP/V32NMAD/VMAD/VPCK semantics.
 
+Exponential-squared fog is byte-identical to SDK 3.0.0 too. Its 12-word primary
+stream adds three narrowly validated forms over the linear path: a VMAD3 with
+the vec3 extended GPI1=`000` swizzle, a dual-issued scalar FMUL + fog-color VMOV,
+and the SDK 3.0 Exp2 VCOMP destination selector. The three-word secondary stream
+precomputes `-density * distance` and its second multiply; clamp/mix/output then
+reuse the linear-fog semantics.
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.

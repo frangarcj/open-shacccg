@@ -1007,6 +1007,42 @@ int test_cg_frontend() {
         if (!ok) failures += fail("linear fog did not reproduce the SDK 3.0.0 GXP profile");
         vsc_destroy_result(&request.allocator,&result);
     }
+    {
+        const std::string source=
+            "float4 main(float4 vColor:COLOR0,float4 coords:WPOS,uniform float4 KfogColor,"
+            "uniform float Hfog_density):COLOR0{"
+            "float4 out_color=vColor;float d=coords.z/coords.w;"
+            "float f=clamp(exp(-Hfog_density*Hfog_density*d*d*1.4426950408889634f*1.4426950408889634f),0.0f,1.0f);"
+            "out_color.rgb=lerp(KfogColor.rgb,vColor.rgb,f);return out_color;}";
+        VscCompileRequest request{};
+        request.source_name="exp2-fog-sdk30.cg"; request.source=source.data(); request.source_size=source.size();
+        request.entrypoint="main"; request.stage=VSC_STAGE_FRAGMENT;
+        VscCompileResult result{};
+        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.diagnostic_count==0;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            const uint64_t primary[]={
+                0xfa44070000000000ULL,0x3080080a80400181ULL,0x08800880af400083ULL,
+                0x18e18880df018002ULL,0x20c42000cfb61080ULL,0x30800e000f803e01ULL,
+                0x08a408843f045f03ULL,0x08a508801f006f00ULL,0x18b18bc00f41113dULL,
+                0x18b1818280011100ULL,0x18b1808280409001ULL,0x40800d7ea0198002ULL,
+            };
+            const uint64_t secondary[]={
+                0x08a410a6a1040083ULL,0x08800082a0800102ULL,0xf804014000000000ULL,
+            };
+            const auto p=view.primary_program(),s=view.secondary_program();
+            ok=view.valid() && result.gxp_size==420 && view.logical_size()==419 &&
+                view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00181001 &&
+                view.primary_register_count()==8 && view.secondary_register_count()==9 &&
+                view.compiler_version_raw()==0x00033a90 && view.literal_count()==2 &&
+                view.container_count()==2 && view.parameter_count()==2 &&
+                p.size==sizeof(primary) && s.size==sizeof(secondary) &&
+                std::memcmp(p.data,primary,sizeof(primary))==0 &&
+                std::memcmp(s.data,secondary,sizeof(secondary))==0;
+        }
+        if (!ok) failures += fail("exp2 fog did not reproduce the SDK 3.0.0 GXP profile");
+        vsc_destroy_result(&request.allocator,&result);
+    }
     if (!compile_fragment_gxp(
             "float main(float x:TEXCOORD0):COLOR0{return exp(x);}",
             "scalar-exp.cg"))
