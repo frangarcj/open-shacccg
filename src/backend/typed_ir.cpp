@@ -2351,46 +2351,6 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
     for (const auto &instruction : instructions)
         if (instruction.opcode() == TypedOpcode::StoreOutput) output_stores.push_back(&instruction);
 
-    // One-light Phong fragment FFP: six interpolators feed a structured
-    // lighting loop and one final float4 COLOR store. This is deliberately
-    // matched by resource/control shape rather than shader name; the same
-    // generic Typed->Machine CFG path used by vertex smooth lighting does the
-    // arithmetic, while the fragment profile only supplies iterator metadata.
-    if (!program.labels().empty() && inputs.size()==6 && uniforms.size()==7 && samplers.empty() &&
-        output_stores.size()==1) {
-        const uint8_t expected_components[]={3,3,4,4,4,4};
-        bool lighting_shape=true;
-        for (size_t i=0;i<inputs.size();++i)
-            lighting_shape = lighting_shape && inputs[i]->index==i &&
-                typed_component_count(inputs[i]->type)==expected_components[i];
-        lighting_shape = lighting_shape &&
-            std::any_of(uniforms.begin(),uniforms.end(),[&](const TypedResource *r) {
-                return shader.resource_name(*r)=="Elights_attenuations" && r->type==TypedType::F32x3;
-            }) &&
-            std::any_of(uniforms.begin(),uniforms.end(),[&](const TypedResource *r) {
-                return shader.resource_name(*r)=="Gshininess" && r->type==TypedType::F32;
-            });
-        const auto *store=output_stores[0];
-        lighting_shape = lighting_shape && store->aux<resources.size() &&
-            resources[store->aux].kind==TypedResourceKind::Output &&
-            resources[store->aux].index==0 && store->src0.type()==TypedType::F32x4;
-        if (lighting_shape) {
-            uint32_t uniform_words=0;
-            for (const auto *uniform:uniforms)
-                uniform_words=std::max<uint32_t>(uniform_words,
-                    uniform->index+typed_component_count(uniform->type));
-            uniform_words=(uniform_words+1u)&~1u;
-            if (uniform_words!=26) {
-                out.error="fragment lighting shape has an unexpected uniform footprint";
-                return false;
-            }
-            std::vector<IrUniformFloat> uniform_meta;
-            for (const auto *uniform:uniforms)
-                uniform_meta.push_back({shader.resource_name(*uniform),typed_component_count(uniform->type),uniform->index});
-            return compile_fragment_phong_lighting_sdk300(uniform_meta,0,0,out);
-        }
-    }
-
     auto texture_tint_alpha_discard_shape=[&]() -> bool {
         if (instructions.size()!=11 || inputs.size()!=1 || inputs[0]->index!=0 ||
             inputs[0]->type!=TypedType::F32x2 || inputs[0]->semantic!=TypedSemantic::TexCoord ||
@@ -2452,19 +2412,33 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             inputs[0]->type==TypedType::F32x2 && samplers.size()==1 && samplers[0]->index==0 &&
             fragment_float_uniforms.size()==2 && uniforms.size()==2 &&
             fragment_float_uniforms[0].resource_index==0 && fragment_float_uniforms[1].resource_index==1;
+        const bool generic_float_control=!texture_control && samplers.empty() &&
+            !inputs.empty() && inputs.size()<=8 &&
+            (!uniforms.empty() || inputs.size()>3 ||
+             std::any_of(inputs.begin(),inputs.end(),[](const TypedResource *input) { return input->type!=TypedType::F32x4; })) &&
+            std::all_of(inputs.begin(),inputs.end(),[](const TypedResource *input) {
+                return typed_is_float(input->type) && typed_component_count(input->type)>=2 &&
+                    typed_component_count(input->type)<=4 &&
+                    (input->semantic==TypedSemantic::TexCoord || input->semantic==TypedSemantic::Color);
+            }) &&
+            std::all_of(uniforms.begin(),uniforms.end(),[](const TypedResource *uniform) {
+                return typed_is_float(uniform->type) && typed_component_count(uniform->type)>=1 &&
+                    typed_component_count(uniform->type)<=4;
+            });
         if (output_stores.empty() ||
-            (!texture_control && (!samplers.empty() || inputs.size()<2 || inputs.size()>3))) {
-            out.error = "typed fragment control path requires validated float4 inputs or the direct-texture control shape";
+            (!texture_control && !generic_float_control && (!samplers.empty() || inputs.size()<2 || inputs.size()>3))) {
+            out.error = "typed fragment control path requires float inputs or the direct-texture control shape";
             return false;
         }
-        if ((!loop_control && !texture_control && !uniforms.empty()) ||
-            (loop_control && (inputs.size()!=3 || !fragment_uniforms.empty() || fragment_s32_uniforms.size()!=1 || uniforms.size()!=1))) {
+        if ((!loop_control && !texture_control && !generic_float_control && !uniforms.empty()) ||
+            (loop_control && !generic_float_control &&
+             (inputs.size()!=3 || !fragment_uniforms.empty() || fragment_s32_uniforms.size()!=1 || uniforms.size()!=1))) {
             out.error=loop_control ?
                 "typed loop path requires three float4 inputs and one S32 uniform" :
-                "typed non-loop control path does not accept uniforms";
+                "typed non-loop control path does not accept these uniforms";
             return false;
         }
-        if (!texture_control) {
+        if (!texture_control && !generic_float_control) {
             for (size_t i=0;i<inputs.size();++i) {
                 if (inputs[i]->type!=TypedType::F32x4 || inputs[i]->index!=i) {
                     out.error = "typed fragment control inputs must be contiguous float4 locations";
@@ -2492,10 +2466,36 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         std::string machine_error;
         std::vector<MachineOperand> literal_bindings;
         std::vector<IrLiteralF32> literal_meta;
-        if (texture_control) {
+        std::vector<TypedType> literal_types(program.literals().size(),TypedType::Invalid);
+        auto note_literal_type=[&](TypedValue value) {
+            if (value.kind()!=TypedValueKind::Literal || value.id()>=literal_types.size()) return;
+            if (literal_types[value.id()]==TypedType::Invalid) literal_types[value.id()]=value.type();
+        };
+        for (const auto &instruction:instructions) {
+            note_literal_type(instruction.dst);
+            note_literal_type(instruction.src0);
+            note_literal_type(instruction.src1);
+        }
+        for (const auto &composite:program.float3_composites())
+            for (const auto value:composite) note_literal_type(value);
+        for (const auto &composite:program.float4_composites())
+            for (const auto value:composite) note_literal_type(value);
+        for (const auto &select:program.float_selects()) {
+            note_literal_type(select.true_value);
+            note_literal_type(select.false_value);
+        }
+        if (texture_control || generic_float_control) {
+            uint32_t uniform_words=texture_control ? 2u : 0u;
+            if (generic_float_control) {
+                for (const auto *uniform:uniforms)
+                    uniform_words=std::max<uint32_t>(uniform_words,
+                        uniform->index+typed_component_count(uniform->type));
+                uniform_words=(uniform_words+1u)&~1u;
+            }
             literal_bindings.resize(program.literals().size());
             std::unordered_map<uint32_t,uint32_t> literal_index_by_bits;
             for (uint32_t id=0;id<program.literals().size();++id) {
+                if (literal_types[id]!=TypedType::F32) continue;
                 const uint32_t bits=program.literals()[id];
                 if (bits==0) {
                     literal_bindings[id]=primary.physical(machine_immediate(0),MachineType::F32);
@@ -2503,23 +2503,37 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
                 }
                 auto [it,inserted]=literal_index_by_bits.emplace(bits,static_cast<uint32_t>(literal_meta.size()));
                 if (inserted) literal_meta.push_back({it->second,bits});
-                const uint32_t word=2u+it->second;
-                if (word>=254) { out.error="texture-control literal table exceeds compact SA subset"; return false; }
+                const uint32_t word=uniform_words+it->second;
+                if (word>=254) { out.error="fragment-control literal table exceeds compact SA subset"; return false; }
                 literal_bindings[id]=primary.physical(machine_secondary(static_cast<uint8_t>(word/2u)),
                                                        MachineType::F32,static_cast<uint8_t>(word&1u));
             }
         }
         if (!lower_typed_program_impl(program,primary,machine_error,false,nullptr,nullptr,nullptr,
                                       true,output_resource,
-                                      texture_control?&literal_bindings:nullptr)) {
+                                      (texture_control||generic_float_control)?&literal_bindings:nullptr)) {
             out.error=machine_error;
             return false;
         }
-        if (loop_control)
+        if (loop_control && !generic_float_control)
             return compile_fragment_loop_machine(primary,fragment_s32_uniforms[0],0,0,out);
         if (texture_control)
             return compile_fragment_texture_control_machine(primary,fragment_float_uniforms,literal_meta,
                                                             fragment_samplers[0],0,0,out);
+        if (generic_float_control) {
+            std::vector<IrAttribute> input_meta;
+            input_meta.reserve(inputs.size());
+            for (const auto *input:inputs) {
+                const uint8_t semantic=input->semantic==TypedSemantic::Color ? 6 : 14;
+                input_meta.push_back({shader.resource_name(*input),typed_component_count(input->type),
+                                      static_cast<uint32_t>(input->index)*4u,semantic,input->semantic_index});
+            }
+            std::vector<IrUniformFloat> uniform_meta;
+            uniform_meta.reserve(uniforms.size());
+            for (const auto *uniform:uniforms)
+                uniform_meta.push_back({shader.resource_name(*uniform),typed_component_count(uniform->type),uniform->index});
+            return compile_fragment_cfg_machine(primary,input_meta,uniform_meta,literal_meta,0,0,out);
+        }
         return compile_fragment_control_machine(primary,static_cast<uint8_t>(inputs.size()),0,0,out);
     }
 

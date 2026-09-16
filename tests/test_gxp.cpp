@@ -783,52 +783,6 @@ int test_gxp_writer() {
         }
     }
 
-    {
-        const std::vector<vsc::backend::IrUniformFloat> uniforms={
-            {"Flight_global_ambient",4,0},{"Alights_ambients",4,4},{"Blights_diffuses",4,8},
-            {"Clights_speculars",4,12},{"Dlights_positions",4,16},{"Elights_attenuations",3,20},
-            {"Gshininess",1,24},
-        };
-        vsc::backend::IrCompileResult phong;
-        if (!vsc::backend::compile_fragment_phong_lighting_sdk300(uniforms,0,0,phong)) {
-            std::fprintf(stderr,"test_gxp: Phong fragment SDK 3.0 profile failed: %s\n",phong.error.c_str());
-            ++failures;
-        } else {
-            ProgramView view(phong.gxp.data(),phong.gxp.size());
-            const uint8_t expected_interface[32]={
-                0,0,0,0,0,0,0,0,0,0,1,4,6,0,0,0,
-                4,0,0,0,0x0f,0x20,0xc0,0x0c,0,0,0,0,0x30,0,0,0,
-            };
-            const auto code=view.primary_program();
-            const auto secondary=view.secondary_program();
-            const auto varying=view.varyings();
-            ParameterView global{},ambient{},shininess{};
-            uint64_t vdual0=0,vdual1=0,v16=0,secondary_first=0,secondary_last=0;
-            if (code.size>=71*8) {
-                std::memcpy(&vdual0,code.data+30*8,8);
-                std::memcpy(&vdual1,code.data+31*8,8);
-                std::memcpy(&v16,code.data+70*8,8);
-            }
-            if (secondary.size>=16*8) {
-                std::memcpy(&secondary_first,secondary.data,8);
-                std::memcpy(&secondary_last,secondary.data+15*8,8);
-            }
-            if (!view.valid() || phong.gxp.size()!=1240 || view.logical_size()!=1240 ||
-                view.minor_version()!=5 || view.sdk_version()!=0x0300 || view.flags()!=0x00181007 ||
-                view.primary_register_count()!=24 || view.secondary_register_count()!=40 ||
-                view.primary_instruction_count()!=71 || view.secondary_instruction_count()!=16 ||
-                view.container_count()!=2 || view.parameter_count()!=7 ||
-                view.compiler_version_raw()!=0x00033a90 || varying.size!=sizeof(expected_interface) ||
-                std::memcmp(varying.data,expected_interface,sizeof(expected_interface))!=0 ||
-                !view.parameter(0,global) || global.name!="Flight_global_ambient" || global.resource_index!=12 ||
-                !view.parameter(1,ambient) || ambient.name!="Alights_ambients" || ambient.resource_index!=0 ||
-                !view.parameter(6,shininess) || shininess.name!="Gshininess" || shininess.resource_index!=24 ||
-                vdual0!=0x200071002f8c10fdULL || vdual1!=0x2004111290540080ULL ||
-                v16!=0x10a4078600046f3dULL || secondary_first!=0x38820d02434c0000ULL ||
-                secondary_last!=0xf804014000000000ULL)
-                failures += fail("Phong fragment profile does not match SDK 3.0.0 contract");
-        }
-    }
 
     return failures;
 }

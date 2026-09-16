@@ -1567,14 +1567,29 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 return false;
             }
             if (instruction.src0.type() != instruction.src1.type()) {
-                out.error = "machine compare source types do not match";
+                out.error = "machine compare source types do not match: src0=" +
+                    std::to_string(static_cast<unsigned>(instruction.src0.type())) +
+                    " src1=" + std::to_string(static_cast<unsigned>(instruction.src1.type())) +
+                    " kind0=" + std::to_string(static_cast<unsigned>(instruction.src0.kind())) +
+                    " kind1=" + std::to_string(static_cast<unsigned>(instruction.src1.kind()));
                 return false;
             }
+            auto resolve_integer_compare_source=[&](const MachineOperand &operand, MachineType type,
+                                                     usse::RegisterRef &reg) -> bool {
+                if (operand.kind()==MachineOperandKind::Literal) {
+                    if (operand.type()!=type || operand.id()>=program.literals().size()) return false;
+                    const uint32_t value=program.literals()[operand.id()];
+                    if (value>127u) return false;
+                    reg={usse::RegisterBank::Immediate,static_cast<uint8_t>(value)};
+                    return true;
+                }
+                return resolve_register_value(operand,type,out.value_registers,&reg);
+            };
             if (instruction.src0.type() == MachineType::U32) {
                 usse::VtstSemantic compare{};
-                if (!resolve_register_value(instruction.src0, MachineType::U32, out.value_registers, &compare.lhs) ||
-                    !resolve_register_value(instruction.src1, MachineType::U32, out.value_registers, &compare.rhs)) {
-                    out.error = "machine compare requires register-backed U32 sources";
+                if (!resolve_integer_compare_source(instruction.src0,MachineType::U32,compare.lhs) ||
+                    !resolve_integer_compare_source(instruction.src1,MachineType::U32,compare.rhs)) {
+                    out.error = "machine compare requires register-backed or small-immediate U32 sources";
                     return false;
                 }
                 compare.predicate = guard;
@@ -1596,9 +1611,9 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 if (!builder.instruction(compare)) { out.error = "failed to encode machine F32 compare"; return false; }
             } else if (instruction.src0.type() == MachineType::S32) {
                 usse::VtstS32Semantic compare{};
-                if (!resolve_register_value(instruction.src0,MachineType::S32,out.value_registers,&compare.lhs) ||
-                    !resolve_register_value(instruction.src1,MachineType::S32,out.value_registers,&compare.rhs)) {
-                    out.error="machine compare requires register-backed S32 sources";
+                if (!resolve_integer_compare_source(instruction.src0,MachineType::S32,compare.lhs) ||
+                    !resolve_integer_compare_source(instruction.src1,MachineType::S32,compare.rhs)) {
+                    out.error="machine compare requires register-backed or small-immediate S32 sources";
                     return false;
                 }
                 compare.predicate=guard;

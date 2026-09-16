@@ -255,6 +255,23 @@ int test_typed_ir() {
 
     {
         TypedProgram program;
+        const auto lhs=program.input<TypedType::S32>(0);
+        const auto one=program.literal_s32(1);
+        const auto predicate=program.make_predicate();
+        const bool built=lhs.kind()!=TypedValueKind::None && one.kind()!=TypedValueKind::None &&
+            predicate.kind()!=TypedValueKind::None &&
+            program.emit<TypedOpcode::Compare>(static_cast<uint8_t>(usse::CompareOp::Less),predicate,lhs,one);
+        MachineCompileResult result;
+        usse::VtstS32Semantic decoded{};
+        if (!built || !compile_typed_program(program,result) || result.words.size()!=1 ||
+            !usse::decode_vtst_s32_semantic(result.words[0],&decoded) ||
+            decoded.lhs.bank!=usse::RegisterBank::PrimaryAttribute || decoded.rhs.bank!=usse::RegisterBank::Immediate ||
+            decoded.rhs.num!=1)
+            failures += fail("typed S32 compare did not preserve a small immediate VTST source");
+    }
+
+    {
+        TypedProgram program;
         const auto lhs=program.input<TypedType::F32>(0);
         const auto rhs=program.input<TypedType::F32>(2);
         const auto predicate=program.make_predicate();

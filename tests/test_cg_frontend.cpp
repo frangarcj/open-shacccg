@@ -783,6 +783,38 @@ bool compile_geometrizer_cmp_fragment(const std::string &source) {
     return ok;
 }
 
+bool fragment_cfg_mutation_changes_gxp() {
+    auto snapshot=[](const std::string &text,std::vector<uint8_t> &gxp) -> bool {
+        VscCompileRequest request{};
+        request.source_name="generic-fragment-cfg.cg";
+        request.source=text.data(); request.source_size=text.size();
+        request.entrypoint="main"; request.stage=VSC_STAGE_FRAGMENT;
+        VscCompileResult result{};
+        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.gxp_size && !result.diagnostic_count;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            ok=view.valid();
+            if (ok) gxp.assign(result.gxp_data,result.gxp_data+result.gxp_size);
+        }
+        vsc_destroy_result(&request.allocator,&result);
+        return ok;
+    };
+    const std::string source=R"(
+float4 main(float3 n:TEXCOORD2, float4 color:COLOR0, uniform float gain):COLOR0 {
+    float4 outc=color;
+    for (short i=0;i<1;i++) {
+        outc.rgb += n * gain * 0.75;
+    }
+    return outc;
+})";
+    auto changed=source;
+    const auto at=changed.find("0.75");
+    if (at==std::string::npos) return false;
+    changed.replace(at,4,"0.5");
+    std::vector<uint8_t> a,b;
+    return snapshot(source,a) && snapshot(changed,b) && !equal_except_guids(b.data(),b.size(),a);
+}
+
 bool vertex_mutations_follow_source(const std::string &source,
                                     const char *rewire_from,const char *rewire_to) {
     auto snapshot=[](const std::string &text,const char *name,std::vector<uint8_t> &gxp) -> bool {
@@ -1536,6 +1568,9 @@ int test_cg_frontend() {
                 249,8,0,params,2,words,3))
             failures += fail("Cg vertex position/uv passthrough did not reproduce oracle profile");
     }
+    if (!fragment_cfg_mutation_changes_gxp())
+        failures += fail("generic fragment CFG mutation did not affect generated GXP");
+
     {
         const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/vp-geometrizer-poly.cg");
         if (source.empty() || !compile_geometrizer_poly_vertex(source))

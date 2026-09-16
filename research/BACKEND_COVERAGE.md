@@ -197,15 +197,13 @@ disk (1823 logical), 123 primary + 6 secondary instructions, PA=28/SA=94,
 repacked to Sony's SDK 3.0 default-uniform layout (88 words + six literals),
 including the observed light/matrix/point-size resource indices.
 
-The one-light Phong fragment stage now follows SDK 3.0 byte-for-byte too. Sony
-collapses the former 188-word v1.4 primary-only lowering to 71 primary + 16
-secondary instructions in a 1240-byte v1.5 image, with PA=24/SA=40, seven TEMP
-registers, two literal slots and flags `0x00181007`. The schedule is reconstructed
-from semantic VTST/VMAD/VMAD2/VDUAL/VCOMP/V32NMAD/VPCK/VBW/BR builders; the only
-newly exposed narrow forms are the Phong-fragment VDP+VMOV and FRCP+VMUL dual
-issues, `skip_invalid=false` VMAX value-VTST, and the final V16NMAD VMAX output.
-Reflection matches Sony's reordered uniform layout, with global ambient at word
-12 and the light ambient/diffuse/specular vectors at words 0/4/8.
+The one-light Phong fragment SDK 3.0 capture remains a fidelity oracle: Sony
+emits 71 primary + 16 secondary instructions in a 1240-byte v1.5 image, with
+PA=24/SA=40. The full-shader production schedule that reproduced that image was
+removed after mutation tests showed why large structural templates are the wrong
+architecture. Phong fragment now stays on generic Typed/Machine lowering; the
+independently decoded VTST/VDUAL/V16 forms remain available for future local
+instruction-selection and scheduling optimizations.
 
 The one-plane `clip_wvp` vertex path now uses the SDK 3.0 schedule as well. The
 private Unicorn oracle still reports diagnostic 403 on the original vitaGL form
@@ -219,23 +217,20 @@ plane at 48, point size at 52 and the two observed literal slots. The final ISA
 gap was a fail-closed VMAD4 form writing CLP0 with extended GPI1 selector 6; its
 semantic encoder accepts only the captured OUT5.y/PA0 configuration.
 
-Taken together, these profiles close the **24 / 24 captured vitaGL corpus cases**
-against the SDK 3.0 fidelity target used by this sweep. Every current vitaGL
-output is GXP v1.5 and routes through an SDK 3.0 profile validated for its
-observable metadata and USSE schedule. This statement is deliberately scoped to
-the pinned 24-case branch-oriented matrix, not to every possible combination of
-vitaGL fixed-function defines. The private oracle also needs equivalent reduced
-probes for a few aggregate-heavy shapes: constant sampler-array elements in the
-multi-texture fragment cases and the one-element aggregate scalarization noted
-for `clip_wvp`. Those reductions are oracle-isolation tools only; the OpenShaccCg
-corpus inputs remain the original vitaGL sources. Real-Vita `sceGxmProgramCheck`
-and render validation remains the separate hardware gate.
+The captured vitaGL corpus remains **24 / 24 compilable**. The earlier SDK 3.0
+fidelity sweep established reference schedules for all 24 pinned cases, but those
+references are no longer all production schedules: large whole-shader templates
+are being removed in favor of generic Typed/Machine lowering plus local
+optimizations. Phong fragment is the first converted case; it now compiles through
+the generic CFG path and intentionally emits a longer v1.4 schedule while its
+71+16 SDK 3.0 capture remains oracle evidence for future local optimizations.
 
-Several large vitaGL profiles select complete fixed schedules, not a generic
-scheduler result. Their guards still require a source-mutation audit; do not
-interpret the captured byte-equality result as proof that changing an expression
-or constant is compiled correctly. New work uses subexpression optimizations and
-mutation tests rather than adding more whole-shader profiles.
+This statement is deliberately scoped to the pinned 24-case branch-oriented
+matrix, not every possible combination of vitaGL fixed-function defines. The
+private oracle still needs reduced probes for a few aggregate-heavy shapes, and
+real-Vita `sceGxmProgramCheck` / render validation remains the separate hardware
+gate. New work uses source-mutation tests to ensure arithmetic edits change the
+GXP instead of being hidden by a fixed whole-shader schedule.
 
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
