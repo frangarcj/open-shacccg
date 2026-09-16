@@ -707,6 +707,22 @@ int test_usse() {
                 decoded.rhs.bank!=RegisterBank::Special || decoded.rhs.num!=0)
                 failures += fail("SDK 3.0 smooth-lighting VMAX nonzero value-VTST mismatch");
         }
+        const uint64_t phong_words[]={0x484182801f92be00ULL,0x484182801fb2be80ULL};
+        for (size_t i=0;i<2;++i) {
+            VtstF32MaxNonzeroValueSemantic test{};
+            test.dst={RegisterBank::Temp,static_cast<uint8_t>(124+i)};
+            test.src=test.dst;
+            test.rhs={RegisterBank::Special,0};
+            test.skip_invalid=false;
+            uint64_t word=0;
+            VtstF32MaxNonzeroValueSemantic decoded{};
+            if (!encode_vtst_f32_max_nonzero_value_semantic(test,&word) || word!=phong_words[i] ||
+                !decode_vtst_f32_max_nonzero_value_semantic(word,&decoded) || decoded.skip_invalid ||
+                decoded.dst.bank!=RegisterBank::Temp || decoded.dst.num!=124+i ||
+                decoded.src.bank!=RegisterBank::Temp || decoded.src.num!=124+i ||
+                decoded.rhs.bank!=RegisterBank::Special || decoded.rhs.num!=0)
+                failures += fail("SDK 3.0 Phong VMAX nonzero value-VTST mismatch");
+        }
     }
     {
         struct Probe {

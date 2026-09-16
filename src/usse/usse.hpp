@@ -387,6 +387,7 @@ struct VtstF32MaxNonzeroValueSemantic {
     RegisterRef dst{};
     RegisterRef src{};
     RegisterRef rhs{};
+    bool skip_invalid = true;
 };
 
 // Oracle-validated signed-32 loop compare. The first supported form is the

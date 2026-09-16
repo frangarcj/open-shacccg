@@ -1259,7 +1259,7 @@ bool encode_vtst_f32_max_nonzero_value_semantic(const VtstF32MaxNonzeroValueSema
         !encode_src1_bank(i.src.bank,&f.src1_bank,&f.src1_ext) ||
         !encode_src1_bank(i.rhs.bank,&f.src2_bank,&f.src2_ext)) return false;
     f.pred=static_cast<uint8_t>(Predicate::Always);
-    f.skip_invalid=true;
+    f.skip_invalid=i.skip_invalid;
     f.control_bit_54=true;
     f.precision=true;
     f.zero_test=2;
@@ -1281,7 +1281,7 @@ bool decode_vtst_f32_max_nonzero_value_semantic(uint64_t word,
     if (!i) return false;
     VtstFields f{};
     if (!decode_vtst(word,&f) || f.pred!=static_cast<uint8_t>(Predicate::Always) ||
-        !f.skip_invalid || !f.control_bit_54 || f.once_only || f.sync_start ||
+        !f.control_bit_54 || f.once_only || f.sync_start ||
         !f.precision || f.src1_negative || f.src2_vector_scalar_component || f.repeat_count!=0 ||
         f.sign_test!=0 || f.zero_test!=2 || !f.test_crcomb_and || f.channel!=0 ||
         f.predicate_destination!=0 || !f.test_write_enable || f.alu_select!=0 || f.alu_op!=10)
@@ -1292,6 +1292,7 @@ bool decode_vtst_f32_max_nonzero_value_semantic(uint64_t word,
     i->dst.num=f.dest_num;
     i->src.num=f.src1_num;
     i->rhs.num=f.src2_num;
+    i->skip_invalid=f.skip_invalid;
     return true;
 }
 
