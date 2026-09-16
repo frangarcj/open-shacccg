@@ -1,10 +1,12 @@
 # Optimization backlog
 
 This file tracks code-generation work that is intentionally **not** required for
-language/backend correctness.  The Sony SceShaccCg 1.6.5 oracle is the reference
-for observable instruction selection and scheduling, but OpenShaccCg may emit a
-longer semantically equivalent program until a transformation is independently
-validated.
+language/backend correctness. The current vitaGL fidelity reference is Sony
+SceShaccCg SDK 3.0.0; older Geometrizer baselines below were captured with the
+1.6.5 oracle and remain historical optimization targets until they are explicitly
+recaptured. OpenShaccCg may emit a longer semantically equivalent program where
+byte fidelity has not yet been made a target, until a transformation is
+independently validated.
 
 Keep these items separate from `BACKEND_COVERAGE.md`: a shader compiling through
 Typed IR -> Machine IR -> legal USSE/GXP is a coverage milestone; matching Sony's

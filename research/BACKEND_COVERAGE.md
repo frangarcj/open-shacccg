@@ -219,6 +219,18 @@ plane at 48, point size at 52 and the two observed literal slots. The final ISA
 gap was a fail-closed VMAD4 form writing CLP0 with extended GPI1 selector 6; its
 semantic encoder accepts only the captured OUT5.y/PA0 configuration.
 
+Taken together, these profiles close the **24 / 24 captured vitaGL corpus cases**
+against the SDK 3.0 fidelity target used by this sweep. Every current vitaGL
+output is GXP v1.5 and routes through an SDK 3.0 profile validated for its
+observable metadata and USSE schedule. This statement is deliberately scoped to
+the pinned 24-case branch-oriented matrix, not to every possible combination of
+vitaGL fixed-function defines. The private oracle also needs equivalent reduced
+probes for a few aggregate-heavy shapes: constant sampler-array elements in the
+multi-texture fragment cases and the one-element aggregate scalarization noted
+for `clip_wvp`. Those reductions are oracle-isolation tools only; the OpenShaccCg
+corpus inputs remain the original vitaGL sources. Real-Vita `sceGxmProgramCheck`
+and render validation remains the separate hardware gate.
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.
@@ -603,14 +615,14 @@ SceShaccCg compatibility. A separate external-corpus runner now pins real shader
 workloads in `research/real_world_corpus.json` and keeps their GPL/LGPL source out
 of the repository and runtime.
 
-The initial production-shaped baseline is:
+The current production-shaped gate is:
 
 | Project | Passing | Captured Cg | Known targets | Captured compile rate | Target rate |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | DSVita | 2 | 36 | 36 | 5.6% | 5.6% |
-| vitaGL | 2 | 24 | 24 | 8.3% | 8.3% |
+| vitaGL | 24 | 24 | 24 | 100.0% | 100.0% |
 | Geometrizer | 4 | 4 | 14 | 100.0% | 28.6% |
-| **Overall** | **8** | **64** | **74** | **12.5%** | **10.8%** |
+| **Overall** | **30** | **64** | **74** | **46.9%** | **40.5%** |
 
 DSVita compile units model the source concatenation and preprocessor variants
 actually selected by its Vita runtime rather than merely counting `.cg` files.

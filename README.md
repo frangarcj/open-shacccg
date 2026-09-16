@@ -219,13 +219,14 @@ compiler facts, so it is not used as the denominator for general compatibility.
 external DSVita, vitaGL and Geometrizer revisions. External GPL/LGPL source stays
 in the ignored `.real-corpus-cache/` directory and is used only as test input.
 
-The initial baseline is 8/64 captured Cg compile units (12.5%), or 8/74 known
-real shader targets (10.8%) when the ten Geometrizer vitaGL GLSL-to-Cg
+The current baseline is 30/64 captured Cg compile units (46.9%), or 30/74 known
+real shader targets (40.5%) when the ten Geometrizer vitaGL GLSL-to-Cg
 translations that still need to be captured are included in the denominator.
-The low percentage is deliberate: this gate exposes production features such as
-uniform blocks, multiple varyings/samplers, integer texture work, bitcasts and the
-vitaGL fixed-function templates that the 115-case differential probe corpus does
-not attempt to enumerate.
+vitaGL is 24/24 in this pinned branch-oriented matrix; DSVita remains 2/36 and is
+now the largest captured compatibility gap. The denominator is intentionally
+production-shaped: it exposes uniform blocks, multiple varyings/samplers,
+integer texture work, bitcasts and fixed-function combinations that the focused
+differential probe corpus does not attempt to enumerate.
 
 Build the full host pipeline, fetch the exact pinned revisions and reproduce the
 report with:
