@@ -179,6 +179,22 @@ V32NMAD operations plus two SMLSI repeat-control words and the observed
 VDP+VMOV / FRCP+VMOV VDUAL forms; no operand-bearing raw instruction is injected
 by the runtime profile.
 
+Smooth-lighting ISA readiness is now complete for the captured SDK 3.0.0
+one-light vertex: all 123 primary and 6 secondary words decode and re-encode
+identically. The last two gaps were VMAD3 instructions at primary indices 51
+and 65 with extended source1 selector 4 (`xy0`), paired with GPI1=`000`.
+The semantic API expresses `xy0` as `{X,Y,Zero,X}` (fourth lane unused) and
+rejects other unvalidated extended source1 selectors and VMAD4 combinations.
+Decoder reuse also resets both extended-GPI flags instead of inheriting them
+from the preceding instruction. Regression probes cover both captured words,
+standard/extended transitions and rejected neighboring selectors.
+
+This is **instruction-codec coverage, not full shader fidelity**. The production
+smooth-lighting path still uses generic Typed/Machine lowering and the older
+GXP layout; connecting the validated SDK 3.0 schedule, resources and metadata
+remains pending. The reference target is 1824 bytes on disk (1823 logical),
+123 primary + 6 secondary instructions, PA=28/SA=94 and flags `0x00190006`.
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.

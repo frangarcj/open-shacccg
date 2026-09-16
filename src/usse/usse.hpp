@@ -301,8 +301,8 @@ struct SmlsiSemantic {
 enum class RepeatMode : uint8_t { External=0, Internal=1, Both=2, Slmsi=3 };
 
 // VMAD is a three-input FMA where two inputs are GPI/FP-internal registers.
-// This builder covers the standard (non-extended-swizzle) F32 VMAD3/4 forms
-// used by the public vita2d matrix shaders.
+// Covers the standard F32 VMAD3/4 forms plus oracle-observed VMAD3 extended
+// GPI constants and source1 xy0 (expressed as {X,Y,Zero,X}, last lane unused).
 struct VmadSemantic {
     RegisterRef dst{};
     RegisterRef src1{};

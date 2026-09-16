@@ -617,6 +617,63 @@ int test_usse() {
             failures += fail("SDK 3.0 exp2-fog extended VMAD3 mismatch");
     }
     {
+        const uint64_t words[]={0x18e18081c1418519ULL,0x18e18082c341851bULL};
+        const RegisterRef destinations[]={{RegisterBank::Output,5},{RegisterBank::PrimaryAttribute,13}};
+        for (uint8_t n=0;n<2;++n) {
+            VmadSemantic mad{};
+            mad.dst=destinations[n];
+            mad.src1={RegisterBank::SecondaryAttribute,static_cast<uint8_t>(25+2*n)};
+            mad.write_mask=1; mad.vec4=false;
+            mad.gpi0_swizzle={{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}};
+            mad.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Zero,SwizzleChannel::X}};
+            mad.gpi1_zero3_extended=true;
+            uint64_t word=0,roundtrip=0;
+            VmadSemantic decoded{};
+            decoded.gpi0_one3_extended=true; // Reusing a result must not retain stale flags.
+            if (!encode_vmad_semantic(mad,&word) || word!=words[n] ||
+                !decode_vmad_semantic(word,&decoded) || decoded.vec4 ||
+                decoded.gpi0_one3_extended || !decoded.gpi1_zero3_extended ||
+                decoded.dst.bank!=mad.dst.bank || decoded.dst.num!=mad.dst.num ||
+                decoded.src1.bank!=mad.src1.bank || decoded.src1.num!=mad.src1.num ||
+                decoded.write_mask!=1 || decoded.src1_swizzle.c[0]!=SwizzleChannel::X ||
+                decoded.src1_swizzle.c[1]!=SwizzleChannel::Y ||
+                decoded.src1_swizzle.c[2]!=SwizzleChannel::Zero ||
+                decoded.src1_swizzle.c[3]!=SwizzleChannel::X ||
+                !encode_vmad_semantic(decoded,&roundtrip) || roundtrip!=word)
+                failures += fail("SDK 3.0 smooth VMAD3 source1 xy0 roundtrip mismatch");
+            if (!decode_vmad_semantic(0x18b18f80cf411100ULL,&decoded) ||
+                decoded.gpi0_one3_extended || decoded.gpi1_zero3_extended ||
+                !encode_vmad_semantic(decoded,&roundtrip) || roundtrip!=0x18b18f80cf411100ULL)
+                failures += fail("VMAD decoder retained extended state on a standard instruction");
+        }
+        VmadFields raw{};
+        if (!decode_vmad(words[0],&raw)) {
+            failures += fail("smooth VMAD raw probe did not decode");
+        } else {
+            for (uint8_t selector=0;selector<16;++selector) {
+                if (selector==4) continue;
+                raw.src1_swizzle=selector;
+                uint64_t word=0; VmadSemantic decoded{};
+                if (!encode_vmad(raw,&word) || decode_vmad_semantic(word,&decoded))
+                    failures += fail("VMAD accepted an unvalidated extended source1 selector");
+            }
+            raw.src1_swizzle=4; raw.opcode2=true;
+            raw.gpi1_swizzle_ext=false; raw.gpi1_swizzle=4;
+            uint64_t word=0; VmadSemantic decoded{};
+            if (!encode_vmad(raw,&word) || decode_vmad_semantic(word,&decoded))
+                failures += fail("VMAD4 accepted the VMAD3 extended source1 selector");
+        }
+        VmadSemantic invalid{};
+        invalid.dst={RegisterBank::Output,0}; invalid.src1={RegisterBank::SecondaryAttribute,0};
+        invalid.src1_swizzle={{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Zero,SwizzleChannel::X}};
+        uint64_t word=0;
+        if (encode_vmad_semantic(invalid,&word))
+            failures += fail("VMAD4 encoded an unvalidated xy0 source1 swizzle");
+        invalid.vec4=false; invalid.src1_swizzle.c[3]=SwizzleChannel::W;
+        if (encode_vmad_semantic(invalid,&word))
+            failures += fail("VMAD3 xy0 accepted a noncanonical fourth lane");
+    }
+    {
         VtstF32LaneLessScalarSemantic cmp{};
         cmp.vector_lane={RegisterBank::SecondaryAttribute,31};
         cmp.scalar={RegisterBank::Special,0};
