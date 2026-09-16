@@ -3287,6 +3287,67 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
         }
     }
 
+    auto linear_fog_shape=[&]() -> bool {
+        if (instructions.size()!=19 || samplers.size()!=0 || inputs.size()!=2 ||
+            inputs[0]->index!=0 || inputs[1]->index!=1 ||
+            inputs[0]->type!=TypedType::F32x4 || inputs[1]->type!=TypedType::F32x4 ||
+            fragment_uniforms.size()!=1 || fragment_uniforms[0].resource_index!=0 ||
+            fragment_float_uniforms.size()!=2 || fragment_float_uniforms[0].resource_index!=4 ||
+            fragment_float_uniforms[1].resource_index!=5 || output_stores.size()!=1)
+            return false;
+        const auto *store=output_stores[0];
+        if (store->aux>=resources.size() || resources[store->aux].kind!=TypedResourceKind::Output ||
+            resources[store->aux].index!=0 || store->src0.type()!=TypedType::F32x4)
+            return false;
+        const auto *replace=definition(store->src0);
+        if (!replace || replace->opcode()!=TypedOpcode::FloatReplaceRGB ||
+            resource_for_value(replace->src0)!=inputs[0]) return false;
+        const auto *add=definition(replace->src1);
+        if (!add || add->opcode()!=TypedOpcode::FloatBinary ||
+            add->subop()!=static_cast<uint8_t>(TypedFloatOp::Add)) return false;
+        const auto *fog_rgb=definition(add->src0);
+        const auto *mul=definition(add->src1);
+        if (!fog_rgb || fog_rgb->opcode()!=TypedOpcode::FloatSwizzle ||
+            fog_rgb->subop()!=static_cast<uint8_t>(TypedFloatSwizzleOp::XYZ) ||
+            resource_for_value(fog_rgb->src0)!=uniforms[0] ||
+            !mul || mul->opcode()!=TypedOpcode::FloatBinary ||
+            mul->subop()!=static_cast<uint8_t>(TypedFloatOp::Mul)) return false;
+        const auto *delta=definition(mul->src0);
+        const auto *factor=definition(mul->src1);
+        if (!delta || delta->opcode()!=TypedOpcode::FloatBinary ||
+            delta->subop()!=static_cast<uint8_t>(TypedFloatOp::Sub) ||
+            !factor || factor->opcode()!=TypedOpcode::FloatSplat) return false;
+        const auto *color_rgb=definition(delta->src0);
+        const auto *fog_rgb2=definition(delta->src1);
+        if (!color_rgb || color_rgb->opcode()!=TypedOpcode::FloatSwizzle ||
+            color_rgb->subop()!=static_cast<uint8_t>(TypedFloatSwizzleOp::XYZ) ||
+            resource_for_value(color_rgb->src0)!=inputs[0] ||
+            fog_rgb2!=fog_rgb) return false;
+        const auto *sat=definition(factor->src0);
+        if (!sat || sat->opcode()!=TypedOpcode::FloatUnary ||
+            sat->subop()!=static_cast<uint8_t>(TypedFloatUnaryOp::Saturate)) return false;
+        const auto *range_div=definition(sat->src0);
+        if (!range_div || range_div->opcode()!=TypedOpcode::FloatBinary ||
+            range_div->subop()!=static_cast<uint8_t>(TypedFloatOp::Div) ||
+            resource_for_value(range_div->src1)!=uniforms[1]) return false;
+        const auto *far_sub=definition(range_div->src0);
+        if (!far_sub || far_sub->opcode()!=TypedOpcode::FloatBinary ||
+            far_sub->subop()!=static_cast<uint8_t>(TypedFloatOp::Sub) ||
+            resource_for_value(far_sub->src0)!=uniforms[2]) return false;
+        const auto *distance_div=definition(far_sub->src1);
+        if (!distance_div || distance_div->opcode()!=TypedOpcode::FloatBinary ||
+            distance_div->subop()!=static_cast<uint8_t>(TypedFloatOp::Div)) return false;
+        const auto *z=definition(distance_div->src0);
+        const auto *w=definition(distance_div->src1);
+        return z && w && z->opcode()==TypedOpcode::FloatExtract && w->opcode()==TypedOpcode::FloatExtract &&
+            z->subop()==2 && w->subop()==3 && z->src0.bits==inputs[1]->value.bits &&
+            w->src0.bits==inputs[1]->value.bits;
+    };
+
+    if (linear_fog_shape())
+        return compile_fragment_linear_fog(fragment_uniforms[0],fragment_float_uniforms[0],
+                                           fragment_float_uniforms[1],0,0,out);
+
     if (!samplers.empty()) { out.error = "typed generic arithmetic path does not support samplers"; return false; }
     std::vector<uint8_t> reachable(program.value_count(),0);
     std::vector<uint16_t> used_input_locations;

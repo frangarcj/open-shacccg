@@ -123,6 +123,13 @@ their oracle equivalents. The private Unicorn runner still hits Sony diagnostic
 equivalent TEXUNIT binding produces the same GXP and is used only to isolate
 oracle behavior, not as an OpenShaccCg source rewrite.
 
+Linear fog is now byte-identical as well. The SDK 3.0.0 profile moves reciprocal
+and distance setup into a three-word secondary program, uses the v1.5 WPOS
+additional-input layout, and reduces the primary stream from the older 16-word
+generic lowering to 11 words. The only newly exposed ISA shape is the validated
+F32 VMAD2 scalar MAD used by `(fog_far-distance)/fog_range`; all remaining words
+are built from existing VCOMP/V32NMAD/VMAD/VPCK semantics.
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.

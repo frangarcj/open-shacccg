@@ -971,14 +971,42 @@ int test_cg_frontend() {
         failures += fail("vitaGL public blit vertex profile did not reproduce its observed v1.5 GXP shape");
     if (!compile_texture_tint_alpha_discard_profile())
         failures += fail("texture-tint alpha discard profile did not reproduce the oracle-derived semantic stream");
-    if (!compile_fragment_gxp(
-            "float4 main(float4 color:COLOR0,float4 coords:WPOS,uniform float4 fog_color,"
-            "uniform float fog_range,uniform float fog_far):COLOR0{"
-            "float4 out_color=color;float d=coords.z/coords.w;"
-            "float f=clamp((fog_far-d)/fog_range,0.0f,1.0f);"
-            "out_color.rgb=lerp(fog_color.rgb,color.rgb,f);return out_color;}",
-            "float3-fmix-replace-rgb.cg"))
-        failures += fail("float3 FMix + RGB replacement did not compile end to end");
+    {
+        const std::string source=
+            "float4 main(float4 vColor:COLOR0,float4 coords:WPOS,uniform float4 KfogColor,"
+            "uniform float Mfog_range,uniform float Nfog_far):COLOR0{"
+            "float4 out_color=vColor;float d=coords.z/coords.w;"
+            "float f=clamp((Nfog_far-d)/Mfog_range,0.0f,1.0f);"
+            "out_color.rgb=lerp(KfogColor.rgb,vColor.rgb,f);return out_color;}";
+        VscCompileRequest request{};
+        request.source_name="linear-fog-sdk30.cg"; request.source=source.data(); request.source_size=source.size();
+        request.entrypoint="main"; request.stage=VSC_STAGE_FRAGMENT;
+        VscCompileResult result{};
+        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.diagnostic_count==0;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            const uint64_t primary[]={
+                0xfa44070000000000ULL,0x3080080a80400181ULL,0x08800880af000083ULL,
+                0x008008a0ff13c042ULL,0x08a408843f045f03ULL,0x08a508801f006f00ULL,
+                0x40c00d9cffa18002ULL,0x18b18bc00f41113dULL,0x18b1818280011100ULL,
+                0x18b1808280409001ULL,0x40800d7ea0198002ULL,
+            };
+            const uint64_t secondary[]={
+                0x3080000280200102ULL,0x08841082a0a48081ULL,0xf804014000000000ULL,
+            };
+            const auto p=view.primary_program(),s=view.secondary_program();
+            ok=view.valid() && result.gxp_size==428 && view.logical_size()==426 &&
+                view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00181001 &&
+                view.primary_register_count()==8 && view.secondary_register_count()==7 &&
+                view.compiler_version_raw()==0x00033a90 && view.literal_count()==1 &&
+                view.container_count()==2 && view.parameter_count()==3 &&
+                p.size==sizeof(primary) && s.size==sizeof(secondary) &&
+                std::memcmp(p.data,primary,sizeof(primary))==0 &&
+                std::memcmp(s.data,secondary,sizeof(secondary))==0;
+        }
+        if (!ok) failures += fail("linear fog did not reproduce the SDK 3.0.0 GXP profile");
+        vsc_destroy_result(&request.allocator,&result);
+    }
     if (!compile_fragment_gxp(
             "float main(float x:TEXCOORD0):COLOR0{return exp(x);}",
             "scalar-exp.cg"))

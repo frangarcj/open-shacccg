@@ -99,6 +99,15 @@ Related texture cleanup:
    shader needs it; do not replace the exact CMP shape with branch-heavy generic
    select lowering.
 
+### vitaGL fog fidelity
+
+- Linear fog now reproduces SDK 3.0.0 byte-for-byte: GXP v1.5, 11 primary +
+  3 secondary instructions, PA=8/SA=7, one `1.0f` literal, WPOS additional-input
+  metadata, and the compact VCOMP/VMAD2/VMAD mix sequence.
+- Exponential-squared fog remains the next fidelity target. SDK 3.0.0 emits
+  12 primary + 3 secondary instructions versus the current 20-primary generic
+  lowering, so keep it as a separate optimization/codegen cut.
+
 ### `TM2_FAST_FS`
 
 Current integration fixture: `oracle_corpus_v2/fp-geometrizer-tm2-fast.cg`.

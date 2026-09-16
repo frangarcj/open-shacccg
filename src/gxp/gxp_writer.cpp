@@ -104,13 +104,17 @@ bool valid_desc(const ProgramImage &image) {
         return false;
     if (image.fragment_secondary_prefix_word &&
         (image.type!=ProgramType::Fragment || !image.secondary_instruction_count ||
-         image.fragment_interface_extension || image.fragment_primary_overlaps_interface))
+         image.fragment_interface_extension || image.fragment_primary_overlaps_interface ||
+         image.fragment_additional_inputs))
         return false;
     const uint8_t max_additional_inputs=image.fragment_additional_input_records ? 8 : 2;
+    const bool v15_secondary_inputs=image.type==ProgramType::Fragment &&
+        image.secondary_instruction_count && image.major_version==1 && image.minor_version>=5;
     if (image.fragment_additional_inputs > max_additional_inputs || image.fragment_input_components < 1 ||
         image.fragment_input_components > 4 ||
         (image.fragment_additional_inputs &&
-         (image.type != ProgramType::Fragment || image.secondary_instruction_count != 0 ||
+         (image.type != ProgramType::Fragment ||
+          (image.secondary_instruction_count && !v15_secondary_inputs) ||
           image.fragment_interface_extension || image.fragment_primary_overlaps_interface)))
         return false;
     if ((image.fragment_additional_input_records &&
@@ -201,7 +205,12 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
         // Keep the observed upper bound fail-closed until a larger legal stream
         // is captured.
         if (image.secondary_instruction_count > 9) return false;
-        if (image.fragment_secondary_prefix_word) {
+        if (image.fragment_additional_inputs) {
+            cursor=l.interface_off+kInterfaceSize;
+            if (!add_size(cursor,static_cast<size_t>(image.fragment_additional_inputs)*16u) ||
+                !add_size(cursor,sizeof(uint32_t))) return false;
+            l.secondary_off=cursor;
+        } else if (image.fragment_secondary_prefix_word) {
             l.secondary_off=l.interface_off+kInterfaceSize+sizeof(uint32_t);
             cursor=l.secondary_off;
         } else {
@@ -210,7 +219,11 @@ bool compute_layout(const ProgramImage &image, Layout &l) {
         if (!mul_size(image.secondary_instruction_count,sizeof(uint64_t),bytes)) return false;
         l.secondary_end = l.secondary_off + bytes;
         if (l.secondary_end > cursor) cursor=l.secondary_end;
-        cursor=align_up(cursor,8); if (!cursor) return false;
+        if (image.fragment_additional_inputs) {
+            if (!add_size(cursor,sizeof(uint32_t))) return false;
+        } else {
+            cursor=align_up(cursor,8); if (!cursor) return false;
+        }
     } else if (primary_overlap) {
         l.primary_off=l.interface_off+24;
         l.secondary_off=l.primary_off-4;

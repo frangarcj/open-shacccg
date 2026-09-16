@@ -489,6 +489,20 @@ int test_usse() {
             !decode_vmad2_s32_to_f32_semantic(word,&decoded))
             failures += fail("oracle S32->F32 VMAD2 core mismatch");
     }
+    {
+        Vmad2F32ScalarMadSemantic fog{};
+        fog.dst={RegisterBank::Temp,60}; fog.src0={RegisterBank::Temp,60};
+        fog.src1={RegisterBank::SecondaryAttribute,1}; fog.src2={RegisterBank::SecondaryAttribute,2};
+        fog.src1_negative=true; fog.no_schedule=true;
+        uint64_t word=0;
+        Vmad2F32ScalarMadSemantic decoded{};
+        if (!encode_vmad2_f32_scalar_mad_semantic(fog,&word) || word!=0x008008a0ff13c042ULL ||
+            !decode_vmad2_f32_scalar_mad_semantic(word,&decoded) ||
+            decoded.dst.bank!=RegisterBank::Temp || decoded.dst.num!=60 ||
+            decoded.src1.bank!=RegisterBank::SecondaryAttribute || decoded.src1.num!=1 ||
+            !decoded.src1_negative || !decoded.no_schedule)
+            failures += fail("SDK 3.0 F32 fog VMAD2 mismatch");
+    }
 
     // Semantic VMAD: reconstruct the complete four-instruction matrix path.
     const uint64_t matrix_words[] = {

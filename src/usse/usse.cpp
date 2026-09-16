@@ -86,6 +86,7 @@ const char *control_class_name(ControlClass cls) {
 
 VSC_RAW_CODEC(vmov, VmovEncoding, VmovFields)
 VSC_RAW_CODEC(vpck, VpckEncoding, VpckFields)
+VSC_RAW_CODEC(vmad2, Vmad2Encoding, Vmad2Fields)
 VSC_RAW_CODEC(v32nmad, V32NmadEncoding, V32NmadFields)
 VSC_RAW_CODEC(vcomp, VcompEncoding, VcompFields)
 VSC_RAW_CODEC(vmad, VmadEncoding, VmadFields)
@@ -625,6 +626,55 @@ bool decode_vmad2_s32_to_f32_semantic(uint64_t word, Vmad2S32ToF32Semantic *i) {
     return i && word==0x00800086a0403042ULL;
 }
 
+bool encode_vmad2_f32_scalar_mad_semantic(const Vmad2F32ScalarMadSemantic &i, uint64_t *word) {
+    if (!word || i.predicate!=Predicate::Always || i.dest_mask==0 || i.dest_mask>=16 ||
+        i.dst.bank!=RegisterBank::Temp || i.src0.bank!=RegisterBank::Temp ||
+        i.src1.bank!=RegisterBank::SecondaryAttribute || i.src2.bank!=RegisterBank::SecondaryAttribute ||
+        i.dst.num>=64 || i.src0.num>=64 || i.src1.num>=64 || i.src2.num>=64)
+        return false;
+    Vmad2Fields f{};
+    f.data_f16=false;
+    f.pred=0;
+    f.skip_invalid=i.skip_invalid;
+    f.no_schedule=i.no_schedule;
+    f.dest_mask=i.dest_mask;
+    f.src1_mod=i.src1_negative ? 1 : 0;
+    f.dest_bank=0;
+    f.src0_bank=false;
+    f.src1_bank=3;
+    f.src2_bank=3;
+    f.dest_num=i.dst.num;
+    f.src0_num=i.src0.num;
+    f.src1_num=i.src1.num;
+    f.src2_num=i.src2.num;
+    f.src0_swizzle_01=0;       // xxxx
+    f.src1_swizzle_01=1;       // yyyy
+    f.src1_swizzle_bit2=false;
+    f.src2_swizzle=0;          // xxxx
+    return encode_vmad2(f,word);
+}
+
+bool decode_vmad2_f32_scalar_mad_semantic(uint64_t word, Vmad2F32ScalarMadSemantic *i) {
+    if (!i) return false;
+    Vmad2Fields f{};
+    if (!decode_vmad2(word,&f) || f.data_f16 || f.pred!=0 || f.sync_start || f.src0_abs ||
+        f.src1_bank_ext || f.src2_bank_ext || f.src2_swizzle!=0 || f.src1_swizzle_bit2 ||
+        f.src2_mod!=0 || f.src0_bank || f.dest_bank!=0 || f.src1_bank!=3 || f.src2_bank!=3 ||
+        f.src0_swizzle_bit2 || f.src0_swizzle_01!=0 || f.src1_swizzle_01!=1 ||
+        (f.src1_mod!=0 && f.src1_mod!=1) || f.dest_mask==0)
+        return false;
+    i->dst={RegisterBank::Temp,f.dest_num};
+    i->src0={RegisterBank::Temp,f.src0_num};
+    i->src1={RegisterBank::SecondaryAttribute,f.src1_num};
+    i->src2={RegisterBank::SecondaryAttribute,f.src2_num};
+    i->predicate=Predicate::Always;
+    i->dest_mask=f.dest_mask;
+    i->src1_negative=f.src1_mod==1;
+    i->skip_invalid=f.skip_invalid;
+    i->no_schedule=f.no_schedule;
+    return true;
+}
+
 bool encode_vmad_semantic(const VmadSemantic &i, uint64_t *word) {
     if (!word || i.dst.num>=64 || i.src1.num>=64 || i.gpi0>=4 || i.gpi1>=4 || i.write_mask>=16 || i.repeat_count>=4) return false;
     VmadFields f{};
@@ -633,18 +683,22 @@ bool encode_vmad_semantic(const VmadSemantic &i, uint64_t *word) {
     f.pred=static_cast<uint8_t>(i.predicate); f.skip_invalid=i.skip_invalid; f.control_bit_53=i.control_bit_53;
     f.opcode2=i.vec4; f.repeat_mode=static_cast<uint8_t>(i.repeat_mode); f.repeat_count=i.repeat_count;
     f.no_schedule=i.no_schedule; f.write_mask=i.write_mask; f.dest_num=i.dst.num; f.src1_num=i.src1.num; f.gpi0_num=i.gpi0; f.gpi1_num=i.gpi1;
+    f.src1_neg=i.src1_negative;
     f.gpi0_swizzle=g0; f.gpi1_swizzle=g1; f.src1_swizzle=s1;
     return encode_vmad(f,word);
 }
 
 bool decode_vmad_semantic(uint64_t word, VmadSemantic *i) {
     if (!i) return false; VmadFields f{}; if (!decode_vmad(word,&f)) return false;
-    // Semantic v1 deliberately supports the non-extended, unmodified forms used by vita2d.
-    if (f.gpi0_swizzle_ext || f.gpi1_swizzle_ext || f.src1_swizzle_ext || f.gpi0_abs || f.gpi0_neg || f.gpi1_abs || f.gpi1_neg || f.src1_abs || f.src1_neg) return false;
+    // Semantic v1 deliberately supports the non-extended forms used by the
+    // validated matrix/fog profiles. Only src1 negation is currently exposed.
+    if (f.gpi0_swizzle_ext || f.gpi1_swizzle_ext || f.src1_swizzle_ext || f.gpi0_abs ||
+        f.gpi0_neg || f.gpi1_abs || f.gpi1_neg || f.src1_abs) return false;
     if (!decode_dest_bank(f.dest_bank,f.dest_bank_ext,&i->dst.bank) || !decode_src1_bank(f.src1_bank,f.src1_bank_ext,&i->src1.bank)) return false;
     i->dst.num=f.dest_num; i->src1.num=f.src1_num; i->predicate=static_cast<Predicate>(f.pred); i->gpi0=f.gpi0_num; i->gpi1=f.gpi1_num; i->write_mask=f.write_mask;
     i->gpi0_swizzle=decode_std_swizzle(f.gpi0_swizzle); i->gpi1_swizzle=decode_std_swizzle(f.gpi1_swizzle); i->src1_swizzle=decode_std_swizzle(f.src1_swizzle);
     i->vec4=f.opcode2; i->control_bit_53=f.control_bit_53; i->repeat_mode=static_cast<RepeatMode>(f.repeat_mode);
+    i->src1_negative=f.src1_neg;
     i->repeat_count=f.repeat_count; i->skip_invalid=f.skip_invalid; i->no_schedule=f.no_schedule;
     return true;
 }

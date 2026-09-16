@@ -36,6 +36,20 @@ using VpckEncoding = Encoding<0xf800000000000000ULL, 0x4000000000000000ULL,
     VSC_FIELD(VpckFields, component0_bit1, 7, 1), VSC_FIELD(VpckFields, src2_num, 1, 6),
     VSC_FIELD(VpckFields, component0_bit0, 0, 1)>;
 
+using Vmad2Encoding = Encoding<0xf800000000000000ULL, 0x0000000000000000ULL,
+    VSC_FIELD(Vmad2Fields, data_f16, 58, 1), VSC_FIELD(Vmad2Fields, pred, 56, 2),
+    VSC_FIELD(Vmad2Fields, skip_invalid, 55, 1), VSC_FIELD(Vmad2Fields, src0_swizzle_bit2, 53, 1),
+    VSC_FIELD(Vmad2Fields, sync_start, 52, 1), VSC_FIELD(Vmad2Fields, src0_abs, 50, 1),
+    VSC_FIELD(Vmad2Fields, src1_bank_ext, 49, 1), VSC_FIELD(Vmad2Fields, src2_bank_ext, 48, 1),
+    VSC_FIELD(Vmad2Fields, src2_swizzle, 45, 3), VSC_FIELD(Vmad2Fields, src1_swizzle_bit2, 44, 1),
+    VSC_FIELD(Vmad2Fields, no_schedule, 43, 1), VSC_FIELD(Vmad2Fields, dest_mask, 39, 4),
+    VSC_FIELD(Vmad2Fields, src1_mod, 37, 2), VSC_FIELD(Vmad2Fields, src2_mod, 35, 2),
+    VSC_FIELD(Vmad2Fields, src0_bank, 34, 1), VSC_FIELD(Vmad2Fields, dest_bank, 32, 2),
+    VSC_FIELD(Vmad2Fields, src1_bank, 30, 2), VSC_FIELD(Vmad2Fields, src2_bank, 28, 2),
+    VSC_FIELD(Vmad2Fields, dest_num, 22, 6), VSC_FIELD(Vmad2Fields, src1_swizzle_01, 20, 2),
+    VSC_FIELD(Vmad2Fields, src0_swizzle_01, 18, 2), VSC_FIELD(Vmad2Fields, src0_num, 12, 6),
+    VSC_FIELD(Vmad2Fields, src1_num, 6, 6), VSC_FIELD(Vmad2Fields, src2_num, 0, 6)>;
+
 using V32NmadEncoding = Encoding<0xf800000000000000ULL, 0x0800000000000000ULL,
     VSC_FIELD(V32NmadFields, pred, 56, 3), VSC_FIELD(V32NmadFields, skip_invalid, 55, 1),
     VSC_FIELD(V32NmadFields, src1_swizzle_10_11, 53, 2), VSC_FIELD(V32NmadFields, sync_start, 52, 1),

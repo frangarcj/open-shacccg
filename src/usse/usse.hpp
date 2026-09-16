@@ -188,6 +188,21 @@ struct VpckS32ToF32Semantic { uint8_t phase = 0; };
 // general VMAD2 field layout remains outside the validated semantic surface.
 struct Vmad2S32ToF32Semantic {};
 
+// Validated scalar F32 VMAD2 form used by SDK 3.0.0 fog code. The swizzles
+// are fixed to src0.xxxx + src1.yyyy * src2.xxxx; source1 may be negated.
+// This deliberately stays narrower than the full VMAD2 ISA surface.
+struct Vmad2F32ScalarMadSemantic {
+    RegisterRef dst{};
+    RegisterRef src0{};
+    RegisterRef src1{};
+    RegisterRef src2{};
+    Predicate predicate = Predicate::Always;
+    uint8_t dest_mask = 1;
+    bool src1_negative = false;
+    bool skip_invalid = true;
+    bool no_schedule = false;
+};
+
 enum class RepeatMode : uint8_t { External=0, Internal=1, Both=2, Slmsi=3 };
 
 // VMAD is a three-input FMA where two inputs are GPI/FP-internal registers.
@@ -208,6 +223,7 @@ struct VmadSemantic {
     // 1; the compact repeated mat4 profile emitted by Sony uses 0. The exact
     // hardware meaning of this control bit is intentionally left unnamed.
     bool control_bit_53 = true;
+    bool src1_negative = false;
     RepeatMode repeat_mode = RepeatMode::Slmsi;
     uint8_t repeat_count = 0;
     bool skip_invalid = true;
@@ -400,6 +416,33 @@ struct V32NmadFields {
     uint8_t src2_num = 0;
 };
 
+struct Vmad2Fields {
+    bool data_f16 = false;
+    uint8_t pred = 0;
+    bool skip_invalid = false;
+    bool src0_swizzle_bit2 = false;
+    bool sync_start = false;
+    bool src0_abs = false;
+    bool src1_bank_ext = false;
+    bool src2_bank_ext = false;
+    uint8_t src2_swizzle = 0;
+    bool src1_swizzle_bit2 = false;
+    bool no_schedule = false;
+    uint8_t dest_mask = 0;
+    uint8_t src1_mod = 0;
+    uint8_t src2_mod = 0;
+    bool src0_bank = false;
+    uint8_t dest_bank = 0;
+    uint8_t src1_bank = 0;
+    uint8_t src2_bank = 0;
+    uint8_t dest_num = 0;
+    uint8_t src1_swizzle_01 = 0;
+    uint8_t src0_swizzle_01 = 0;
+    uint8_t src0_num = 0;
+    uint8_t src1_num = 0;
+    uint8_t src2_num = 0;
+};
+
 struct VmadFields {
     uint8_t pred = 0;
     bool skip_invalid = false;
@@ -573,6 +616,8 @@ bool decode_vpck(uint64_t word, VpckFields *fields);
 bool encode_vpck(const VpckFields &fields, uint64_t *word);
 bool decode_v32nmad(uint64_t word, V32NmadFields *fields);
 bool encode_v32nmad(const V32NmadFields &fields, uint64_t *word);
+bool decode_vmad2(uint64_t word, Vmad2Fields *fields);
+bool encode_vmad2(const Vmad2Fields &fields, uint64_t *word);
 bool decode_vcomp(uint64_t word, VcompFields *fields);
 bool encode_vcomp(const VcompFields &fields, uint64_t *word);
 bool decode_vcomp_rcp_f32(uint64_t word, VcompRcpF32Fields *fields);
@@ -630,6 +675,8 @@ bool encode_vpck_s32_to_f32_semantic(const VpckS32ToF32Semantic &, uint64_t *wor
 bool decode_vpck_s32_to_f32_semantic(uint64_t word, VpckS32ToF32Semantic *instruction);
 bool encode_vmad2_s32_to_f32_semantic(const Vmad2S32ToF32Semantic &, uint64_t *word);
 bool decode_vmad2_s32_to_f32_semantic(uint64_t word, Vmad2S32ToF32Semantic *instruction);
+bool encode_vmad2_f32_scalar_mad_semantic(const Vmad2F32ScalarMadSemantic &, uint64_t *word);
+bool decode_vmad2_f32_scalar_mad_semantic(uint64_t word, Vmad2F32ScalarMadSemantic *instruction);
 bool encode_vmad_semantic(const VmadSemantic &instruction, uint64_t *word);
 bool decode_vmad_semantic(uint64_t word, VmadSemantic *instruction);
 bool encode_vtst_semantic(const VtstSemantic &instruction, uint64_t *word);
@@ -664,6 +711,7 @@ inline bool encode_semantic(const V16NmadF32ToS32Semantic &i, uint64_t *word) { 
 inline bool encode_semantic(const VpckS32x2ColorSemantic &i, uint64_t *word) { return encode_vpck_s32x2_color_semantic(i, word); }
 inline bool encode_semantic(const VpckS32ToF32Semantic &i, uint64_t *word) { return encode_vpck_s32_to_f32_semantic(i, word); }
 inline bool encode_semantic(const Vmad2S32ToF32Semantic &i, uint64_t *word) { return encode_vmad2_s32_to_f32_semantic(i, word); }
+inline bool encode_semantic(const Vmad2F32ScalarMadSemantic &i, uint64_t *word) { return encode_vmad2_f32_scalar_mad_semantic(i, word); }
 inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return encode_vmad_semantic(i, word); }
 inline bool encode_semantic(const VtstSemantic &i, uint64_t *word) { return encode_vtst_semantic(i, word); }
 inline bool encode_semantic(const VtstF32Semantic &i, uint64_t *word) { return encode_vtst_f32_semantic(i, word); }
