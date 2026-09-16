@@ -962,6 +962,26 @@ bool decode_vdual_smooth_f32_reciprocal_mul_semantic(uint64_t word, VdualSmoothF
     return i && word==0x208071002f8c10fdULL;
 }
 
+bool encode_vdual_phong_fragment_f32_dot_move_semantic(const VdualPhongFragmentF32DotMoveSemantic &, uint64_t *word) {
+    if (!word) return false;
+    *word=0x2004111290540080ULL;
+    return true;
+}
+
+bool decode_vdual_phong_fragment_f32_dot_move_semantic(uint64_t word, VdualPhongFragmentF32DotMoveSemantic *i) {
+    return i && word==0x2004111290540080ULL;
+}
+
+bool encode_vdual_phong_fragment_f32_reciprocal_mul_semantic(const VdualPhongFragmentF32ReciprocalMulSemantic &, uint64_t *word) {
+    if (!word) return false;
+    *word=0x200071002f8c10fdULL;
+    return true;
+}
+
+bool decode_vdual_phong_fragment_f32_reciprocal_mul_semantic(uint64_t word, VdualPhongFragmentF32ReciprocalMulSemantic *i) {
+    return i && word==0x200071002f8c10fdULL;
+}
+
 bool encode_smlsi_semantic(const SmlsiSemantic &i, uint64_t *word) {
     if (!word || i.temp_limit>=16 || i.primary_limit>=16 || i.secondary_limit>=16)
         return false;
