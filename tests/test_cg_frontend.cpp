@@ -666,29 +666,38 @@ bool compile_geometrizer_poly_vertex(const std::string &source) {
     bool ok=rc==0 && result.gxp_data && result.gxp_size && result.diagnostic_count==0;
     if (ok) {
         vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
-        ok=view.valid() && view.sdk_version()==0x0165 && view.flags()==0x00090000 &&
-            view.primary_register_count()==8 && view.secondary_register_count()>=7 &&
-            view.parameter_count()==4 && view.literal_count()>=3 &&
-            view.primary_instruction_count()==19 && view.secondary_instruction_count()==2;
+        ok=view.valid() && result.gxp_size==476 && view.logical_size()==476 &&
+            view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00190000 &&
+            view.primary_register_count()==8 && view.secondary_register_count()==8 &&
+            view.parameter_count()==4 && view.literal_count()==4 && view.container_count()==2 &&
+            view.primary_instruction_count()==13 && view.secondary_instruction_count()==4 &&
+            view.compiler_version_raw()==0x00033a90;
         const char *names[]={"a_pos","a_color","u_screen_size","u_z_max"};
         const uint32_t resources[]={0,4,0,2};
+        const uint8_t semantics[]={14,14,0,0};
+        const uint8_t semantic_indices[]={0,1,0,0};
         for (uint32_t i=0;ok && i<4;++i) {
             vsc::gxp::ParameterView parameter{};
-            ok=view.parameter(i,parameter) && parameter.name==names[i] && parameter.resource_index==resources[i];
+            ok=view.parameter(i,parameter) && parameter.name==names[i] &&
+                parameter.resource_index==resources[i] && parameter.semantic==semantics[i] &&
+                parameter.semantic_index==semantic_indices[i];
         }
-        bool vcomp=false,v32=false,vmov=false;
+        const uint64_t primary_words[]={
+            0xfa44070000000000ULL,0x38801d2183080080ULL,0x08a40884ef045041ULL,
+            0x08a508841f046f00ULL,0x18a18884cf1c0043ULL,0x30800c000fa03e01ULL,
+            0x08841880bf248000ULL,0x00802886f0000002ULL,0x00802922f003c0c3ULL,
+            0x00802880ff03d082ULL,0x08a5118590040001ULL,0x18e3818540558041ULL,
+            0xfb275000a0200000ULL,
+        };
+        const uint64_t secondary_words[]={
+            0x3080000280000001ULL,0x3080000a80000002ULL,
+            0x08800082a00000c0ULL,0xf804014000000000ULL,
+        };
         const auto code=view.primary_program();
-        for (size_t off=0;ok && off+sizeof(uint64_t)<=code.size;off+=sizeof(uint64_t)) {
-            uint64_t word=0;
-            std::memcpy(&word,code.data+off,sizeof(word));
-            const auto family=vsc::usse::classify_major(word);
-            vcomp |= family==vsc::usse::MajorClass::Vcomp;
-            v32 |= family==vsc::usse::MajorClass::V32Nmad;
-            vmov |= family==vsc::usse::MajorClass::Vmov;
-        }
-        const uint64_t secondary_words[]={0x3080000a80000002ULL,0x3080000280000001ULL};
         const auto secondary=view.secondary_program();
-        ok=ok && vcomp && v32 && vmov && secondary.size==sizeof(secondary_words) &&
+        ok=ok && code.size==sizeof(primary_words) &&
+            std::memcmp(code.data,primary_words,sizeof(primary_words))==0 &&
+            secondary.size==sizeof(secondary_words) &&
             std::memcmp(secondary.data,secondary_words,sizeof(secondary_words))==0;
     }
     if (!ok && result.diagnostic_count && result.diagnostics)
@@ -1486,7 +1495,7 @@ int test_cg_frontend() {
     {
         const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/vp-geometrizer-poly.cg");
         if (source.empty() || !compile_geometrizer_poly_vertex(source))
-            failures += fail("Geometrizer POLY_VS integration profile did not compile through generic vertex Machine IR");
+            failures += fail("Geometrizer POLY_VS integration profile did not reproduce SDK 3.0 output");
     }
     {
         const std::string source=read_text(std::string(OPENSHACCG_SOURCE_DIR)+"/oracle_corpus_v2/vp-geometrizer-poly3d.cg");

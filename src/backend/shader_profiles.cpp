@@ -1864,6 +1864,92 @@ bool compile_vertex_clip_sdk300(const std::vector<IrAttribute> &attributes,
     return true;
 }
 
+bool compile_vertex_geometrizer_poly_sdk300(const std::vector<IrAttribute> &attributes,
+                                            const std::vector<IrUniformFloat> &uniforms,
+                                            uint32_t binary_guid, uint32_t source_guid,
+                                            IrCompileResult &out) {
+    out={};
+    if (attributes.size()!=2 || uniforms.size()!=2 ||
+        attributes[0].components!=3 || attributes[0].resource_index!=0 ||
+        attributes[1].components!=4 || attributes[1].resource_index!=4) {
+        out.error="SDK 3.0 POLY vertex profile resource layout mismatch";
+        return false;
+    }
+    const auto screen=std::find_if(uniforms.begin(),uniforms.end(),[](const IrUniformFloat &u) {
+        return u.components==2 && u.resource_index==0;
+    });
+    const auto zmax=std::find_if(uniforms.begin(),uniforms.end(),[](const IrUniformFloat &u) {
+        return u.components==1 && u.resource_index==2;
+    });
+    if (screen==uniforms.end() || zmax==uniforms.end()) {
+        out.error="SDK 3.0 POLY vertex uniforms are not float2@0 + float@2";
+        return false;
+    }
+
+    ProgramBuilder primary,secondary;
+    using namespace usse;
+#include "backend/geometrizer_poly_sdk300_schedule.inc"
+    if (primary.words().size()!=13 || secondary.words().size()!=4) {
+        out.error="SDK 3.0 POLY semantic schedule size mismatch";
+        return false;
+    }
+
+    const uint8_t interface_block[32]={
+        0xf7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0x18,0,0x08,0,0,0,0,0,0,0,0,0,0,0,0,
+    };
+    const gxp::LiteralDesc literals[]={
+        {0,0x3df65b6eu},{1,0xbf800000u},{2,0x40000000u},{3,0x3f800000u},
+    };
+    const gxp::ParameterContainerDesc containers[]={{14,0,0,4},{19,0,4,4}};
+    const gxp::ParameterDesc parameters[]={
+        {attributes[0].name.c_str(),0,0,4,0,14,0,1,0},
+        {attributes[1].name.c_str(),0,0,4,0,14,1,1,4},
+        {screen->name.c_str(),1,0,2,14,0,0,1,0},
+        {zmax->name.c_str(),1,0,1,14,0,0,1,2},
+    };
+    gxp::ProgramImage image{};
+    image.type=gxp::ProgramType::Vertex;
+    image.minor_version=5;
+    image.sdk_version=0x0300;
+    image.binary_guid=binary_guid;
+    image.source_guid=source_guid;
+    image.program_flags=0x00190000;
+    image.buffer_flags=0x10000000;
+    image.primary_register_count=8;
+    image.secondary_register_count=8;
+    image.primary_phase_count=1;
+    image.data_buffer_count=4;
+    image.default_uniform_buffer_count=4;
+    image.compiler_version_raw=0x00033a90;
+    image.interface_block=interface_block;
+    image.interface_block_size=sizeof(interface_block);
+    image.secondary_instructions=secondary.words().data();
+    image.secondary_instruction_count=secondary.words().size();
+    image.primary_instructions=primary.words().data();
+    image.primary_instruction_count=primary.words().size();
+    image.containers=containers;
+    image.container_count=std::size(containers);
+    image.parameters=parameters;
+    image.parameter_count=std::size(parameters);
+    image.literals=literals;
+    image.literal_count=std::size(literals);
+    image.vertex_primary_padding_word=true;
+
+    const size_t needed=gxp::required_size(image);
+    if (!needed) {
+        out.error="GXP writer rejected SDK 3.0 POLY profile";
+        return false;
+    }
+    out.gxp.resize(needed);
+    if (!gxp::write_program(image,out.gxp.data(),out.gxp.size())) {
+        out.gxp.clear();
+        out.error="GXP writer failed for SDK 3.0 POLY profile";
+        return false;
+    }
+    return true;
+}
+
 bool compile_vertex_indexed_clear(const IrUniformVec4 &position,
                                   const IrUniformFloat &clear_depth,
                                   uint32_t binary_guid, uint32_t source_guid,

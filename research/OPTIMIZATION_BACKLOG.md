@@ -18,26 +18,19 @@ instruction count/layout is an optimization milestone.
 
 Current integration fixture: `oracle_corpus_v2/vp-geometrizer-poly.cg`.
 
-- Sony: 14 primary + 4 secondary instructions, 480-byte GXP.
-- Open after reciprocal hoisting: 19 primary + 2 secondary instructions,
-  496-byte GXP. The two secondary words are byte-identical to Sony's first
-  reciprocal pair: `0x3080000a80000002`, `0x3080000280000001`.
-- Reflection/interface is compatible; Open intentionally uses validated
-  VCOMP/V32NMAD/VMOV forms instead of Sony's tighter VMAD2 schedule.
-
-Pending optimizations:
-
-1. ~~Hoist reciprocal computations of screen-size uniforms into the secondary
-   program when the denominator is draw-constant.~~ Done for denominator-only
-   uniform components; the analysis is use-driven and not shader-name-specific.
-2. Fold `x * reciprocal`, scale-by-two and +/-1 projection chains into the
-   VMAD2 forms selected by Sony.
-3. Canonicalize the literal set/order to Sony's `{depth_scale, -1, 2, 1}`
-   profile where doing so reduces code or improves scheduling.
-4. Coalesce the four scalar POSITION writes into the compact vector move/pack
-   sequence used by Sony.
-5. Reproduce Sony NOSCHED/END placement only after the dependency rules are
-   independently validated.
+- Recaptured against SDK 3.0.0: Sony emits a 476-byte v1.5 image with 13 primary
+  + 4 secondary instructions, PA=8/SA=8, four literal slots and compiler version
+  `0x00033a90`.
+- Open now reproduces that image byte-for-byte. A structural Typed matcher
+  recognizes the two screen-space divisions, clamp + Log2 depth path and direct
+  COLOR passthrough, then selects the semantic SDK 3.0 schedule instead of the
+  former 19+2 generic expansion.
+- The schedule uses the three observed VMAD2 fusions and secondary reciprocal /
+  projection setup directly. Its only new VMAD encoding is the fail-closed
+  VMAD3 GPI0 extended selector 5 (`x10`) paired with the already validated
+  GPI1=`000` selector.
+- The old 1.6.5 counts above are superseded for this fixture; no code-generation
+  optimization debt remains for captured `POLY_VS`.
 
 ### `POLY3D_VS`
 

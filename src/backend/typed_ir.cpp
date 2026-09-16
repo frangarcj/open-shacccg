@@ -1451,6 +1451,54 @@ bool compile_typed_shader(const TypedShader &shader, IrCompileResult &out) {
             vertex_matrices.push_back({shader.resource_name(*resource), resource->index});
         }
 
+        // Geometrizer POLY vertex shape: 2D screen normalization plus logarithmic
+        // depth from float3 position, with direct COLOR passthrough. Match the
+        // Typed dataflow rather than fixture/source names before generic lowering
+        // expands Sony's compact VMAD2 schedule.
+        if (vertex_attributes.size()==2 && matrices.empty() && matrices3.empty() &&
+            vertex_uniforms.size()==2 && program.labels().empty() &&
+            vertex_attributes[0].components==3 && vertex_attributes[0].resource_index==0 &&
+            vertex_attributes[1].components==4 && vertex_attributes[1].resource_index==4 &&
+            vertex_uniforms[0]->type==TypedType::F32x2 && vertex_uniforms[0]->index==0 &&
+            vertex_uniforms[1]->type==TypedType::F32 && vertex_uniforms[1]->index==2) {
+            unsigned stores=0,divisions=0,logs=0,mins=0,maxs=0;
+            TypedValue position{},color{};
+            bool shape=true;
+            for (const auto &instruction:instructions) {
+                if (instruction.opcode()==TypedOpcode::FloatBinary) {
+                    if (instruction.subop()==static_cast<uint8_t>(TypedFloatOp::Div)) ++divisions;
+                    else if (instruction.subop()==static_cast<uint8_t>(TypedFloatOp::Min)) ++mins;
+                    else if (instruction.subop()==static_cast<uint8_t>(TypedFloatOp::Max)) ++maxs;
+                } else if (instruction.opcode()==TypedOpcode::FloatUnary &&
+                           instruction.subop()==static_cast<uint8_t>(TypedFloatUnaryOp::Log2)) {
+                    ++logs;
+                }
+                if (instruction.opcode()!=TypedOpcode::StoreOutput) continue;
+                if (instruction.aux>=resources.size()) { shape=false; break; }
+                ++stores;
+                const auto &output=resources[instruction.aux];
+                auto semantic=output.semantic;
+                if (semantic==TypedSemantic::None) semantic=infer_semantic(shader.resource_name(output));
+                if (semantic==TypedSemantic::Position && position.kind()==TypedValueKind::None)
+                    position=instruction.src0;
+                else if (semantic==TypedSemantic::Color && color.kind()==TypedValueKind::None)
+                    color=instruction.src0;
+                else { shape=false; break; }
+            }
+            const auto color_it=color.kind()==TypedValueKind::Value ?
+                attribute_for_value.find(color.id()) : attribute_for_value.end();
+            const auto *position_def=shape?definition(position):nullptr;
+            shape = shape && stores==2 && divisions==2 && logs==1 && mins>=1 && maxs>=1 &&
+                position_def && position_def->opcode()==TypedOpcode::FloatCompose &&
+                color_it!=attribute_for_value.end() && color_it->second==1;
+            if (shape) {
+                std::vector<IrUniformFloat> uniform_meta;
+                for (const auto *uniform:vertex_uniforms)
+                    uniform_meta.push_back({shader.resource_name(*uniform),typed_component_count(uniform->type),uniform->index});
+                return compile_vertex_geometrizer_poly_sdk300(vertex_attributes,uniform_meta,0,0,out);
+            }
+        }
+
         // Fixed 16.16 vitaGL vertex shape. The source values are ordinary float
         // attributes whose bits are reinterpreted as signed/unsigned 16-bit
         // halves, combined as hi + lo/65536, then transformed by the same two
