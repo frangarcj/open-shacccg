@@ -962,11 +962,35 @@ int test_cg_frontend() {
             "float4 main(float2 uv:TEXCOORD0):COLOR0{return tex2D(tex[0],uv)*tint;}",
             "sampler-array1-texture-tint.cg",VSC_STAGE_FRAGMENT))
         failures += fail("constant sampler2D[1] element 0 did not lower through texture-tint profile");
-    if (!compile_shader_gxp(
+    {
+        static constexpr const char *source=
             "uniform sampler2D tex[2]; "
-            "float4 main(float2 uv:TEXCOORD1):COLOR0{return tex2D(tex[1],uv);}",
-            "sampler-array2-binding1-texcoord1.cg",VSC_STAGE_FRAGMENT))
-        failures += fail("constant sampler2D[2] element 1 / TEXCOORD1 did not lower through direct texture profile");
+            "float4 main(float2 uv:TEXCOORD1):COLOR0{return tex2D(tex[1],uv);}";
+        VscCompileRequest request{};
+        request.source_name="sampler-array2-binding1-texcoord1.cg";
+        request.source=source; request.source_size=std::strlen(source);
+        request.entrypoint="main"; request.stage=VSC_STAGE_FRAGMENT;
+        VscCompileResult result{};
+        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.diagnostic_count==0;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            vsc::gxp::ParameterView tex{};
+            const auto query=view.sampler_query_info();
+            uint16_t query1=0;
+            if (query.size>=4) std::memcpy(&query1,query.data+2,sizeof(query1));
+            const uint64_t phas=0xfa44070000000000ULL;
+            const auto primary=view.primary_program();
+            ok=view.valid() && result.gxp_size==256 && view.logical_size()==256 &&
+                view.minor_version()==5 && view.sdk_version()==0x0300 && view.flags()==0x00180801 &&
+                view.primary_register_count()==2 && view.secondary_register_count()==0 &&
+                view.compiler_version_raw()==0x00033a90 && view.container_count()==0 &&
+                view.parameter_count()==1 && view.parameter(0,tex) && tex.category==2 &&
+                tex.resource_index==1 && query.size==32 && query1==0x0302 &&
+                primary.size==sizeof(phas) && std::memcmp(primary.data,&phas,sizeof(phas))==0;
+        }
+        if (!ok) failures += fail("sampler2D[2] element 1 / TEXCOORD1 did not reproduce SDK 3.0 direct-texture metadata");
+        vsc_destroy_result(&request.allocator,&result);
+    }
     if (!compile_vitagl_blit_vertex_profile())
         failures += fail("vitaGL public blit vertex profile did not reproduce its observed v1.5 GXP shape");
     if (!compile_texture_tint_alpha_discard_profile())

@@ -121,7 +121,10 @@ texture-tint, point-sprite and alpha-test fragment shapes are byte-identical to
 their oracle equivalents. The private Unicorn runner still hits Sony diagnostic
 403 on `sampler2D[N]` parameters; scalarizing a constant sampler element to its
 equivalent TEXUNIT binding produces the same GXP and is used only to isolate
-oracle behavior, not as an OpenShaccCg source rewrite.
+oracle behavior, not as an OpenShaccCg source rewrite. In particular the
+two-texture FFP `replace` tail optimizes to `tex[1]`/TEXCOORD1 and matches the
+SDK 3.0 TEXUNIT1 direct-read image byte-for-byte (256 bytes, sampler query
+slot 1 = `0x0302`).
 
 Linear fog is now byte-identical as well. The SDK 3.0.0 profile moves reciprocal
 and distance setup into a three-word secondary program, uses the v1.5 WPOS
