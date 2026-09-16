@@ -352,6 +352,41 @@ bool same_swizzle(const Swizzle4 &a, const Swizzle4 &b) {
     for (unsigned n=0;n<4;n++) if (a.c[n]!=b.c[n]) return false;
     return true;
 }
+const Swizzle4 kVmad2Src0Swizzles[8]={
+    {{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}},
+    {{SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y}},
+    {{SwizzleChannel::Z,SwizzleChannel::Z,SwizzleChannel::Z,SwizzleChannel::Z}},
+    {{SwizzleChannel::W,SwizzleChannel::W,SwizzleChannel::W,SwizzleChannel::W}},
+    {{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}},
+    {{SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::X,SwizzleChannel::W}},
+    {{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::W,SwizzleChannel::W}},
+    {{SwizzleChannel::Z,SwizzleChannel::W,SwizzleChannel::X,SwizzleChannel::Y}},
+};
+const Swizzle4 kVmad2Src1Swizzles[8]={
+    {{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}},
+    {{SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y}},
+    {{SwizzleChannel::Z,SwizzleChannel::Z,SwizzleChannel::Z,SwizzleChannel::Z}},
+    {{SwizzleChannel::W,SwizzleChannel::W,SwizzleChannel::W,SwizzleChannel::W}},
+    {{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}},
+    {{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Z}},
+    {{SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::W,SwizzleChannel::W}},
+    {{SwizzleChannel::W,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}},
+};
+const Swizzle4 kVmad2Src2Swizzles[8]={
+    {{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X}},
+    {{SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y}},
+    {{SwizzleChannel::Z,SwizzleChannel::Z,SwizzleChannel::Z,SwizzleChannel::Z}},
+    {{SwizzleChannel::W,SwizzleChannel::W,SwizzleChannel::W,SwizzleChannel::W}},
+    {{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W}},
+    {{SwizzleChannel::X,SwizzleChannel::Z,SwizzleChannel::W,SwizzleChannel::W}},
+    {{SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z}},
+    {{SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::Z}},
+};
+bool encode_vmad2_swizzle(const Swizzle4 &s,const Swizzle4 *table,uint8_t *code) {
+    if (!code) return false;
+    for (uint8_t i=0;i<8;++i) if (same_swizzle(s,table[i])) { *code=i; return true; }
+    return false;
+}
 // Standard vec4 table used by V32NMAD source2 and VMAD operands.
 constexpr uint8_t kStdSwizzle[16][4] = {
     {0,0,0,0},{1,1,1,1},{2,2,2,2},{3,3,3,3},{0,1,2,3},{1,2,3,3},{0,1,2,2},{0,0,1,2},
@@ -488,7 +523,7 @@ bool encode_vcomp_f32_semantic(const VcompF32Semantic &i, uint64_t *word) {
     f.no_schedule=i.no_schedule;
     f.op2=static_cast<uint8_t>(i.op);
     f.src_type=0; // F32
-    f.src1_mod=0;
+    f.src1_mod=i.src_absolute ? 2 : 0;
     f.src_component=i.src_component;
     f.dest_num=i.dst.num;
     f.src1_num=i.src.num;
@@ -501,7 +536,7 @@ bool decode_vcomp_f32_semantic(uint64_t word, VcompF32Semantic *i) {
     VcompFields f{};
     if (!decode_vcomp(word,&f) || f.pred!=static_cast<uint8_t>(Predicate::Always) ||
         f.sync_start || f.repeat_count!=0 || f.src_type!=0 ||
-        f.src1_mod!=0 || f.src_component>=4 || f.write_mask==0 ||
+        (f.src1_mod!=0 && f.src1_mod!=2) || f.src_component>=4 || f.write_mask==0 ||
         (f.op2!=static_cast<uint8_t>(ComplexOp::Reciprocal) &&
          f.op2!=static_cast<uint8_t>(ComplexOp::Rsqrt) &&
          f.op2!=static_cast<uint8_t>(ComplexOp::Log2) &&
@@ -520,6 +555,7 @@ bool decode_vcomp_f32_semantic(uint64_t word, VcompF32Semantic *i) {
     i->no_schedule=f.no_schedule;
     i->end=f.end;
     i->exp2_base_dest_type=op==ComplexOp::Exp2 && f.dest_type==0;
+    i->src_absolute=f.src1_mod==2;
     return true;
 }
 
@@ -676,6 +712,77 @@ bool decode_vmad2_f32_scalar_mad_semantic(uint64_t word, Vmad2F32ScalarMadSemant
     return true;
 }
 
+bool encode_vmad2_f32_semantic(const Vmad2F32Semantic &i, uint64_t *word) {
+    if (!word || i.predicate!=Predicate::Always || i.dest_mask==0 || i.dest_mask>=16 ||
+        i.dst.num>=64 || i.src0.num>=64 || i.src1.num>=64 || i.src2.num>=64)
+        return false;
+    Vmad2Fields f{};
+    bool dest_ext=false,src0_ext=false;
+    uint8_t src0_selector=0;
+    if (!encode_dest_bank(i.dst.bank,&f.dest_bank,&dest_ext) || dest_ext ||
+        !encode_src0_bank(i.src0.bank,&src0_selector,&src0_ext) || src0_ext || src0_selector>1 ||
+        !encode_src1_bank(i.src1.bank,&f.src1_bank,&f.src1_bank_ext) ||
+        !encode_src1_bank(i.src2.bank,&f.src2_bank,&f.src2_bank_ext))
+        return false;
+    f.src0_bank=src0_selector!=0;
+    uint8_t sw0=0,sw1=0,sw2=0;
+    if (!encode_vmad2_swizzle(i.src0_swizzle,kVmad2Src0Swizzles,&sw0) ||
+        !encode_vmad2_swizzle(i.src1_swizzle,kVmad2Src1Swizzles,&sw1) ||
+        !encode_vmad2_swizzle(i.src2_swizzle,kVmad2Src2Swizzles,&sw2))
+        return false;
+    f.data_f16=false;
+    f.pred=0;
+    f.skip_invalid=i.skip_invalid;
+    f.src0_abs=i.src0_absolute;
+    f.no_schedule=i.no_schedule;
+    f.dest_mask=i.dest_mask;
+    f.src1_mod=(i.src1_negative?1u:0u)|(i.src1_absolute?2u:0u);
+    f.src2_mod=(i.src2_negative?1u:0u)|(i.src2_absolute?2u:0u);
+    f.dest_num=i.dst.num;
+    f.src0_num=i.src0.num;
+    f.src1_num=i.src1.num;
+    f.src2_num=i.src2.num;
+    f.src0_swizzle_01=sw0&3u;
+    f.src0_swizzle_bit2=(sw0&4u)!=0;
+    f.src1_swizzle_01=sw1&3u;
+    f.src1_swizzle_bit2=(sw1&4u)!=0;
+    f.src2_swizzle=sw2;
+    return encode_vmad2(f,word);
+}
+
+bool decode_vmad2_f32_semantic(uint64_t word, Vmad2F32Semantic *i) {
+    if (!i) return false;
+    Vmad2Fields f{};
+    if (!decode_vmad2(word,&f) || f.data_f16 || f.pred!=0 || f.sync_start ||
+        f.dest_mask==0 || f.src1_mod>3 || f.src2_mod>3 || f.src2_swizzle>=8)
+        return false;
+    if (!decode_dest_bank(f.dest_bank,false,&i->dst.bank) ||
+        !decode_src0_bank(f.src0_bank,false,&i->src0.bank) ||
+        !decode_src1_bank(f.src1_bank,f.src1_bank_ext,&i->src1.bank) ||
+        !decode_src1_bank(f.src2_bank,f.src2_bank_ext,&i->src2.bank))
+        return false;
+    const uint8_t sw0=static_cast<uint8_t>(f.src0_swizzle_01|(f.src0_swizzle_bit2?4u:0u));
+    const uint8_t sw1=static_cast<uint8_t>(f.src1_swizzle_01|(f.src1_swizzle_bit2?4u:0u));
+    if (sw0>=8 || sw1>=8) return false;
+    i->dst.num=f.dest_num;
+    i->src0.num=f.src0_num;
+    i->src1.num=f.src1_num;
+    i->src2.num=f.src2_num;
+    i->predicate=Predicate::Always;
+    i->dest_mask=f.dest_mask;
+    i->src0_swizzle=kVmad2Src0Swizzles[sw0];
+    i->src1_swizzle=kVmad2Src1Swizzles[sw1];
+    i->src2_swizzle=kVmad2Src2Swizzles[f.src2_swizzle];
+    i->src0_absolute=f.src0_abs;
+    i->src1_negative=(f.src1_mod&1u)!=0;
+    i->src1_absolute=(f.src1_mod&2u)!=0;
+    i->src2_negative=(f.src2_mod&1u)!=0;
+    i->src2_absolute=(f.src2_mod&2u)!=0;
+    i->skip_invalid=f.skip_invalid;
+    i->no_schedule=f.no_schedule;
+    return true;
+}
+
 bool encode_vdual_f32_mul_move_semantic(const VdualF32MulMoveSemantic &, uint64_t *word) {
     if (!word) return false;
     *word=0x20c42000cfb61080ULL;
@@ -684,6 +791,16 @@ bool encode_vdual_f32_mul_move_semantic(const VdualF32MulMoveSemantic &, uint64_
 
 bool decode_vdual_f32_mul_move_semantic(uint64_t word, VdualF32MulMoveSemantic *i) {
     return i && word==0x20c42000cfb61080ULL;
+}
+
+bool encode_vdual_f32_exp_move_semantic(const VdualF32ExpMoveSemantic &, uint64_t *word) {
+    if (!word) return false;
+    *word=0x20c54000a0150480ULL;
+    return true;
+}
+
+bool decode_vdual_f32_exp_move_semantic(uint64_t word, VdualF32ExpMoveSemantic *i) {
+    return i && word==0x20c54000a0150480ULL;
 }
 
 bool encode_vmad_semantic(const VmadSemantic &i, uint64_t *word) {

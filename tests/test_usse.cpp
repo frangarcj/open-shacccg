@@ -504,6 +504,65 @@ int test_usse() {
             failures += fail("SDK 3.0 F32 fog VMAD2 mismatch");
     }
     {
+        const uint64_t log_words[]={
+            0x3080044080000001ULL,0x3080044880000002ULL,0x30800c4080200081ULL,
+        };
+        for (uint8_t lane=0;lane<3;++lane) {
+            VcompF32Semantic log{};
+            log.op=ComplexOp::Log2;
+            log.dst={RegisterBank::Temp,static_cast<uint8_t>(lane==2 ? 1 : 0)};
+            log.src={RegisterBank::PrimaryAttribute,static_cast<uint8_t>(lane==2 ? 1 : 0)};
+            log.src_component=static_cast<uint8_t>(lane==2 ? 0 : lane);
+            log.dest_mask=static_cast<uint8_t>(1u<<(lane==2 ? 0 : lane));
+            log.no_schedule=lane==2;
+            log.src_absolute=true;
+            uint64_t word=0;
+            VcompF32Semantic decoded{};
+            if (!encode_vcomp_f32_semantic(log,&word) || word!=log_words[lane] ||
+                !decode_vcomp_f32_semantic(word,&decoded) || !decoded.src_absolute ||
+                decoded.op!=ComplexOp::Log2 || decoded.src_component!=log.src_component)
+                failures += fail("SDK 3.0 sRGB absolute Log2 VCOMP mismatch");
+        }
+    }
+    {
+        uint64_t word=0;
+        VdualF32ExpMoveSemantic decoded{};
+        if (!encode_vdual_f32_exp_move_semantic({},&word) || word!=0x20c54000a0150480ULL ||
+            !decode_vdual_f32_exp_move_semantic(word,&decoded))
+            failures += fail("SDK 3.0 sRGB FEXP/VMOV VDUAL mismatch");
+    }
+    {
+        const auto sw=[](SwizzleChannel a,SwizzleChannel b,SwizzleChannel c,SwizzleChannel d) {
+            return Swizzle4{{a,b,c,d}};
+        };
+        Vmad2F32Semantic probes[3]{};
+        probes[0].dst={RegisterBank::Temp,61}; probes[0].src0={RegisterBank::Temp,62};
+        probes[0].src1={RegisterBank::SecondaryAttribute,1}; probes[0].src2={RegisterBank::SecondaryAttribute,1};
+        probes[0].dest_mask=7; probes[0].src0_swizzle=sw(SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W);
+        probes[0].src1_swizzle=sw(SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y);
+        probes[0].src2_swizzle=sw(SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X); probes[0].no_schedule=true;
+        probes[1].dst={RegisterBank::PrimaryAttribute,0}; probes[1].src0={RegisterBank::PrimaryAttribute,0};
+        probes[1].src1={RegisterBank::SecondaryAttribute,0}; probes[1].src2={RegisterBank::Temp,61};
+        probes[1].dest_mask=3; probes[1].src0_swizzle=sw(SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W);
+        probes[1].src1_swizzle=sw(SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y);
+        probes[1].src2_swizzle=sw(SwizzleChannel::X,SwizzleChannel::Y,SwizzleChannel::Z,SwizzleChannel::W); probes[1].src2_negative=true; probes[1].no_schedule=true;
+        probes[2].dst={RegisterBank::Temp,60}; probes[2].src0={RegisterBank::PrimaryAttribute,1};
+        probes[2].src1={RegisterBank::SecondaryAttribute,0}; probes[2].src2={RegisterBank::Temp,61};
+        probes[2].dest_mask=1; probes[2].src0_swizzle=sw(SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X,SwizzleChannel::X);
+        probes[2].src1_swizzle=sw(SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y,SwizzleChannel::Y);
+        probes[2].src2_swizzle=sw(SwizzleChannel::Z,SwizzleChannel::Z,SwizzleChannel::Z,SwizzleChannel::Z); probes[2].src2_negative=true; probes[2].no_schedule=true;
+        const uint64_t words[]={0x00a00b80ff53e041ULL,0x00a0898ec010003dULL,0x0080488ccf10103dULL};
+        for (size_t i=0;i<3;++i) {
+            uint64_t word=0;
+            Vmad2F32Semantic decoded{};
+            if (!encode_vmad2_f32_semantic(probes[i],&word) || word!=words[i] ||
+                !decode_vmad2_f32_semantic(word,&decoded) || decoded.dst.bank!=probes[i].dst.bank ||
+                decoded.dst.num!=probes[i].dst.num || decoded.src2_negative!=probes[i].src2_negative ||
+                decoded.no_schedule!=probes[i].no_schedule)
+                failures += fail("SDK 3.0 sRGB F32 VMAD2 mismatch");
+        }
+    }
+    {
         uint64_t word=0;
         VdualF32MulMoveSemantic decoded{};
         if (!encode_vdual_f32_mul_move_semantic({},&word) || word!=0x20c42000cfb61080ULL ||

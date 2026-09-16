@@ -157,6 +157,7 @@ struct VcompF32Semantic {
     // SDK 3.0.0 exp2 fog uses the base F32 destination selector (0), while
     // older independently observed Exp2 profiles use selector 1.
     bool exp2_base_dest_type = false;
+    bool src_absolute = false;
 };
 
 // Fixed F32 division combine forms observed after reciprocal VCOMPs and
@@ -206,10 +207,36 @@ struct Vmad2F32ScalarMadSemantic {
     bool no_schedule = false;
 };
 
+// General F32 VMAD2 subset. All four operands use semantic register banks and
+// explicit four-lane swizzles; only the modifier/bank forms independently
+// observed in SDK 3.0.0 are accepted by the encoder.
+struct Vmad2F32Semantic {
+    RegisterRef dst{};
+    RegisterRef src0{};
+    RegisterRef src1{};
+    RegisterRef src2{};
+    Predicate predicate = Predicate::Always;
+    uint8_t dest_mask = 0xf;
+    Swizzle4 src0_swizzle{};
+    Swizzle4 src1_swizzle{};
+    Swizzle4 src2_swizzle{};
+    bool src0_absolute = false;
+    bool src1_negative = false;
+    bool src1_absolute = false;
+    bool src2_negative = false;
+    bool src2_absolute = false;
+    bool skip_invalid = true;
+    bool no_schedule = false;
+};
+
 // SDK 3.0.0 exp2 fog dual issue: scalar FMUL internal0=internal0*internal1
 // paired with a vector move from SA0 into TEMP125. The source layout and banks
 // are fixed by the single validated VDUAL form.
 struct VdualF32MulMoveSemantic {};
+
+// SDK 3.0.0 sRGB dual issue: the validated scalar FEXP plus vector VMOV form.
+// Kept narrow until another VDUAL configuration is independently captured.
+struct VdualF32ExpMoveSemantic {};
 
 enum class RepeatMode : uint8_t { External=0, Internal=1, Both=2, Slmsi=3 };
 
@@ -687,8 +714,12 @@ bool encode_vmad2_s32_to_f32_semantic(const Vmad2S32ToF32Semantic &, uint64_t *w
 bool decode_vmad2_s32_to_f32_semantic(uint64_t word, Vmad2S32ToF32Semantic *instruction);
 bool encode_vmad2_f32_scalar_mad_semantic(const Vmad2F32ScalarMadSemantic &, uint64_t *word);
 bool decode_vmad2_f32_scalar_mad_semantic(uint64_t word, Vmad2F32ScalarMadSemantic *instruction);
+bool encode_vmad2_f32_semantic(const Vmad2F32Semantic &, uint64_t *word);
+bool decode_vmad2_f32_semantic(uint64_t word, Vmad2F32Semantic *instruction);
 bool encode_vdual_f32_mul_move_semantic(const VdualF32MulMoveSemantic &, uint64_t *word);
 bool decode_vdual_f32_mul_move_semantic(uint64_t word, VdualF32MulMoveSemantic *instruction);
+bool encode_vdual_f32_exp_move_semantic(const VdualF32ExpMoveSemantic &, uint64_t *word);
+bool decode_vdual_f32_exp_move_semantic(uint64_t word, VdualF32ExpMoveSemantic *instruction);
 bool encode_vmad_semantic(const VmadSemantic &instruction, uint64_t *word);
 bool decode_vmad_semantic(uint64_t word, VmadSemantic *instruction);
 bool encode_vtst_semantic(const VtstSemantic &instruction, uint64_t *word);
@@ -724,7 +755,9 @@ inline bool encode_semantic(const VpckS32x2ColorSemantic &i, uint64_t *word) { r
 inline bool encode_semantic(const VpckS32ToF32Semantic &i, uint64_t *word) { return encode_vpck_s32_to_f32_semantic(i, word); }
 inline bool encode_semantic(const Vmad2S32ToF32Semantic &i, uint64_t *word) { return encode_vmad2_s32_to_f32_semantic(i, word); }
 inline bool encode_semantic(const Vmad2F32ScalarMadSemantic &i, uint64_t *word) { return encode_vmad2_f32_scalar_mad_semantic(i, word); }
+inline bool encode_semantic(const Vmad2F32Semantic &i, uint64_t *word) { return encode_vmad2_f32_semantic(i, word); }
 inline bool encode_semantic(const VdualF32MulMoveSemantic &i, uint64_t *word) { return encode_vdual_f32_mul_move_semantic(i, word); }
+inline bool encode_semantic(const VdualF32ExpMoveSemantic &i, uint64_t *word) { return encode_vdual_f32_exp_move_semantic(i, word); }
 inline bool encode_semantic(const VmadSemantic &i, uint64_t *word) { return encode_vmad_semantic(i, word); }
 inline bool encode_semantic(const VtstSemantic &i, uint64_t *word) { return encode_vtst_semantic(i, word); }
 inline bool encode_semantic(const VtstF32Semantic &i, uint64_t *word) { return encode_vtst_f32_semantic(i, word); }
