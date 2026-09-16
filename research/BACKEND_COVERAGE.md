@@ -152,6 +152,11 @@ and the one-texture transform move the PSIZE VBW immediately after PHAS with
 stream and only migrates to v1.5 metadata. All three are byte-identical to the
 SDK 3.0 oracle (364, 396 and 448 bytes on disk respectively).
 
+The two- and three-texture vertex profiles require no ISA change at all: their
+14- and 18-word primary streams plus three-word secondary clamp streams already
+matched SDK 3.0.0. Migrating only the v1.5 header/compiler fields makes the full
+images byte-identical as well (536 and 596 bytes on disk).
+
 The glslang HLSL frontend is intentionally experimental because its upstream
 HLSL mode is deprecated. It is still a high-value compatibility route and
 validation oracle while the backend migrates toward SPIRV-Cross -> Typed IR.

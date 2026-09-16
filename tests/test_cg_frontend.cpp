@@ -963,24 +963,54 @@ int test_cg_frontend() {
         failures += fail("Cg mutable uniform parameter was not normalized to a local copy");
     if (!compile_matrix_texcoord_point_size_profile())
         failures += fail("Cg mat4[1] TEXCOORD transform + PSIZE did not reproduce SDK 3.0 codegen");
-    if (!compile_vertex_gxp(
+    {
+        const std::string source=
             "void main(float4 p,float2 uv0,float2 uv1,float4 c,uniform float4x4 mvp,"
             "uniform float4x4 texmat[2],uniform float point_size,float2 out tc0:TEXCOORD0,"
             "float2 out tc1:TEXCOORD1,float4 out pos:POSITION,float4 out col:COLOR,float out ps:PSIZE){"
             "pos=mul(mvp,p);tc0=mul(texmat[0],float4(uv0,0.f,1.f)).xy;"
-            "tc1=mul(texmat[1],float4(uv1,0.f,1.f)).xy;col=c;ps=point_size;}",
-            "vp-mat4-array2-texcoords-color-psize"))
-        failures += fail("Cg mat4[2] dual TEXCOORD + COLOR + PSIZE did not compile end to end");
-    if (!compile_vertex_gxp(
+            "tc1=mul(texmat[1],float4(uv1,0.f,1.f)).xy;col=c;ps=point_size;}";
+        VscCompileRequest request{};
+        request.source_name="vp-mat4-array2-texcoords-color-psize";
+        request.source=source.data(); request.source_size=source.size(); request.entrypoint="main"; request.stage=VSC_STAGE_VERTEX;
+        VscCompileResult result{};
+        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.diagnostic_count==0;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            ok=view.valid() && view.minor_version()==5 && view.sdk_version()==0x0300 &&
+                view.flags()==0x00190000 && view.primary_register_count()==16 &&
+                view.secondary_register_count()==52 && view.primary_instruction_count()==14 &&
+                view.secondary_instruction_count()==3 && view.compiler_version_raw()==0x00033a90 &&
+                view.parameter_count()==7;
+        }
+        if (!ok) failures += fail("Cg mat4[2] dual TEXCOORD + COLOR + PSIZE did not reproduce SDK 3.0 metadata");
+        vsc_destroy_result(&request.allocator,&result);
+    }
+    {
+        const std::string source=
             "void main(float4 p,float2 uv0,float2 uv1,float2 uv2,float4 c,uniform float4x4 mvp,"
             "uniform float4x4 texmat[3],uniform float point_size,float2 out tc0:TEXCOORD0,"
             "float2 out tc1:TEXCOORD1,float2 out tc2:TEXCOORD2,float4 out pos:POSITION,"
             "float4 out col:COLOR,float out ps:PSIZE){pos=mul(mvp,p);"
             "tc0=mul(texmat[0],float4(uv0,0.f,1.f)).xy;"
             "tc1=mul(texmat[1],float4(uv1,0.f,1.f)).xy;"
-            "tc2=mul(texmat[2],float4(uv2,0.f,1.f)).xy;col=c;ps=point_size;}",
-            "vp-mat4-array3-texcoords-color-psize"))
-        failures += fail("Cg mat4[3] triple TEXCOORD + COLOR + PSIZE did not compile end to end");
+            "tc2=mul(texmat[2],float4(uv2,0.f,1.f)).xy;col=c;ps=point_size;}";
+        VscCompileRequest request{};
+        request.source_name="vp-mat4-array3-texcoords-color-psize";
+        request.source=source.data(); request.source_size=source.size(); request.entrypoint="main"; request.stage=VSC_STAGE_VERTEX;
+        VscCompileResult result{};
+        bool ok=vsc_compile(&request,&result)==0 && result.gxp_data && result.diagnostic_count==0;
+        if (ok) {
+            vsc::gxp::ProgramView view(result.gxp_data,result.gxp_size);
+            ok=view.valid() && view.minor_version()==5 && view.sdk_version()==0x0300 &&
+                view.flags()==0x00190000 && view.primary_register_count()==20 &&
+                view.secondary_register_count()==68 && view.primary_instruction_count()==18 &&
+                view.secondary_instruction_count()==3 && view.compiler_version_raw()==0x00033a90 &&
+                view.parameter_count()==8;
+        }
+        if (!ok) failures += fail("Cg mat4[3] triple TEXCOORD + COLOR + PSIZE did not reproduce SDK 3.0 metadata");
+        vsc_destroy_result(&request.allocator,&result);
+    }
     if (!compile("float2 in uv:TEXCOORD0;\nfloat sample_x(){return uv.x;}\nfloat4 main():COLOR0{return float4(sample_x(),0,0,1);}\n", VSC_STAGE_FRAGMENT))
         failures += fail("Cg global input semantic did not normalize into an entry-point parameter");
     if (!compile("float4 out gl_Position:POSITION;\nfloat2 out uv:TEXCOORD0;\nvoid main(float4 p:POSITION){gl_Position=p;uv=p.xy;}\n", VSC_STAGE_VERTEX))
