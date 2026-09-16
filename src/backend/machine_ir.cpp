@@ -1375,7 +1375,11 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 out.error="mat4 transform requires F32 vector operands and an SA matrix base";
                 return false;
             }
-            if (matrix.num==0) {
+            // SDK 3.0 independently anchors the same repeated VMAD at SA0 and
+            // SA8 (two consecutive mat4 uniforms). Restrict the selection to
+            // canonical 16-word mat4 boundaries; odd/noncanonical bases keep
+            // the four-DOT fallback below.
+            if ((matrix.num&7u)==0) {
                 if (src.num>=127) {
                     out.error="SA0 mat4 VMAD source pair exceeds register bank";
                     return false;
@@ -1408,7 +1412,7 @@ bool compile_machine_program(const MachineProgram &program, MachineCompileResult
                 mad.skip_invalid=true;
                 mad.no_schedule=false;
                 if (!builder.instruction(stage) || !builder.instruction(mad)) {
-                    out.error="failed to encode SA0 mat4 VPCK/VMAD selection";
+                    out.error="failed to encode aligned mat4 VPCK/VMAD selection";
                     return false;
                 }
                 break;

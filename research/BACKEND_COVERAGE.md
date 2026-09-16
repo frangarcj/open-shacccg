@@ -187,6 +187,10 @@ Component-selected packed F32 attributes also avoid scalar staging: the selected
 float lane is translated directly to the containing PA register and U16/S16
 halfword selectors. This removes six VMOVs from the vitaGL case, leaving 40
 primary instructions / 692 bytes with PA=12/SA=36.
+An independent two-matrix SDK 3.0 probe validates the same repeated VMAD with a
+second mat4 at SA8. `TransformMat4` now selects VPCK+VMAD for canonical aligned
+mat4 bases and leaves noncanonical bases on four DOTs; fixed16 consequently falls
+again to 38 primary instructions / 676 bytes.
 The validated U16/S16 VPCK and VDUAL encoders remain available for further local
 selection; no full fixed16 shader schedule has been restored.
 

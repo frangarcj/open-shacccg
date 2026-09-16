@@ -246,6 +246,20 @@ int test_machine_ir() {
             if (!compile_machine_program(neighbor,result) || result.words.size()!=4)
                 failures += fail("non-SA0 mat4 neighbor was incorrectly captured by SA0 VMAD selection");
         }
+
+        MachineProgram aligned;
+        if (!aligned.emit<MachineOpcode::TransformMat4>(0,
+                aligned.physical(machine_vertex_output(2),MachineType::F32),
+                aligned.physical(machine_primary(0),MachineType::F32),
+                aligned.physical(machine_secondary(8),MachineType::F32))) {
+            failures += fail("could not construct oracle SA8 mat4 transform");
+        } else {
+            MachineCompileResult result;
+            if (!compile_machine_program(aligned,result) || result.words.size()!=2 ||
+                result.words[0]!=0x40800dbcaf998002ULL ||
+                result.words[1]!=0x18903081c091a208ULL)
+                failures += fail("aligned SA8 TransformMat4 did not select oracle VPCK/VMAD pair");
+        }
     }
 
     {

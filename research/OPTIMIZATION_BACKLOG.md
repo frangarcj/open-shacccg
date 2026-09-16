@@ -57,9 +57,14 @@ correctness for nearby source variants.
   the six scalar staging VMOVs disappear. The fixed16 image is now 40 primary
   words / 692 bytes. Direct tests cover x/y/z/w and verify neighboring dynamic
   scale expressions remain outside the fold.
+- A two-live-mat4 SDK 3.0 probe independently anchors the repeated VMAD at SA8
+  (`0x18903081c091a208`) as well as SA0. Generic `TransformMat4` therefore uses
+  VPCK+VMAD on canonical 16-word matrix boundaries and keeps the four-DOT fallback
+  for other bases. The fixed16 texture matrix benefits too: 38 primary words /
+  676 bytes.
 - Sony SDK 3.0 remains 21 primary + 3 secondary instructions, 568 bytes,
-  PA=12/SA=36. Next optimizations are validating non-SA0 matrix VMAD selection,
-  cross-component unpack batching/repeat/VDUAL and point-size hoisting,
+  PA=12/SA=36. Next optimizations are cross-component unpack batching/repeat/VDUAL
+  and point-size hoisting,
   retaining actual operands and constants.
   Do not restore the complete schedule to recover byte equality.
 - Continue numeric validation of mixed integer/F32 register addressing, register
